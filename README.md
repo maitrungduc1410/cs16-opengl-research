@@ -6,6 +6,10 @@ based on the discontinued *panzerGL 2.2* multi-mod. The hack ships as a fake
 intercepts OpenGL draw calls to implement wallhack, ESP, aimbot and a few visual
 tweaks.
 
+<div align="center">
+  <img src="./demo.png" />
+</div>
+
 > [!NOTE]
 > **This repository is for technical research and educational purposes only.**
 > The goal is to understand how render-layer game hacks work (DLL proxying,
@@ -59,6 +63,29 @@ and tweak options live.
 
 ---
 
+### Hack menu options
+
+| Option | Type | What it does |
+|--------|------|--------------|
+| **Offset** | preset | Selects a predefined aim-height preset (`stand_h`/`duck_h` pair) from `oglconf.cfg`, named per weapon/style (Mp5, Scout, Headshot, ...). |
+| **Stand_h** | value | Vertical aim offset used when the target is **standing**. Higher = aim higher (toward the head). |
+| **Duck_h** | value | Vertical aim offset used when the target is **ducked**. |
+| **Target** | toggle | Which team the aimbot/ESP targets (`team 0` or `team 1`, names from the model file). |
+| **Aimbot** | on/off | Auto-aim: snaps the mouse onto the selected target. |
+| **Shoot** | on/off | Triggerbot: automatically fires once aimed. |
+| **Aimthru** | on/off | Aim through walls. Off = only aim at visible targets (depth-buffer check); On = ignore walls. |
+| **FOV** | value | Size (in pixels) of the screen box around the crosshair within which the aimbot will lock on. Smaller = only near the crosshair. |
+| **Recoil** | value (0–5) | Anti-recoil: pushes the mouse down each shot to compensate. |
+| **Wallhack** | value (0–3) | 0 = off, 1 = basic see-through (depth test off), 2 & 3 = see-through with color/blend ("chams"-style). |
+| **No Sky** | on/off | Skips rendering the skybox. |
+| **No Flash** | on/off | Reduces the flashbang full-screen white to near-zero alpha. |
+| **No Smoke** | on/off | Skips rendering smoke-grenade geometry. |
+| **Lambert** | on/off | Fullbright: forces white on player models so they stay bright in dark areas. |
+| **ESP** | on/off | Draws colored markers (triangle/box, colored by team) over detected players. |
+| **Crosshair** | on/off | Draws a custom static crosshair in the screen center. |
+
+---
+
 ## How it works
 
 The game renders through `opengl32.dll`. Windows loads a DLL from the application
@@ -103,29 +130,6 @@ flowchart TD
   in `models_cs16.cfg` — no game-memory reading at all.
 - **ESP / Aimbot** = project model coordinates to screen space with `gluProject`,
   and read the depth buffer (`glReadPixels`) for line-of-sight checks.
-
----
-
-## Hack menu options
-
-| Option | Type | What it does |
-|--------|------|--------------|
-| **Offset** | preset | Selects a predefined aim-height preset (`stand_h`/`duck_h` pair) from `oglconf.cfg`, named per weapon/style (Mp5, Scout, Headshot, ...). |
-| **Stand_h** | value | Vertical aim offset used when the target is **standing**. Higher = aim higher (toward the head). |
-| **Duck_h** | value | Vertical aim offset used when the target is **ducked**. |
-| **Target** | toggle | Which team the aimbot/ESP targets (`team 0` or `team 1`, names from the model file). |
-| **Aimbot** | on/off | Auto-aim: snaps the mouse onto the selected target. |
-| **Shoot** | on/off | Triggerbot: automatically fires once aimed. |
-| **Aimthru** | on/off | Aim through walls. Off = only aim at visible targets (depth-buffer check); On = ignore walls. |
-| **FOV** | value | Size (in pixels) of the screen box around the crosshair within which the aimbot will lock on. Smaller = only near the crosshair. |
-| **Recoil** | value (0–5) | Anti-recoil: pushes the mouse down each shot to compensate. |
-| **Wallhack** | value (0–3) | 0 = off, 1 = basic see-through (depth test off), 2 & 3 = see-through with color/blend ("chams"-style). |
-| **No Sky** | on/off | Skips rendering the skybox. |
-| **No Flash** | on/off | Reduces the flashbang full-screen white to near-zero alpha. |
-| **No Smoke** | on/off | Skips rendering smoke-grenade geometry. |
-| **Lambert** | on/off | Fullbright: forces white on player models so they stay bright in dark areas. |
-| **ESP** | on/off | Draws colored markers (triangle/box, colored by team) over detected players. |
-| **Crosshair** | on/off | Draws a custom static crosshair in the screen center. |
 
 ---
 
