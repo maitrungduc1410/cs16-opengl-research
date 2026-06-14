@@ -20,6 +20,24 @@ tweaks.
 
 ---
 
+## Table of Contents
+
+- [How to use](#how-to-use)
+  - [In-game controls](#in-game-controls)
+  - [Hack menu options](#hack-menu-options)
+- [How it works](#how-it-works)
+  - [Proxy DLL architecture](#proxy-dll-architecture)
+  - [What happens each frame](#what-happens-each-frame)
+- [Build from source](#build-from-source)
+  - [Requirements](#requirements)
+  - [Steps](#steps)
+  - [Runtime Library note](#runtime-library-note)
+  - [Building from scratch (no `.vcxproj`)](#building-from-scratch-no-vcxproj)
+- [FAQ](#faq)
+- [Credits](#credits)
+
+---
+
 ## How to use
 
 > [!IMPORTANT]
