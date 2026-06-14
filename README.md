@@ -188,6 +188,46 @@ yourself from an empty project, follow the step-by-step guide:
 
 ---
 
+## FAQ
+
+### Why does the wallhack only show enemies when they get close on some servers, but reveal them from far away on others — even on the same map (e.g. `de_dust2`)?
+
+Because this wallhack lives at the **very end** of the pipeline. It can only reveal
+what the game actually **draws**, and the game only draws the players the **server
+chose to send** to your client:
+
+```
+Server decides which entities to send  →  client receives  →  engine draws model  →  wallhack reveals it
+```
+
+The server filters entities using the map's **PVS (Potentially Visible Set)**.
+When a map is compiled, a visibility table is baked in: "from area A, which areas
+are potentially visible?". While you're alive at some position, the server only
+sends you players in areas within your PVS. Enemies in non-visible areas are
+**never transmitted**, so your client doesn't even know they exist → the wallhack
+has nothing to draw. That's why you "only see them once they get close."
+
+So why does the *same-named* `de_dust2` behave differently across servers?
+
+- **Different map compiles.** Many servers run a `de_dust2` that was recompiled
+  **without VIS data** (or with broken VIS). Then the whole map is one big visible
+  region → the server sends **all** players → you see everyone from anywhere.
+  A properly VIS-compiled `de_dust2` culls aggressively → you only see nearby
+  enemies. (A telltale sign of missing VIS: the map looks fullbright/evenly lit.)
+- **Server-side settings / anti-cheat plugins** that cull entities more strictly
+  (only send players in line of sight) also limit you to nearby targets.
+
+And why can you **see far when you're dead**? Because death puts you in
+spectator/observer mode, where the PVS reference moves (and many servers transmit
+more entities to dead players) → a wider set of players reaches your client.
+
+> [!NOTE]
+> This is a hard limit of the **network layer**, not a weakness of the hack. Even a
+> memory-reading cheat can't reveal an enemy whose data the server never sent —
+> it simply isn't in your client's memory.
+
+---
+
 ## Credits
 
 - Original *panzerGL 2.2* multi-mod by **james34602**:
