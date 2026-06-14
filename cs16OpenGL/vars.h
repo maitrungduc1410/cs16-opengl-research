@@ -150,3 +150,6 @@ int		eng_local_idx	=0;	// entity index of the local player
 int		eng_local_team	=0;	// team number of the local player (0=unknown,1/2)
 int		eng_players		=0;	// players drawn last frame (for the debug readout)
 bool	eng_have_extra	=false;	// did we manage to locate g_PlayerExtraInfo?
+int		eng_frame		=0;	// our own frame counter (for staleness checks)
+int		eng_lastcurpos[33]={0};	// cl_entity current_position last seen, per slot
+int		eng_lastchange[33]={0};	// frame at which current_position last changed

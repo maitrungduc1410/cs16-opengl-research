@@ -1168,7 +1168,9 @@ bool IsVertTeam(long vertcount,int t)	// helper: does vertcount belong to team t
 #define ENT_INDEX			0x000	// cl_entity_t: int  entity index
 #define ENT_PLAYER			0x004	// cl_entity_t: int  "is player" flag
 #define ENT_CURSTATE		0x2B0	// cl_entity_t: entity_state_t curstate
+#define ENT_CURPOS			0x404	// cl_entity_t: current_position (update counter)
 #define ENT_ORIGIN			0xB48	// cl_entity_t: vec3 interpolated origin
+#define ENG_STALE_FRAMES	30		// frames without an update -> treat as dead/gone
 #define ES_ORIGIN			0x010	// entity_state_t::origin (vec3)
 #define ES_USEHULL			0x0C8	// entity_state_t::usehull (0 stand, 1 duck)
 
@@ -1355,12 +1357,32 @@ bool EngDead(int idx)
 	return ReadByte(eng_extrainfo+idx*EXTRA_STRIDE+EXTRA_DEAD)!=0;
 }
 
+// classify team from the player's model name (offset-free fallback when
+// g_PlayerExtraInfo wasn't found). 1 = T, 2 = CT, 0 = unknown.
+int TeamFromModel(const char *m)
+{
+	if(m==0 || !IsReadable((DWORD)m,1)) return 0;
+	char s[64]; int i=0;
+	for(; i<63 && IsReadable((DWORD)(m+i),1) && m[i]; i++)
+	{
+		char c=m[i];
+		s[i]=(c>='A'&&c<='Z')?(c+32):c;	// lowercase
+	}
+	s[i]=0;
+	if(strstr(s,"terror")||strstr(s,"leet")||strstr(s,"arctic")||
+	   strstr(s,"guerilla")||strstr(s,"militia")) return 1;	// Terrorists
+	if(strstr(s,"urban")||strstr(s,"gsg9")||strstr(s,"sas")||
+	   strstr(s,"gign")||strstr(s,"vip")) return 2;			// Counter-Terrorists
+	return 0;
+}
+
 // Draw ESP for every player in the engine entity list. Called each frame from
 // the wglSwapBuffers hook, in its own 2D pixel-space pass.
 void DrawEngineEsp()
 {
 	eng_players=0;
 	if(!cvar.esp_engine) return;
+	eng_frame++;
 
 	GLint vpe[4];
 	(*orig_glGetIntegerv)(GL_VIEWPORT,vpe);
@@ -1411,6 +1433,7 @@ void DrawEngineEsp()
 		if(idx==eng_local_idx) continue;
 
 		char namebuf[64]="";
+		char modelbuf[64]="";
 		if(fnInfo>=0x10000)
 		{
 			hud_player_info_t info; memset(&info,0,sizeof(info));
@@ -1418,12 +1441,19 @@ void DrawEngineEsp()
 			if(info.name==0 || !IsReadable((DWORD)info.name,1)) continue;	// empty slot
 			if(info.spectator) continue;
 			strncpy(namebuf,info.name,63); namebuf[63]=0;
+			if(info.model && IsReadable((DWORD)info.model,1))
+			{ strncpy(modelbuf,info.model,63); modelbuf[63]=0; }
 		}
-
-		if(EngDead(idx)) continue;
 
 		DWORD ent=(DWORD)((eng_GetEntityByIndex_t)fnEnt)(idx);
 		if(!ent || ReadInt(ent+ENT_PLAYER)==0) continue;
+
+		// alive/stale check: current_position keeps incrementing while a player
+		// receives network updates; it freezes on death / disconnect / round-end.
+		int cur=ReadInt(ent+ENT_CURPOS);
+		if(cur!=eng_lastcurpos[idx]) { eng_lastcurpos[idx]=cur; eng_lastchange[idx]=eng_frame; }
+		bool stale=(eng_frame-eng_lastchange[idx])>ENG_STALE_FRAMES;
+		if(EngDead(idx) || stale) continue;
 
 		float o[3];
 		o[0]=ReadFlt(ent+ENT_ORIGIN); o[1]=ReadFlt(ent+ENT_ORIGIN+4); o[2]=ReadFlt(ent+ENT_ORIGIN+8);
@@ -1453,7 +1483,8 @@ void DrawEngineEsp()
 		float cx=(fx+hx)*0.5f;
 		float x0=cx-bxw*0.5f, x1=cx+bxw*0.5f;
 
-		int team=EngTeam(idx);					// team color
+		int team=EngTeam(idx);					// team color (extra info if found,
+		if(team==0) team=TeamFromModel(modelbuf);	// else fall back to model name)
 		float r,g,b;
 		if(team==1)      { r=1.0f; g=0.25f; b=0.25f; }	// T  = red
 		else if(team==2) { r=0.25f;g=0.55f; b=1.0f;  }	// CT = blue
@@ -1485,7 +1516,7 @@ void DrawEngineEsp()
 	}
 
 	DrawText(8.0f,16.0f,0.2f,1.0f,0.4f,"ENGINE ESP: %i players  team=%s",
-		eng_players, eng_have_extra?"on":"off");
+		eng_players, eng_have_extra?"extra":"model");
 
 	(*orig_glMatrixMode)(GL_PROJECTION);
 	(*orig_glPopMatrix)();
