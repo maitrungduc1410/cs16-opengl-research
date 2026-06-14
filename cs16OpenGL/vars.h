@@ -28,6 +28,7 @@ typedef struct { // cvars (of course ;P)
 	int esp_box;	// tier1: 2D box ESP
 	int esp_dist;	// tier1: distance text ESP
 	int esp_line;	// tier1: snapline ESP
+	int esp_engine;	// tier2: engine entity-list ESP (real names/team/origin)
 	int	aimthru;
 	int	aim;
 	int	fov;
@@ -140,3 +141,12 @@ char modelfile[52]="";
 
 char modelpath[256]="";
 char configpath[256]="";
+
+// ---- tier2: engine entity-list ESP ----------------------------------------
+// Cached pointers/addresses we discover at runtime (0 = not found yet).
+DWORD	eng_table		=0;	// address of cl_enginefunc_t table (in client.dll data)
+DWORD	eng_extrainfo	=0;	// address of g_PlayerExtraInfo array (in client.dll)
+int		eng_local_idx	=0;	// entity index of the local player
+int		eng_local_team	=0;	// team number of the local player (0=unknown,1/2)
+int		eng_players		=0;	// players drawn last frame (for the debug readout)
+bool	eng_have_extra	=false;	// did we manage to locate g_PlayerExtraInfo?

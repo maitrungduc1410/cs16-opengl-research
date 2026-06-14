@@ -88,6 +88,7 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "esp_box %i;"	,&cvar.esp_box);
 					sscanf(str, "esp_dist %i;"	,&cvar.esp_dist);
 					sscanf(str, "esp_line %i;"	,&cvar.esp_line);
+					sscanf(str, "esp_engine %i;",&cvar.esp_engine);
 					sscanf(str, "lambert %i;"	,&cvar.lambert);
 					sscanf(str, "crosshair %i;"	,&cvar.cross);
 					sscanf(str, "fov %i;"		,&cvar.fov);
@@ -200,6 +201,7 @@ void HookInit(bool activate)
 		cvar.esp_box=0;
 		cvar.esp_dist=0;
 		cvar.esp_line=0;
+		cvar.esp_engine=0;
 		cvar.lambert=0;
 		cvar.cross=0;
 		cvar.wall=0;
@@ -920,8 +922,24 @@ void DrawMenu(int x, int y)  // maybe a struct would have been easier but when i
 		else { DrawText(x,y+241,0.7f,0.7f,1.0f,"ESP Line: Off"); }
 	}
 
-	if(menu.count>18) { menu.count=0; }
-	else if(menu.count<0) { menu.count=18; }
+	if(menu.count==19)
+	{
+		if(menu.select)
+		{
+			menu.select=false;
+			cvar.esp_engine=change(cvar.esp_engine);
+		}
+		if(cvar.esp_engine) { DrawText(x,y+254,1.0f,1.0f,1.0f,"ESP Engine: On"); }
+		else { DrawText(x,y+254,1.0f,1.0f,1.0f,"ESP Engine: Off"); }
+	}
+	else if(menu.count!=19)
+	{
+		if(cvar.esp_engine) { DrawText(x,y+254,0.7f,0.7f,1.0f,"ESP Engine: On"); }
+		else { DrawText(x,y+254,0.7f,0.7f,1.0f,"ESP Engine: Off"); }
+	}
+
+	if(menu.count>19) { menu.count=0; }
+	else if(menu.count<0) { menu.count=19; }
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1125,6 +1143,355 @@ bool IsVertTeam(long vertcount,int t)	// helper: does vertcount belong to team t
 		(vertcount==team[t].vert07) || (vertcount==team[t].vert08) ||
 		(vertcount==team[t].vert09) || (vertcount==team[t].vert10) ||
 		(vertcount==team[t].vert11) || (vertcount==team[t].vert12) );
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+//  TIER 2 - engine entity-list ESP
+//
+//  Instead of guessing players from vertex counts, we read the GoldSrc engine's
+//  own entity list. We locate the engine function table (cl_enginefunc_t) that
+//  the engine hands to client.dll, then call:
+//      slot 21  pfnGetPlayerInfo   -> real name / spectator flag
+//      slot 51  GetLocalPlayer     -> local cl_entity_t*
+//      slot 53  GetEntityByIndex   -> cl_entity_t* for any slot
+//      slot 82  pTriAPI            -> TriAPI; its slot 12 is WorldToScreen
+//  Entity/struct byte-offsets below are for engine build 4554 (the common one).
+//  Everything is wrapped in IsReadable() guards, so a wrong offset just yields
+//  no box instead of a crash. Approach ported from EnurDev/goldsrc-esp-overlay.
+//////////////////////////////////////////////////////////////////////////////////////////////////
+
+#define ENG_SLOT_GETPLAYERINFO		21	// cl_enginefunc_t indices (DWORD slots)
+#define ENG_SLOT_GETLOCALPLAYER		51
+#define ENG_SLOT_GETENTITYBYINDEX	53
+#define ENG_SLOT_PTRIAPI			82
+
+#define ENT_INDEX			0x000	// cl_entity_t: int  entity index
+#define ENT_PLAYER			0x004	// cl_entity_t: int  "is player" flag
+#define ENT_CURSTATE		0x2B0	// cl_entity_t: entity_state_t curstate
+#define ENT_ORIGIN			0xB48	// cl_entity_t: vec3 interpolated origin
+#define ES_ORIGIN			0x010	// entity_state_t::origin (vec3)
+#define ES_USEHULL			0x0C8	// entity_state_t::usehull (0 stand, 1 duck)
+
+#define EXTRA_STRIDE		0x68	// g_PlayerExtraInfo entry size
+#define EXTRA_TEAMNUMBER	0x2A	// short: team (1=T, 2=CT)
+#define EXTRA_DEAD			0x3C	// byte : 0=alive
+
+typedef struct {					// what pfnGetPlayerInfo fills in
+	char	*name;
+	short	ping;
+	BYTE	thisplayer;
+	BYTE	spectator;
+	BYTE	packetloss;
+	char	*model;
+	short	topcolor;
+	short	bottomcolor;
+	__int64	steamid;
+} hud_player_info_t;
+
+// engine fns are __cdecl while our DLL builds with /Gz (__stdcall), so the
+// calling convention MUST be stated explicitly or the stack gets corrupted.
+typedef void* (__cdecl *eng_GetLocalPlayer_t)(void);
+typedef void* (__cdecl *eng_GetEntityByIndex_t)(int idx);
+typedef void  (__cdecl *eng_GetPlayerInfo_t)(int idx, hud_player_info_t *info);
+typedef int   (__cdecl *eng_WorldToScreen_t)(float *world, float *screen);
+
+bool IsReadable(DWORD addr,DWORD len)	// is [addr,addr+len) committed & readable?
+{
+	if(addr==0 || len==0) return false;
+	MEMORY_BASIC_INFORMATION mbi;
+	if(!VirtualQuery((LPCVOID)addr,&mbi,sizeof(mbi))) return false;
+	if(mbi.State!=MEM_COMMIT) return false;
+	if(mbi.Protect & PAGE_GUARD) return false;
+	DWORD p=mbi.Protect & 0xFF;
+	if(!(p==PAGE_READONLY||p==PAGE_READWRITE||p==PAGE_WRITECOPY||
+		 p==PAGE_EXECUTE_READ||p==PAGE_EXECUTE_READWRITE||p==PAGE_EXECUTE_WRITECOPY))
+		return false;
+	return (addr+len) <= ((DWORD)mbi.BaseAddress + mbi.RegionSize);
+}
+
+DWORD ReadDW   (DWORD a){ return IsReadable(a,4)?*(DWORD*)a:0; }
+int   ReadInt  (DWORD a){ return IsReadable(a,4)?*(int*)a:0; }
+float ReadFlt  (DWORD a){ return IsReadable(a,4)?*(float*)a:0.0f; }
+short ReadShort(DWORD a){ return IsReadable(a,2)?*(short*)a:0; }
+BYTE  ReadByte (DWORD a){ return IsReadable(a,1)?*(BYTE*)a:0; }
+
+bool ModuleRange(const char *name,DWORD &base,DWORD &end)	// [base,end) via PE header
+{
+	HMODULE h=GetModuleHandleA(name);
+	if(!h) return false;
+	base=(DWORD)h;
+	IMAGE_DOS_HEADER *dos=(IMAGE_DOS_HEADER*)base;
+	if(dos->e_magic!=IMAGE_DOS_SIGNATURE) return false;
+	IMAGE_NT_HEADERS *nt=(IMAGE_NT_HEADERS*)(base+dos->e_lfanew);
+	if(nt->Signature!=IMAGE_NT_SIGNATURE) return false;
+	end=base+nt->OptionalHeader.SizeOfImage;
+	return true;
+}
+
+bool RegionReadable(MEMORY_BASIC_INFORMATION &mbi)
+{
+	DWORD p=mbi.Protect & 0xFF;
+	return (mbi.State==MEM_COMMIT) && !(mbi.Protect&PAGE_GUARD) &&
+		(p==PAGE_READONLY||p==PAGE_READWRITE||p==PAGE_WRITECOPY||
+		 p==PAGE_EXECUTE_READ||p==PAGE_EXECUTE_READWRITE||p==PAGE_EXECUTE_WRITECOPY);
+}
+
+// scan client.dll's data for the engine table: a run of >=8 consecutive
+// pointers that all land inside hw.dll, with slots 51 & 53 also valid.
+DWORD FindEngineTable()
+{
+	DWORD cl_base,cl_end,hw_base,hw_end;
+	if(!ModuleRange("client.dll",cl_base,cl_end)) return 0;
+	if(!ModuleRange("hw.dll",hw_base,hw_end))     return 0;
+
+	for(DWORD addr=cl_base; addr<cl_end; )
+	{
+		MEMORY_BASIC_INFORMATION mbi;
+		if(!VirtualQuery((LPCVOID)addr,&mbi,sizeof(mbi))) break;
+		DWORD region_end=(DWORD)mbi.BaseAddress+mbi.RegionSize;
+		if(region_end>cl_end) region_end=cl_end;
+		if(RegionReadable(mbi))
+		{
+			for(DWORD scan=addr; scan+4<=region_end; scan+=4)
+			{
+				int hits=0;
+				for(int j=0; (scan+(DWORD)(j+1)*4)<=region_end && j<64; j++)
+				{
+					DWORD v=*(DWORD*)(scan+j*4);
+					if(v>=hw_base && v<hw_end) hits++; else break;
+				}
+				if(hits>=8)
+				{
+					DWORD s51=*(DWORD*)(scan+ENG_SLOT_GETLOCALPLAYER*4);
+					DWORD s53=*(DWORD*)(scan+ENG_SLOT_GETENTITYBYINDEX*4);
+					if(s51>=hw_base&&s51<hw_end&&s53>=hw_base&&s53<hw_end)
+						return scan;
+				}
+			}
+		}
+		addr=region_end;
+	}
+	return 0;
+}
+
+// masked code-pattern scan; on match returns the DWORD read at +ptr_off
+DWORD ScanPattern(DWORD start,DWORD end,const BYTE *pat,const char *mask,int ptr_off)
+{
+	int len=(int)strlen(mask);
+	for(DWORD addr=start; addr<end; )
+	{
+		MEMORY_BASIC_INFORMATION mbi;
+		if(!VirtualQuery((LPCVOID)addr,&mbi,sizeof(mbi))) break;
+		DWORD region_end=(DWORD)mbi.BaseAddress+mbi.RegionSize;
+		if(region_end>end) region_end=end;
+		if(RegionReadable(mbi))
+		{
+			for(DWORD scan=addr; scan+(DWORD)len<=region_end; scan++)
+			{
+				bool match=true;
+				for(int i=0;i<len;i++)
+					if(mask[i]=='x' && *(BYTE*)(scan+i)!=pat[i]) { match=false; break; }
+				if(match)
+				{
+					DWORD pa=scan+ptr_off;
+					if(IsReadable(pa,4))
+					{
+						DWORD arr=*(DWORD*)pa;
+						if(arr>0x10000 && IsReadable(arr,EXTRA_STRIDE*33))
+							return arr;
+					}
+				}
+			}
+		}
+		addr=region_end;
+	}
+	return 0;
+}
+
+// locate client.dll's g_PlayerExtraInfo array (team/alive metadata)
+DWORD FindExtraInfo()
+{
+	DWORD cl_base,cl_end;
+	if(!ModuleRange("client.dll",cl_base,cl_end)) return 0;
+	BYTE pat[]={0x0F,0xBF,0x87,0xCC,0xCC,0xCC,0xCC,0x8B,0x16,0x50,0x68,0xCC,0xCC,0xCC,0xCC,
+		0x8B,0xCE,0xFF,0x52,0xCC,0x8D,0x4C,0xAD,0x00,0x66,0x8B,0x04,0x8D};
+	const char *mask="xxx????xxxx????xxxx?xxxxxxxx";
+	return ScanPattern(cl_base,cl_end,pat,mask,27);
+}
+
+bool EngineResolve()	// resolve & cache the engine table; true when usable
+{
+	if(eng_table==0 || ReadDW(eng_table+ENG_SLOT_GETLOCALPLAYER*4)==0)
+		eng_table=FindEngineTable();
+	if(eng_table==0) return false;
+	if(!eng_have_extra)
+	{
+		eng_extrainfo=FindExtraInfo();
+		eng_have_extra=(eng_extrainfo!=0);
+	}
+	return true;
+}
+
+DWORD EngFn(int slot){ return ReadDW(eng_table+slot*4); }
+
+bool EngWorldToScreen(float *world,float *screen)
+{
+	DWORD tri=EngFn(ENG_SLOT_PTRIAPI);
+	if(tri<0x10000) return false;
+	DWORD w2s=ReadDW(tri+12*4);		// TriAPI slot 12 = WorldToScreen
+	if(w2s==0) return false;
+	return ((eng_WorldToScreen_t)w2s)(world,screen)==0;	// 0 = in front of camera
+}
+
+int EngTeam(int idx)
+{
+	if(!eng_have_extra || idx<0 || idx>32) return 0;
+	return ReadShort(eng_extrainfo+idx*EXTRA_STRIDE+EXTRA_TEAMNUMBER);
+}
+
+bool EngDead(int idx)
+{
+	if(!eng_have_extra || idx<0 || idx>32) return false;	// can't tell -> alive
+	return ReadByte(eng_extrainfo+idx*EXTRA_STRIDE+EXTRA_DEAD)!=0;
+}
+
+// Draw ESP for every player in the engine entity list. Called each frame from
+// the wglSwapBuffers hook, in its own 2D pixel-space pass.
+void DrawEngineEsp()
+{
+	eng_players=0;
+	if(!cvar.esp_engine) return;
+
+	GLint vpe[4];
+	(*orig_glGetIntegerv)(GL_VIEWPORT,vpe);
+	float sw=(float)vpe[2], sh=(float)vpe[3];
+	if(sw<=0||sh<=0) return;
+
+	bool ready=EngineResolve();
+
+	// 2D pixel-space overlay (top-left origin, y down)
+	(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
+	(*orig_glDisable)(GL_DEPTH_TEST);
+	(*orig_glDisable)(GL_TEXTURE_2D);
+	(*orig_glEnable)(GL_BLEND);
+	(*orig_glBlendFunc)(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+	(*orig_glMatrixMode)(GL_PROJECTION);
+	(*orig_glPushMatrix)();
+	(*orig_glLoadIdentity)();
+	(*orig_glOrtho)(0,sw,sh,0,-1,1);
+	(*orig_glMatrixMode)(GL_MODELVIEW);
+	(*orig_glPushMatrix)();
+	(*orig_glLoadIdentity)();
+
+	DWORD fnLocal=ready?EngFn(ENG_SLOT_GETLOCALPLAYER):0;
+	DWORD fnEnt  =ready?EngFn(ENG_SLOT_GETENTITYBYINDEX):0;
+	DWORD fnInfo =ready?EngFn(ENG_SLOT_GETPLAYERINFO):0;
+	if(!ready || fnLocal<0x10000 || fnEnt<0x10000)
+	{
+		DrawText(8.0f,16.0f,1.0f,0.7f,0.2f,"ENGINE ESP: searching engine table (start a game)...");
+		(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPopMatrix)();
+		(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPopMatrix)();
+		(*orig_glPopAttrib)();
+		return;
+	}
+
+	float lo[3]={0,0,0};
+	DWORD local=(DWORD)((eng_GetLocalPlayer_t)fnLocal)();
+	if(local)
+	{
+		lo[0]=ReadFlt(local+ENT_ORIGIN);
+		lo[1]=ReadFlt(local+ENT_ORIGIN+4);
+		lo[2]=ReadFlt(local+ENT_ORIGIN+8);
+		eng_local_idx =ReadInt(local+ENT_INDEX);
+		eng_local_team=EngTeam(eng_local_idx);
+	}
+
+	for(int idx=1; idx<=32; idx++)
+	{
+		if(idx==eng_local_idx) continue;
+
+		char namebuf[64]="";
+		if(fnInfo>=0x10000)
+		{
+			hud_player_info_t info; memset(&info,0,sizeof(info));
+			((eng_GetPlayerInfo_t)fnInfo)(idx,&info);
+			if(info.name==0 || !IsReadable((DWORD)info.name,1)) continue;	// empty slot
+			if(info.spectator) continue;
+			strncpy(namebuf,info.name,63); namebuf[63]=0;
+		}
+
+		if(EngDead(idx)) continue;
+
+		DWORD ent=(DWORD)((eng_GetEntityByIndex_t)fnEnt)(idx);
+		if(!ent || ReadInt(ent+ENT_PLAYER)==0) continue;
+
+		float o[3];
+		o[0]=ReadFlt(ent+ENT_ORIGIN); o[1]=ReadFlt(ent+ENT_ORIGIN+4); o[2]=ReadFlt(ent+ENT_ORIGIN+8);
+		if(o[0]==0&&o[1]==0&&o[2]==0)	// fallback: entity_state origin
+		{
+			DWORD cs=ent+ENT_CURSTATE;
+			o[0]=ReadFlt(cs+ES_ORIGIN); o[1]=ReadFlt(cs+ES_ORIGIN+4); o[2]=ReadFlt(cs+ES_ORIGIN+8);
+			if(o[0]==0&&o[1]==0&&o[2]==0) continue;
+		}
+
+		int usehull=ReadInt(ent+ENT_CURSTATE+ES_USEHULL);
+		float halfh=(usehull==1)?18.0f:36.0f;	// duck vs stand half-height (units)
+		float zoff =(usehull==1)?6.0f :0.0f;
+
+		float feet[3]={o[0],o[1],o[2]-halfh+zoff};
+		float head[3]={o[0],o[1],o[2]+halfh+zoff};
+		float sfeet[3],shead[3];
+		if(!EngWorldToScreen(feet,sfeet)) continue;
+		if(!EngWorldToScreen(head,shead)) continue;
+
+		float fx=(sfeet[0]*0.5f+0.5f)*sw, fy=sh-(sfeet[1]*0.5f+0.5f)*sh;
+		float hx=(shead[0]*0.5f+0.5f)*sw, hy=sh-(shead[1]*0.5f+0.5f)*sh;
+
+		float y0=(hy<fy)?hy:fy, y1=(hy<fy)?fy:hy;	// top / bottom
+		float bxh=y1-y0; if(bxh<4.0f) bxh=4.0f;
+		float bxw=bxh*0.45f;
+		float cx=(fx+hx)*0.5f;
+		float x0=cx-bxw*0.5f, x1=cx+bxw*0.5f;
+
+		int team=EngTeam(idx);					// team color
+		float r,g,b;
+		if(team==1)      { r=1.0f; g=0.25f; b=0.25f; }	// T  = red
+		else if(team==2) { r=0.25f;g=0.55f; b=1.0f;  }	// CT = blue
+		else             { r=0.25f;g=1.0f;  b=0.25f; }	// unknown = green
+
+		(*orig_glLineWidth)(1.5f);
+		(*orig_glColor3f)(r,g,b);
+		(*orig_glBegin)(GL_LINE_LOOP);
+		(*orig_glVertex2f)(x0,y0); (*orig_glVertex2f)(x1,y0);
+		(*orig_glVertex2f)(x1,y1); (*orig_glVertex2f)(x0,y1);
+		(*orig_glEnd)();
+
+		if(cvar.esp_line)
+		{
+			(*orig_glLineWidth)(1.0f);
+			(*orig_glBegin)(GL_LINES);
+			(*orig_glVertex2f)(sw*0.5f,sh);
+			(*orig_glVertex2f)(cx,y1);
+			(*orig_glEnd)();
+		}
+
+		DrawText(cx-(float)strlen(namebuf)*4.0f, y0-14.0f, r,g,b, "%s", namebuf);
+
+		float dx=lo[0]-o[0], dy=lo[1]-o[1], dz=lo[2]-o[2];
+		float dist=(float)sqrt(dx*dx+dy*dy+dz*dz)/39.37f;	// units -> meters
+		DrawText(cx-12.0f, y1+2.0f, 1.0f,1.0f,1.0f, "%.0fm", dist);
+
+		eng_players++;
+	}
+
+	DrawText(8.0f,16.0f,0.2f,1.0f,0.4f,"ENGINE ESP: %i players  team=%s",
+		eng_players, eng_have_extra?"on":"off");
+
+	(*orig_glMatrixMode)(GL_PROJECTION);
+	(*orig_glPopMatrix)();
+	(*orig_glMatrixMode)(GL_MODELVIEW);
+	(*orig_glPopMatrix)();
+	(*orig_glPopAttrib)();
 }
 
 // x,y  = projected head point in NDC (-1..1)
@@ -1846,6 +2213,8 @@ PROC sys_wglGetProcAddress(LPCSTR ProcName)
 
 void sys_wglSwapBuffers(HDC hDC)
 {
+	if(hookactive)			// tier2: draw engine entity-list ESP as the last thing each frame
+		DrawEngineEsp();
 	viewportcount=0;		// reset viewport count, cuz this is the last function called every frame
 	(*orig_wglSwapBuffers) (hDC);
 }
