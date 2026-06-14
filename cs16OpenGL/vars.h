@@ -25,6 +25,9 @@ typedef struct {		//player struct
 typedef struct { // cvars (of course ;P)
 	int cross;
 	int esp;
+	int esp_box;	// tier1: 2D box ESP
+	int esp_dist;	// tier1: distance text ESP
+	int esp_line;	// tier1: snapline ESP
 	int	aimthru;
 	int	aim;
 	int	fov;

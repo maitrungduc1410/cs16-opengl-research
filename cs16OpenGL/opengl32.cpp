@@ -85,6 +85,9 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "target %i;"	,&cvar.target);
 					sscanf(str, "recoil %i;"	,&cvar.recoil);
 					sscanf(str, "esp %i;"		,&cvar.esp);
+					sscanf(str, "esp_box %i;"	,&cvar.esp_box);
+					sscanf(str, "esp_dist %i;"	,&cvar.esp_dist);
+					sscanf(str, "esp_line %i;"	,&cvar.esp_line);
 					sscanf(str, "lambert %i;"	,&cvar.lambert);
 					sscanf(str, "crosshair %i;"	,&cvar.cross);
 					sscanf(str, "fov %i;"		,&cvar.fov);
@@ -194,6 +197,9 @@ void HookInit(bool activate)
 		cvar.aim=0;
 		cvar.aimthru=0;
 		cvar.esp=0;
+		cvar.esp_box=0;
+		cvar.esp_dist=0;
+		cvar.esp_line=0;
 		cvar.lambert=0;
 		cvar.cross=0;
 		cvar.wall=0;
@@ -866,8 +872,56 @@ void DrawMenu(int x, int y)  // maybe a struct would have been easier but when i
 		else if(!cvar.cross) { DrawText(x,y+202,0.7f,0.7f,1.0f,"Crosshair: Off"); }
 	}
 
-	if(menu.count>15) { menu.count=0; }
-	else if(menu.count<0) { menu.count=15; }
+	if(menu.count==16)
+	{
+		if(menu.select)
+		{
+			menu.select=false;
+			cvar.esp_box=change(cvar.esp_box);
+		}
+		if(cvar.esp_box) { DrawText(x,y+215,1.0f,1.0f,1.0f,"ESP Box: On"); }
+		else { DrawText(x,y+215,1.0f,1.0f,1.0f,"ESP Box: Off"); }
+	}
+	else if(menu.count!=16)
+	{
+		if(cvar.esp_box) { DrawText(x,y+215,0.7f,0.7f,1.0f,"ESP Box: On"); }
+		else { DrawText(x,y+215,0.7f,0.7f,1.0f,"ESP Box: Off"); }
+	}
+
+	if(menu.count==17)
+	{
+		if(menu.select)
+		{
+			menu.select=false;
+			cvar.esp_dist=change(cvar.esp_dist);
+		}
+		if(cvar.esp_dist) { DrawText(x,y+228,1.0f,1.0f,1.0f,"ESP Dist: On"); }
+		else { DrawText(x,y+228,1.0f,1.0f,1.0f,"ESP Dist: Off"); }
+	}
+	else if(menu.count!=17)
+	{
+		if(cvar.esp_dist) { DrawText(x,y+228,0.7f,0.7f,1.0f,"ESP Dist: On"); }
+		else { DrawText(x,y+228,0.7f,0.7f,1.0f,"ESP Dist: Off"); }
+	}
+
+	if(menu.count==18)
+	{
+		if(menu.select)
+		{
+			menu.select=false;
+			cvar.esp_line=change(cvar.esp_line);
+		}
+		if(cvar.esp_line) { DrawText(x,y+241,1.0f,1.0f,1.0f,"ESP Line: On"); }
+		else { DrawText(x,y+241,1.0f,1.0f,1.0f,"ESP Line: Off"); }
+	}
+	else if(menu.count!=18)
+	{
+		if(cvar.esp_line) { DrawText(x,y+241,0.7f,0.7f,1.0f,"ESP Line: On"); }
+		else { DrawText(x,y+241,0.7f,0.7f,1.0f,"ESP Line: Off"); }
+	}
+
+	if(menu.count>18) { menu.count=0; }
+	else if(menu.count<0) { menu.count=18; }
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1062,10 +1116,34 @@ int IsPointVisible(GLdouble x, GLdouble y, GLdouble z) // if aimthru is off, che
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
-bool DrawPlayerEsp(float x,float y,long vertcount)
+bool IsVertTeam(long vertcount,int t)	// helper: does vertcount belong to team t?
+{
+	return (
+		(vertcount==team[t].vert01) || (vertcount==team[t].vert02) ||
+		(vertcount==team[t].vert03) || (vertcount==team[t].vert04) ||
+		(vertcount==team[t].vert05) || (vertcount==team[t].vert06) ||
+		(vertcount==team[t].vert07) || (vertcount==team[t].vert08) ||
+		(vertcount==team[t].vert09) || (vertcount==team[t].vert10) ||
+		(vertcount==team[t].vert11) || (vertcount==team[t].vert12) );
+}
+
+// x,y  = projected head point in NDC (-1..1)
+// fx,fy = projected feet point in NDC (-1..1)
+// dist  = distance to player (raster distance units)
+bool DrawPlayerEsp(float x,float y,float fx,float fy,double dist,long vertcount)
 {
 	GLint cm;
 	GLfloat color[4];
+
+	bool isT1 = IsVertTeam(vertcount,1);
+	bool isT0 = IsVertTeam(vertcount,0);
+	if(!isT0 && !isT1)
+		return false;
+
+	// team color: team1 = blue, team0 = red
+	float r = isT1 ? 0.0f : 1.0f;
+	float g = 0.0f;
+	float b = isT1 ? 1.0f : 0.0f;
 
 	(*orig_glGetIntegerv)(GL_MATRIX_MODE,&cm);
 	(*orig_glGetDoublev)(GL_MODELVIEW_MATRIX,mm);
@@ -1079,27 +1157,19 @@ bool DrawPlayerEsp(float x,float y,long vertcount)
 	(*orig_glPushMatrix)();
 	(*orig_glLoadIdentity)();
 	(*orig_glGetFloatv)(GL_CURRENT_COLOR, color);
-	(*orig_glColor4f)(0.0f, 0.0f, 1.0f, 0.6f);
 
-	if (
-		(vertcount==team[1].vert01) ||
-		(vertcount==team[1].vert02) ||
-		(vertcount==team[1].vert03) ||
-		(vertcount==team[1].vert04) ||
-		(vertcount==team[1].vert05) ||
-		(vertcount==team[1].vert06) ||
-		(vertcount==team[1].vert07) ||
-		(vertcount==team[1].vert08) ||
-		(vertcount==team[1].vert09) ||
-		(vertcount==team[1].vert10) ||
-		(vertcount==team[1].vert11) ||
-		(vertcount==team[1].vert12)  ) // team 1
+	float cx  = (x + fx) * 0.5f;	// horizontal center of the model
+	float top = (y > fy) ? y  : fy;	// head (higher on screen)
+	float bot = (y > fy) ? fy : y;	// feet
+
+	// --- original ESP: head triangle + target rectangle ---
+	if(cvar.esp)
 	{
-		if(cvar.target==1)  // rectangle just drawn on target team
+		if( (isT1 && cvar.target==1) || (isT0 && cvar.target==0) )	// target marker
 		{
 			(*orig_glLineWidth)(2.0f);
 			(*orig_glBegin)(GL_LINE_STRIP);
-			(*orig_glColor3f)(0.0f,0.0f,1.0f);
+			(*orig_glColor3f)(r,g,b);
 			(*orig_glVertex2f)(x-0.015,y-0.02);
 			(*orig_glVertex2f)(x+0.015,y-0.02);
 			(*orig_glVertex2f)(x+0.015,y-0.05);
@@ -1107,46 +1177,44 @@ bool DrawPlayerEsp(float x,float y,long vertcount)
 			(*orig_glVertex2f)(x-0.015,y-0.02);
 			(*orig_glEnd)();
 		}
-		(*orig_glBegin)(GL_TRIANGLES);	// triangle
-		(*orig_glColor4ub)(0,0,255,255);
+		(*orig_glBegin)(GL_TRIANGLES);
+		(*orig_glColor3f)(r,g,b);
 		(*orig_glVertex2f)(x    ,y+0.06);
 		(*orig_glVertex2f)(x-0.02,y+0.1);
 		(*orig_glVertex2f)(x+0.02,y+0.1);
 		(*orig_glEnd)();
 	}
-	if (
-		(vertcount==team[0].vert01) ||
-		(vertcount==team[0].vert02) ||
-		(vertcount==team[0].vert03) ||
-		(vertcount==team[0].vert04) ||
-		(vertcount==team[0].vert05) ||
-		(vertcount==team[0].vert06) ||
-		(vertcount==team[0].vert07) ||
-		(vertcount==team[0].vert08) ||
-		(vertcount==team[0].vert09) ||
-		(vertcount==team[0].vert10) ||
-		(vertcount==team[0].vert11) ||
-		(vertcount==team[0].vert12)  ) // team 0
+
+	// --- tier1: 2D bounding box (width derived from on-screen height) ---
+	if(cvar.esp_box)
 	{
-		if(cvar.target==0) // rectangle just drawn on target team
-		{
-			(*orig_glLineWidth)(2.0f);
-			(*orig_glBegin)(GL_LINE_STRIP);
-			(*orig_glColor3f)(1.0f,0.0f,0.0f);
-			(*orig_glVertex2f)(x-0.015,y-0.02);
-			(*orig_glVertex2f)(x+0.015,y-0.02);
-			(*orig_glVertex2f)(x+0.015,y-0.05);
-			(*orig_glVertex2f)(x-0.015,y-0.05);
-			(*orig_glVertex2f)(x-0.015,y-0.02);
-			(*orig_glEnd)();
-		}			
-		(*orig_glBegin)(GL_TRIANGLES); // triangle
-		(*orig_glColor4ub)(255,0,0,255);
-		(*orig_glVertex2f)(x    ,y+0.06);
-		(*orig_glVertex2f)(x-0.02,y+0.1);
-		(*orig_glVertex2f)(x+0.02,y+0.1);
+		float h  = top - bot;
+		float hw = h * 0.22f;		// human-ish aspect ratio
+		if(hw < 0.008f) hw = 0.008f;
+		(*orig_glLineWidth)(1.5f);
+		(*orig_glColor3f)(r,g,b);
+		(*orig_glBegin)(GL_LINE_LOOP);
+		(*orig_glVertex2f)(cx-hw, top+0.02f);
+		(*orig_glVertex2f)(cx+hw, top+0.02f);
+		(*orig_glVertex2f)(cx+hw, bot);
+		(*orig_glVertex2f)(cx-hw, bot);
 		(*orig_glEnd)();
 	}
+
+	// --- tier1: snapline from bottom-center of screen to the feet ---
+	if(cvar.esp_line)
+	{
+		(*orig_glLineWidth)(1.0f);
+		(*orig_glColor3f)(r,g,b);
+		(*orig_glBegin)(GL_LINES);
+		(*orig_glVertex2f)(0.0f,-1.0f);
+		(*orig_glVertex2f)(cx, bot);
+		(*orig_glEnd)();
+	}
+
+	// --- tier1: distance text (raster pos uses the identity matrices set above) ---
+	if(cvar.esp_dist)
+		DrawText(cx-0.02f, top+0.05f, 1.0f,1.0f,1.0f, "%.0f", dist);
 
 	(*orig_glMatrixMode)(GL_PROJECTION);
 	(*orig_glPopMatrix)();   
@@ -1531,11 +1599,13 @@ void sys_glShadeModel (GLenum mode)
 				else
 				{
 					player.iscorpse=false;
-					if(cvar.esp)			// if player is alive draw ESP
+					if(cvar.esp || cvar.esp_box || cvar.esp_dist || cvar.esp_line)	// if player is alive draw ESP
 					{
-						float px = (float)(wx/(vp[2]/2))-1;
+						float px = (float)(wx/(vp[2]/2))-1;		// head (highest point)
 						float py = (float)(wy/(vp[3]/2))-1;
-						DrawPlayerEsp(px,py,player.vertices);
+						float pfx = (float)(wx2/(vp[2]/2))-1;	// feet (lowest point)
+						float pfy = (float)(wy2/(vp[3]/2))-1;
+						DrawPlayerEsp(px,py,pfx,pfy,player.distance,player.vertices);
 					}
 				}
 			}
