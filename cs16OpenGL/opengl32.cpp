@@ -1601,7 +1601,11 @@ static DWORD um_node_curwpn  = 0;
 
 int __cdecl Hk_Health(const char *n,int s,void *b)
 {
-	if(b && s>=1) me_health=*(unsigned char*)b;
+	if(b && s>=1)
+	{
+		me_health=*(unsigned char*)b;
+		me_dead=(me_health<=0);		// server sends Health=0 on death, Health>0 on (re)spawn
+	}
 	return um_org_health ? um_org_health(n,s,b) : 1;
 }
 int __cdecl Hk_Battery(const char *n,int s,void *b)
@@ -1714,10 +1718,10 @@ void HookOwnMsgs()
 // = current clip. Each tick = 10%. Drawn inside the same 2D pass as DrawEngineEsp.
 void DrawOwnHud(float sw,float sh)
 {
-	// Hide the HUD while dead / before the first Health message arrives, unless
-	// "Show when die" is on. me_health stays 1..100 only while alive in a round
-	// (server sends Health=0 on death, Health=100 on respawn).
-	if(me_health<=0 && !cvar.hud_die) return;
+	// "Show when die" ONLY controls visibility while dead. While alive (or before we
+	// have captured any HP yet) the HUD always shows. me_dead is true only after an
+	// actual Health=0 message, so a not-yet-captured HP is never mistaken for death.
+	if(me_dead && !cvar.hud_die) return;
 
 	// ui_scale is computed once in BuildFont() from the screen resolution (which is
 	// fixed for the whole session), so the HUD scales the same way as the menu / ESP
@@ -1968,11 +1972,11 @@ void sys_glAlphaFunc (GLenum func,  GLclampf ref)
 
 void sys_glBegin (GLenum mode)
 {
-	if ((cvar.wall==1) && (bWall) && (mode==GL_TRIANGLE_FAN || mode==GL_TRIANGLE_STRIP))
+	if ((cvar.wall==1) && (bWall) && (!b2D) && (mode==GL_TRIANGLE_FAN || mode==GL_TRIANGLE_STRIP))
 	{
 		(*orig_glDisable)(GL_DEPTH_TEST);
 	}
-	else if((cvar.wall==2) && (bWall))
+	else if((cvar.wall==2) && (bWall) && (!b2D))
 	{
 		(*orig_glGetFloatv)(GL_CURRENT_COLOR, curcolor);
 		(*orig_glDisable)(GL_DEPTH_TEST);
@@ -1980,7 +1984,7 @@ void sys_glBegin (GLenum mode)
 		(*orig_glBlendFunc)(GL_SRC_ALPHA, GL_ONE);
 		(*orig_glColor4f)(curcolor[0], curcolor[1], curcolor[2], 255.0);
 	}
-	else if((cvar.wall==3) && (bWall))
+	else if((cvar.wall==3) && (bWall) && (!b2D))
 	{
 		(*orig_glGetFloatv)(GL_CURRENT_COLOR, curcolor);
 		(*orig_glDisable)(GL_DEPTH_TEST);
@@ -2191,11 +2195,13 @@ void sys_glEnd (void)
 
 void sys_glFrustum (GLdouble left,  GLdouble right,  GLdouble bottom,  GLdouble top,  GLdouble zNear,  GLdouble zFar)
 {
+	b2D=false;		// perspective projection => we're in the 3D world pass
 	(*orig_glFrustum) (left, right, bottom, top, zNear, zFar);
 }
 
 void sys_glOrtho (GLdouble left,  GLdouble right,  GLdouble bottom,  GLdouble top,  GLdouble zNear,  GLdouble zFar)
 {
+	b2D=true;		// orthographic projection => we're in the 2D HUD/scope pass
 	(*orig_glOrtho) (left, right, bottom, top, zNear, zFar);
 }
 

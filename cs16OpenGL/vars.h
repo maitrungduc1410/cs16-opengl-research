@@ -122,6 +122,8 @@ bool bSmoke=false;
 bool bScope=false;
 bool bWall=false;
 bool bSky=false;
+bool b2D=false;		// true while the engine is in its 2D/ortho pass (HUD, scope, sprites)
+					// -> used to keep the wallhack from touching 2D draws like the AWP scope
 bool ch=false;
 bool key_init=false;
 bool key_check=false;
@@ -164,6 +166,9 @@ DWORD	eng_lastchange[33]={0};	// GetTickCount() when current_position last chang
 // we get the same data the vanilla HUD does, then forward to the originals so
 // the normal HUD keeps working.
 int		me_health		=0;		// local player health   (Health msg, 0..100)
+bool	me_dead			=false;	// true only after a Health msg of 0 (we actually died);
+								// stays false until then, so "alive but HP not captured
+								// yet" is NOT treated as dead.
 int		me_armor		=0;		// local player armor    (Battery msg, 0..100)
 int		me_clip			=-1;	// current weapon clip   (CurWeapon msg, -1 = no clip)
 int		me_weaponid		=-1;	// active weapon id      (CurWeapon msg)
