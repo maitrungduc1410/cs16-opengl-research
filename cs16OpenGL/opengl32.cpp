@@ -2077,11 +2077,26 @@ void sys_glAlphaFunc (GLenum func,  GLclampf ref)
 
 void sys_glBegin (GLenum mode)
 {
-	if ((cvar.wall==1) && (bWall) && (!b2D) && (mode==GL_TRIANGLE_FAN || mode==GL_TRIANGLE_STRIP))
+	// Is this draw part of the 3D world (where the wallhack belongs)? bWall is set on
+	// every glPushMatrix, so it's also true during the 2D HUD/scope pass; and b2D
+	// (from glOrtho/glFrustum call order) isn't reliable for the sniper scope when
+	// switching zoom levels. So when the wallhack is about to fire, confirm against
+	// the LIVE projection matrix: perspective has [2][3]==-1, ortho has it ==0. This
+	// keeps the wallhack out of the scope/crosshair pass (no square scope, no lost
+	// crosshair) no matter how the engine set the projection up.
+	bool world3d = !b2D;
+	if (cvar.wall && bWall && world3d)
+	{
+		GLfloat proj[16];
+		(*orig_glGetFloatv)(GL_PROJECTION_MATRIX, proj);
+		if (proj[11] == 0.0f) world3d = false;	// orthographic => 2D overlay, leave it alone
+	}
+
+	if ((cvar.wall==1) && (bWall) && (world3d) && (mode==GL_TRIANGLE_FAN || mode==GL_TRIANGLE_STRIP))
 	{
 		(*orig_glDisable)(GL_DEPTH_TEST);
 	}
-	else if((cvar.wall==2) && (bWall) && (!b2D))
+	else if((cvar.wall==2) && (bWall) && (world3d))
 	{
 		(*orig_glGetFloatv)(GL_CURRENT_COLOR, curcolor);
 		(*orig_glDisable)(GL_DEPTH_TEST);
@@ -2089,7 +2104,7 @@ void sys_glBegin (GLenum mode)
 		(*orig_glBlendFunc)(GL_SRC_ALPHA, GL_ONE);
 		(*orig_glColor4f)(curcolor[0], curcolor[1], curcolor[2], 255.0);
 	}
-	else if((cvar.wall==3) && (bWall) && (!b2D))
+	else if((cvar.wall==3) && (bWall) && (world3d))
 	{
 		(*orig_glGetFloatv)(GL_CURRENT_COLOR, curcolor);
 		(*orig_glDisable)(GL_DEPTH_TEST);
