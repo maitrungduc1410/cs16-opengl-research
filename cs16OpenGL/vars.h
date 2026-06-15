@@ -165,7 +165,10 @@ DWORD	eng_lastchange[33]={0};	// GetTickCount() when current_position last chang
 // We patch the engine's "Health"/"Battery"/"CurWeapon" user-message handlers so
 // we get the same data the vanilla HUD does, then forward to the originals so
 // the normal HUD keeps working.
-int		me_health		=0;		// local player health   (Health msg, 0..100)
+int		me_health		=100;	// local player health   (Health msg, 0..100). Defaults to
+								// 100 because the spawn "Health=100" message is sent once and
+								// may be missed before our hook installs; you always spawn at
+								// 100, so this shows the correct value until the first update.
 bool	me_dead			=false;	// true only after a Health msg of 0 (we actually died);
 								// stays false until then, so "alive but HP not captured
 								// yet" is NOT treated as dead.
