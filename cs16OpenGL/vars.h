@@ -29,6 +29,7 @@ typedef struct { // cvars (of course ;P)
 	int esp_dist;	// tier1: distance text ESP
 	int esp_line;	// tier1: snapline ESP
 	int esp_engine;	// tier2: engine entity-list ESP (real names/team/origin)
+	int esp_hud;	// own HP/armor/ammo arcs around the crosshair
 	int	aimthru;
 	int	aim;
 	int	fov;
@@ -150,6 +151,25 @@ int		eng_local_idx	=0;	// entity index of the local player
 int		eng_local_team	=0;	// team number of the local player (0=unknown,1/2)
 int		eng_players		=0;	// players drawn last frame (for the debug readout)
 bool	eng_have_extra	=false;	// did we manage to locate g_PlayerExtraInfo?
-int		eng_frame		=0;	// our own frame counter (for staleness checks)
+int		eng_frame		=0;	// our own frame counter (kept for misc use)
 int		eng_lastcurpos[33]={0};	// cl_entity current_position last seen, per slot
-int		eng_lastchange[33]={0};	// frame at which current_position last changed
+DWORD	eng_lastchange[33]={0};	// GetTickCount() when current_position last changed
+
+// ---- own HUD: health / armor / ammo (via user-message hooks) ---------------
+// We patch the engine's "Health"/"Battery"/"CurWeapon" user-message handlers so
+// we get the same data the vanilla HUD does, then forward to the originals so
+// the normal HUD keeps working.
+int		me_health		=0;		// local player health   (Health msg, 0..100)
+int		me_armor		=0;		// local player armor    (Battery msg, 0..100)
+int		me_clip			=-1;	// current weapon clip   (CurWeapon msg, -1 = no clip)
+int		me_weaponid		=-1;	// active weapon id      (CurWeapon msg)
+int		me_maxclip[64]	={0};	// biggest clip ever seen per weapon id (for the %)
+bool	msg_hooked		=false;	// did we install the user-message hooks yet?
+int		eng_msg_tries	=0;		// how many times we tried to find the msg nodes
+
+// ---- UI scaling + menu animation -------------------------------------------
+float	ui_scale		=1.0f;	// text/menu scale vs 1080p baseline (set in BuildFont)
+float	gTextAlpha		=1.0f;	// global alpha multiplier for DrawText (menu fade)
+float	menu_alpha		=0.0f;	// 0..1 fade state of the menu
+float	menu_sel_anim	=0.0f;	// animated (smoothly sliding) selected-row index
+DWORD	menu_last_tick	=0;		// last GetTickCount() for time-based animation

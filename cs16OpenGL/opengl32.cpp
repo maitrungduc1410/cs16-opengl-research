@@ -89,6 +89,7 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "esp_dist %i;"	,&cvar.esp_dist);
 					sscanf(str, "esp_line %i;"	,&cvar.esp_line);
 					sscanf(str, "esp_engine %i;",&cvar.esp_engine);
+					sscanf(str, "esp_hud %i;"	,&cvar.esp_hud);
 					sscanf(str, "lambert %i;"	,&cvar.lambert);
 					sscanf(str, "crosshair %i;"	,&cvar.cross);
 					sscanf(str, "fov %i;"		,&cvar.fov);
@@ -202,6 +203,7 @@ void HookInit(bool activate)
 		cvar.esp_dist=0;
 		cvar.esp_line=0;
 		cvar.esp_engine=0;
+		cvar.esp_hud=0;
 		cvar.lambert=0;
 		cvar.cross=0;
 		cvar.wall=0;
@@ -486,8 +488,17 @@ GLvoid BuildFont(GLvoid) // loads the opengl font into memory
 	hDC=wglGetCurrentDC();
 	HFONT	font;										
 	HFONT	oldfont;									
+
+	// scale the bitmap font to the screen so text isn't tiny on 4K. Baseline is
+	// 1080p; clamp so it never gets smaller than the original or absurdly big.
+	GLint vpf[4]; (*orig_glGetIntegerv)(GL_VIEWPORT,vpf);
+	ui_scale = (vpf[3]>0) ? (float)vpf[3]/1080.0f : 1.0f;
+	if(ui_scale<1.0f) ui_scale=1.0f;
+	if(ui_scale>2.5f) ui_scale=2.5f;
+	int fh = (int)(10.0f*ui_scale + 0.5f);	// font height in px (10 at 1080p)
+
 	base = (*orig_glGenLists)(96);								
-	font = CreateFont(-10,0,0,0,FW_BOLD,FALSE,FALSE,FALSE,ANSI_CHARSET,OUT_TT_PRECIS,CLIP_DEFAULT_PRECIS,ANTIALIASED_QUALITY,FF_DONTCARE|DEFAULT_PITCH,
+	font = CreateFont(-fh,0,0,0,FW_BOLD,FALSE,FALSE,FALSE,ANSI_CHARSET,OUT_TT_PRECIS,CLIP_DEFAULT_PRECIS,ANTIALIASED_QUALITY,FF_DONTCARE|DEFAULT_PITCH,
 	"Verdana");
 	oldfont = (HFONT)SelectObject(hDC, font);           
 	wglUseFontBitmaps(hDC, 32, 96, base);				
@@ -519,7 +530,7 @@ void DrawText(float x, float y,float r, float g, float b, const char *fmt, ...)
 	(*orig_glGetFloatv)(GL_CURRENT_COLOR, curcolor);
 	(*orig_glGetFloatv)(GL_CURRENT_RASTER_POSITION, position);
 	(*orig_glDisable)(GL_TEXTURE_2D); 
-	(*orig_glColor4f)(0.0f,0.0f,0.0f,1.0f);
+	(*orig_glColor4f)(0.0f,0.0f,0.0f,gTextAlpha);
 	(*orig_glRasterPos2f)(x+1,y+1);
 
 	//glPrint(text) - shadow
@@ -530,9 +541,9 @@ void DrawText(float x, float y,float r, float g, float b, const char *fmt, ...)
 	(*orig_glEnable)(GL_TEXTURE_2D); 
 
 	(*orig_glDisable)(GL_TEXTURE_2D); 
-	(*orig_glColor4f)(r,g,b,1.0f);
+	(*orig_glColor4f)(r,g,b,gTextAlpha);
 	(*orig_glRasterPos2f)(x,y);
-	(*orig_glColor4f)(r,g,b,1.0f);
+	(*orig_glColor4f)(r,g,b,gTextAlpha);
 
 	//glPrint(text);
 	(*orig_glPushAttrib)(GL_LIST_BIT);							
@@ -547,7 +558,164 @@ void DrawText(float x, float y,float r, float g, float b, const char *fmt, ...)
     (*orig_glRasterPos2f)(position[0],position[1]);
 }
 
-void DrawMenu(int x, int y)  // maybe a struct would have been easier but when i started it just had 4 menu options :P
+//////////////////////////////////////////////////////////////////////////////////////////////////
+// Data-driven, animated menu:
+//   * fade in/out (menu_alpha) and a highlight bar that smoothly slides to the
+//     selected row (both time-based, so they look the same at 60 or 240 fps)
+//   * dependency hiding: a row with a non-null "dep" pointer is shown only while
+//     that parent cvar is on (e.g. Shoot/Aimthru/FOV hide unless Aimbot is on),
+//     and the cursor navigates only over visible rows.
+enum { IT_TOGGLE, IT_INT, IT_FLOAT, IT_OFFSET, IT_TARGET };
+typedef struct {
+	const char *label;
+	int   type;
+	void *p;			// int* or float* cvar this row controls
+	float mn, mx, step;	// range/step for IT_INT / IT_FLOAT
+	int   wrap;			// wrap around at the bounds?
+	int  *dep;			// non-null => row hidden while *dep == 0
+	int   child;		// 1 = indented sub-item
+} mitem_t;
+
+void DrawMenu(int x, int y)
+{
+	static mitem_t items[] = {
+		{"Offset",      IT_OFFSET, 0,                0,0,0,       0, 0,          0},
+		{"Stand_h",     IT_FLOAT,  &cvar.stand_h,    10,26,0.25f, 1, 0,          0},
+		{"Duck_h",      IT_FLOAT,  &cvar.duck_h,     10,28,0.25f, 1, 0,          0},
+		{"Aimbot",      IT_TOGGLE, &cvar.aim,        0,0,0,       0, 0,          0},
+		{"Target",      IT_TARGET, &cvar.target,     0,0,0,       0, &cvar.aim,  1},
+		{"Shoot",       IT_TOGGLE, &cvar.shoot,      0,0,0,       0, &cvar.aim,  1},
+		{"Aimthru",     IT_TOGGLE, &cvar.aimthru,    0,0,0,       0, &cvar.aim,  1},
+		{"FOV",         IT_INT,    &cvar.fov,        0,1000,50,   1, &cvar.aim,  1},
+		{"Recoil",      IT_INT,    &cvar.recoil,     0,5,1,       1, 0,          0},
+		{"Wallhack",    IT_INT,    &cvar.wall,       0,3,1,       1, 0,          0},
+		{"No Sky",      IT_TOGGLE, &cvar.sky,        0,0,0,       0, 0,          0},
+		{"No Flash",    IT_TOGGLE, &cvar.flash,      0,0,0,       0, 0,          0},
+		{"No Smoke",    IT_TOGGLE, &cvar.smoke,      0,0,0,       0, 0,          0},
+		{"Lambert",     IT_TOGGLE, &cvar.lambert,    0,0,0,       0, 0,          0},
+		{"ESP",         IT_TOGGLE, &cvar.esp,        0,0,0,       0, 0,          0},
+		{"ESP Box",     IT_TOGGLE, &cvar.esp_box,    0,0,0,       0, &cvar.esp,  1},
+		{"ESP Dist",    IT_TOGGLE, &cvar.esp_dist,   0,0,0,       0, &cvar.esp,  1},
+		{"ESP Line",    IT_TOGGLE, &cvar.esp_line,   0,0,0,       0, &cvar.esp,  1},
+		{"ESP Engine",  IT_TOGGLE, &cvar.esp_engine, 0,0,0,       0, 0,          0},
+		{"HUD HP/Ammo", IT_TOGGLE, &cvar.esp_hud,    0,0,0,       0, 0,          0},
+		{"Crosshair",   IT_TOGGLE, &cvar.cross,      0,0,0,       0, 0,          0},
+	};
+	const int N = sizeof(items)/sizeof(items[0]);
+
+	// time-based animation step (clamped so a hitch can't jump the anim)
+	DWORD now=GetTickCount();
+	if(menu_last_tick==0) menu_last_tick=now;
+	float dt=(now-menu_last_tick)/1000.0f; menu_last_tick=now;
+	if(dt<0) dt=0; if(dt>0.1f) dt=0.1f;
+
+	float aTarget = menu.active?1.0f:0.0f;
+	float ka = dt*10.0f; if(ka>1.0f) ka=1.0f;
+	menu_alpha += (aTarget-menu_alpha)*ka;			// ~0.1s fade
+	if(menu_alpha<0.002f) return;					// fully hidden
+
+	// visible rows only (skip those whose parent cvar is off)
+	int vis[32], nvis=0;
+	for(int i=0;i<N;i++)
+		if(items[i].dep==0 || *(items[i].dep)!=0) vis[nvis++]=i;
+	if(nvis==0) return;
+	if(menu.count>=nvis) menu.count=0;				// wrap the cursor
+	if(menu.count<0)     menu.count=nvis-1;
+
+	// apply a left/right press to the current row
+	if(menu.select)
+	{
+		menu.select=false;
+		int dir = menu.select_r?1:(menu.select_l?-1:0);
+		menu.select_r=false; menu.select_l=false;
+		mitem_t *it=&items[vis[menu.count]];
+		switch(it->type)
+		{
+		case IT_TOGGLE:
+		case IT_TARGET:
+			*(int*)it->p = change(*(int*)it->p);
+			break;
+		case IT_INT:
+			{
+				int *v=(int*)it->p; *v += dir*(int)it->step;
+				if(*v>(int)it->mx) *v = it->wrap?(int)it->mn:(int)it->mx;
+				if(*v<(int)it->mn) *v = it->wrap?(int)it->mx:(int)it->mn;
+			}
+			break;
+		case IT_FLOAT:
+			{
+				float *v=(float*)it->p; *v += dir*it->step; customoffset=true;
+				if(*v>it->mx) *v=it->mn;
+				if(*v<it->mn) *v=it->mx;
+			}
+			break;
+		case IT_OFFSET:
+			if(dir>0) curoffset++; else if(dir<0) curoffset--;
+			SetOffset(curoffset); customoffset=false;
+			if(curoffset>offsetcount-1){ curoffset=0; SetOffset(curoffset); }
+			else if(curoffset<0){ curoffset=offsetcount-1; SetOffset(curoffset); }
+			break;
+		}
+	}
+
+	// layout (everything scaled to the resolution via ui_scale)
+	float sc=ui_scale, mx=x*sc, my=y*sc, line=13.0f*sc, y0=my+7.0f*sc;
+	float ks=dt*16.0f; if(ks>1.0f) ks=1.0f;
+	menu_sel_anim += ((float)menu.count-menu_sel_anim)*ks;	// slide highlight
+
+	gTextAlpha=menu_alpha;
+
+	SYSTEMTIME st; GetLocalTime(&st);
+	DrawText(mx, my-39*sc, 1.0f,1.0f,1.0f, "Now the time is: %02d:%02d:%02d", st.wHour,st.wMinute,st.wSecond);
+	DrawText(mx, my-28*sc, 0.7f,0.7f,1.0f, "--------------------------");
+	DrawText(mx, my-17*sc, 0.7f,0.7f,1.0f, "-       panzerGL 2.2        -");
+	DrawText(mx, my-6 *sc, 0.7f,0.7f,1.0f, "-       James34602        -");
+	DrawText(mx, my+2 *sc, 0.7f,0.7f,1.0f, "--------------------------");
+
+	// sliding highlight bar behind the selected row
+	{
+		float hy=y0+menu_sel_anim*line;
+		(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
+		(*orig_glDisable)(GL_TEXTURE_2D);
+		(*orig_glEnable)(GL_BLEND);
+		(*orig_glBlendFunc)(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+		(*orig_glColor4f)(0.1f,0.6f,1.0f,0.30f*menu_alpha);
+		(*orig_glBegin)(GL_QUADS);
+		(*orig_glVertex2f)(mx-5*sc,   hy-line+3*sc);
+		(*orig_glVertex2f)(mx+160*sc, hy-line+3*sc);
+		(*orig_glVertex2f)(mx+160*sc, hy+3*sc);
+		(*orig_glVertex2f)(mx-5*sc,   hy+3*sc);
+		(*orig_glEnd)();
+		(*orig_glPopAttrib)();
+	}
+
+	char buf[96];
+	for(int r=0;r<nvis;r++)
+	{
+		mitem_t *it=&items[vis[r]];
+		float ry=y0+r*line, ix=mx+(it->child?10.0f*sc:0.0f);
+		const char *pre=it->child?"- ":"";
+		switch(it->type)
+		{
+		case IT_TOGGLE: sprintf(buf,"%s%s: %s", pre,it->label,(*(int*)it->p)?"On":"Off"); break;
+		case IT_INT:    sprintf(buf,"%s%s: %i", pre,it->label,*(int*)it->p);              break;
+		case IT_FLOAT:  sprintf(buf,"%s%s: %.2f", pre,it->label,*(float*)it->p);          break;
+		case IT_TARGET: sprintf(buf,"%s: %s", it->label,(*(int*)it->p)?team[1].name:team[0].name); break;
+		case IT_OFFSET: if(!customoffset) sprintf(buf,"%s: %s",it->label,offsetname);
+		                else              sprintf(buf,"%s: <custom>",it->label);          break;
+		default: buf[0]=0; break;
+		}
+		if(r==menu.count) DrawText(ix,ry, 1.0f,1.0f,1.0f, "%s", buf);
+		else              DrawText(ix,ry, 0.7f,0.7f,1.0f, "%s", buf);
+	}
+
+	gTextAlpha=1.0f;
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+// LEGACY menu below - unused, replaced by the data-driven DrawMenu above.
+// Kept for reference; safe to delete.
+void DrawMenu_legacy(int x, int y)
 {
     SYSTEMTIME SysTime;
     GetLocalTime(&SysTime);
@@ -938,165 +1106,181 @@ void DrawMenu(int x, int y)  // maybe a struct would have been easier but when i
 		else { DrawText(x,y+254,0.7f,0.7f,1.0f,"ESP Engine: Off"); }
 	}
 
-	if(menu.count>19) { menu.count=0; }
-	else if(menu.count<0) { menu.count=19; }
+	if(menu.count==20)
+	{
+		if(menu.select)
+		{
+			menu.select=false;
+			cvar.esp_hud=change(cvar.esp_hud);
+		}
+		if(cvar.esp_hud) { DrawText(x,y+267,1.0f,1.0f,1.0f,"HUD HP/Ammo: On"); }
+		else { DrawText(x,y+267,1.0f,1.0f,1.0f,"HUD HP/Ammo: Off"); }
+	}
+	else if(menu.count!=20)
+	{
+		if(cvar.esp_hud) { DrawText(x,y+267,0.7f,0.7f,1.0f,"HUD HP/Ammo: On"); }
+		else { DrawText(x,y+267,0.7f,0.7f,1.0f,"HUD HP/Ammo: Off"); }
+	}
+
+	if(menu.count>20) { menu.count=0; }
+	else if(menu.count<0) { menu.count=20; }
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 void DrawCheckText(int x,int y) // bad way of doing this
 {
 	DrawText(x,y,0.7f,0.7f,1.0f,"panzerGL 2.2 MultiMod Hack - Check");
-	y=y+13;
+	y=y+(int)(13*ui_scale);
 	DrawText(x,y,1.0f,1.0f,1.0f,"> Hack file: %s",dllpath);
-	y=y+13;
+	y=y+(int)(13*ui_scale);
 	if(cfgfail)
 		DrawText(x,y,1.0f,0.5f,0.5f,"> Could not load config file: <%s> !!!",configpath);
 	else
 		DrawText(x,y,1.0f,1.0f,1.0f,"> Config file: %s",configpath);
-	y=y+13;
+	y=y+(int)(13*ui_scale);
 	if(mdlfail)
 		DrawText(x,y,1.0f,0.5f,0.5f,"> Could not load model file: <%s> !!!",modelpath);
 	else
 		DrawText(x,y,1.0f,1.0f,1.0f,"> Model file: %s",modelpath);
-	y=y+13;
+	y=y+(int)(13*ui_scale);
 	DrawText(x,y,0.5f,1.0f,0.5f,"> Your screen resolution is: %ix%i",vp[2],vp[3]);
-	y=y+26;
+	y=y+(int)(26*ui_scale);
 	DrawText(x,y,0.7f,0.7f,1.0f,"%i valid offsets found:",offsetcount);
-	y=y+13;
+	y=y+(int)(13*ui_scale);
 	for (int o=0;o<offsetcount;o++)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> [%i] %s| Stand: %0.2f | Duck: %0.2f",o+1,offset[o].name,offset[o].s,offset[o].d);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
-	y=y+13;
+	y=y+(int)(13*ui_scale);
 	DrawText(x,y,0.7f,0.7f,1.0f,"Team 0: %s",team[0].name);
-	y=y+13;
+	y=y+(int)(13*ui_scale);
 	if(team[0].vert01!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert01);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[0].vert02!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert02);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[0].vert03!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert03);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[0].vert04!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert04);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[0].vert05!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert05);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[0].vert06!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert06);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[0].vert07!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert07);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[0].vert08!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert08);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[0].vert09!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert09);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[0].vert10!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert10);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[0].vert11!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert11);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[0].vert12!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert12);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	//
 	DrawText(x,y,0.7f,0.7f,1.0f,"Team 1: %s",team[1].name);
-	y=y+13;
+	y=y+(int)(13*ui_scale);
 	if(team[1].vert01!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert01);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[1].vert02!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert02);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[1].vert03!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert03);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[1].vert04!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert04);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[1].vert05!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert05);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[1].vert06!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert06);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[1].vert07!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert07);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[1].vert08!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert08);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[1].vert09!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert09);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[1].vert10!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert10);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[1].vert11!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert11);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
 	if(team[1].vert12!=-1)
 	{
 		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert12);
-		y=y+13;
+		y=y+(int)(13*ui_scale);
 	}
-	y=y+13;
+	y=y+(int)(13*ui_scale);
 	DrawText(x,y,1.0f,1.0f,1.0f,"> lowest vertex count: %i",player_vertex_min+5);
-	y=y+13;
+	y=y+(int)(13*ui_scale);
 	DrawText(x,y,1.0f,1.0f,1.0f,"> highest vertex count %i",player_vertex_max-5);
 }
 
@@ -1170,7 +1354,7 @@ bool IsVertTeam(long vertcount,int t)	// helper: does vertcount belong to team t
 #define ENT_CURSTATE		0x2B0	// cl_entity_t: entity_state_t curstate
 #define ENT_CURPOS			0x404	// cl_entity_t: current_position (update counter)
 #define ENT_ORIGIN			0xB48	// cl_entity_t: vec3 interpolated origin
-#define ENG_STALE_FRAMES	30		// frames without an update -> treat as dead/gone
+#define ENG_STALE_MS		400		// ms without an update -> treat as dead/gone (fps-independent)
 #define ES_ORIGIN			0x010	// entity_state_t::origin (vec3)
 #define ES_USEHULL			0x0C8	// entity_state_t::usehull (0 stand, 1 duck)
 
@@ -1376,12 +1560,195 @@ int TeamFromModel(const char *m)
 	return 0;
 }
 
+//////////////////////////////////////////////////////////////////////////////////////////////////
+//  OWN HUD  -  health / armor / ammo via user-message hooks
+//
+//  GoldSrc never networks enemy/teammate health, but it DOES send the local
+//  player his own "Health", "Battery" (armor) and "CurWeapon" (clip) messages.
+//  The engine keeps a linked list of usermsg_t nodes, one per message name; each
+//  node stores the client.dll handler pointer. We find the nodes for the three
+//  messages we care about (by their inline name string, scanning only private
+//  heap pages), save the original handler and overwrite it with our own. Our
+//  handler reads the value, then forwards to the original so the vanilla HUD
+//  keeps working exactly as before. Message names are stable across all builds,
+//  so this avoids the signature fragility that broke g_PlayerExtraInfo.
+//
+//      struct usermsg_t { int iMsg; int iSize; char szName[16]; usermsg_t*next; pfn; }
+//                          +0       +4         +8 (UM_NAME)      +24 (UM_NEXT) +28 (UM_PFN)
+//////////////////////////////////////////////////////////////////////////////////////////////////
+
+#define UM_NAME		8
+#define UM_NEXT		24
+#define UM_PFN		28
+
+// usermsg handlers are __cdecl (engine ABI); state it so /Gz doesn't corrupt us.
+typedef int (__cdecl *pfnUserMsgHook)(const char *name,int size,void *buf);
+
+static pfnUserMsgHook um_org_health  = 0;	// saved original client.dll handlers
+static pfnUserMsgHook um_org_battery = 0;
+static pfnUserMsgHook um_org_curwpn  = 0;
+static DWORD um_node_health  = 0;			// usermsg_t node addresses we patched
+static DWORD um_node_battery = 0;
+static DWORD um_node_curwpn  = 0;
+
+int __cdecl Hk_Health(const char *n,int s,void *b)
+{
+	if(b && s>=1) me_health=*(unsigned char*)b;
+	return um_org_health ? um_org_health(n,s,b) : 1;
+}
+int __cdecl Hk_Battery(const char *n,int s,void *b)
+{
+	if(b && s>=1) me_armor=*(unsigned char*)b;		// armor fits a byte (0..100)
+	return um_org_battery ? um_org_battery(n,s,b) : 1;
+}
+int __cdecl Hk_CurWeapon(const char *n,int s,void *b)
+{
+	if(b && s>=3)
+	{
+		unsigned char *p=(unsigned char*)b;
+		int state=p[0], id=(signed char)p[1], clip=(signed char)p[2];
+		if(state && id>0)							// state!=0 => this is the active weapon
+		{
+			me_weaponid=id; me_clip=clip;			// clip == -1 for knife/grenades
+			if(id>=0 && id<64 && clip>me_maxclip[id]) me_maxclip[id]=clip;	// learn capacity
+		}
+	}
+	return um_org_curwpn ? um_org_curwpn(n,s,b) : 1;
+}
+
+// Scan committed PRIVATE (heap) pages for a usermsg node whose szName == name.
+// Image pages are skipped, so the many string literals in client.dll don't match.
+DWORD FindUserMsgNode(const char *name)
+{
+	int nlen=(int)strlen(name);
+	SYSTEM_INFO si; GetSystemInfo(&si);
+	DWORD addr=(DWORD)si.lpMinimumApplicationAddress;
+	DWORD maxa=(DWORD)si.lpMaximumApplicationAddress;
+	while(addr<maxa)
+	{
+		MEMORY_BASIC_INFORMATION mbi;
+		if(!VirtualQuery((LPCVOID)addr,&mbi,sizeof(mbi))) break;
+		DWORD rbase=(DWORD)mbi.BaseAddress, rend=rbase+mbi.RegionSize;
+		if(rend<=rbase) break;
+		if(mbi.State==MEM_COMMIT && mbi.Type==MEM_PRIVATE && RegionReadable(mbi))
+		{
+			DWORD limit=rend-(DWORD)(nlen+1);
+			for(DWORD sp=rbase; sp<=limit; sp++)
+			{
+				if(*(char*)sp!=name[0]) continue;
+				if(memcmp((void*)sp,name,nlen)!=0) continue;
+				if(*(char*)(sp+nlen)!=0) continue;			// must be null-terminated
+				DWORD node=sp-UM_NAME;
+				if(node<rbase || !IsReadable(node,32)) continue;
+				int   im =*(int*)(node+0);					// iMsg
+				int   iz =*(int*)(node+4);					// iSize
+				DWORD nx =*(DWORD*)(node+UM_NEXT);
+				DWORD pfn=*(DWORD*)(node+UM_PFN);
+				if(im<0||im>255) continue;
+				if(iz<-1||iz>256) continue;
+				if(pfn<0x10000 || !IsReadable(pfn,1)) continue;	// handler must be code
+				if(nx!=0 && !IsReadable(nx,32)) continue;		// next must be node or null
+				return node;
+			}
+		}
+		addr=rend;
+	}
+	return 0;
+}
+
+void PatchPfn(DWORD node,DWORD newpfn)		// overwrite node->pfn (make page writable)
+{
+	DWORD a=node+UM_PFN, old;
+	if(VirtualProtect((LPVOID)a,4,PAGE_EXECUTE_READWRITE,&old))
+	{
+		*(DWORD*)a=newpfn;
+		VirtualProtect((LPVOID)a,4,old,&old);
+	}
+}
+
+// Install (or re-install after a reconnect) our three message hooks. Cheap to
+// call every frame: once hooked it just verifies the pointers are still ours.
+void HookOwnMsgs()
+{
+	if(msg_hooked)
+	{
+		bool ok=true;	// reconnecting rebuilds the node list -> our hook is gone
+		if(um_node_health  && ReadDW(um_node_health +UM_PFN)!=(DWORD)Hk_Health)    ok=false;
+		if(um_node_battery && ReadDW(um_node_battery+UM_PFN)!=(DWORD)Hk_Battery)   ok=false;
+		if(um_node_curwpn  && ReadDW(um_node_curwpn +UM_PFN)!=(DWORD)Hk_CurWeapon) ok=false;
+		if(ok) return;
+		msg_hooked=false; eng_msg_tries=0;
+		um_node_health=um_node_battery=um_node_curwpn=0;
+	}
+	if(eng_msg_tries>60) return;		// give up scanning if names never show up
+	eng_msg_tries++;
+
+	if(um_node_health==0)
+	{ DWORD n=FindUserMsgNode("Health");
+	  if(n){ um_node_health=n; um_org_health=(pfnUserMsgHook)ReadDW(n+UM_PFN); PatchPfn(n,(DWORD)Hk_Health); } }
+	if(um_node_battery==0)
+	{ DWORD n=FindUserMsgNode("Battery");
+	  if(n){ um_node_battery=n; um_org_battery=(pfnUserMsgHook)ReadDW(n+UM_PFN); PatchPfn(n,(DWORD)Hk_Battery); } }
+	if(um_node_curwpn==0)
+	{ DWORD n=FindUserMsgNode("CurWeapon");
+	  if(n){ um_node_curwpn=n; um_org_curwpn=(pfnUserMsgHook)ReadDW(n+UM_PFN); PatchPfn(n,(DWORD)Hk_CurWeapon); } }
+
+	if(um_node_health && um_node_battery && um_node_curwpn) msg_hooked=true;
+}
+
+// Two 10-tick arcs flanking the crosshair: green (left) = health, yellow (right)
+// = current clip. Each tick = 10%. Drawn inside the same 2D pass as DrawEngineEsp.
+void DrawOwnHud(float sw,float sh)
+{
+	const float cx=sw*0.5f, cy=sh*0.5f, R=44.0f, DEG=3.14159265f/180.0f;
+
+	int hp=me_health; if(hp<0)hp=0; if(hp>100)hp=100;
+	int litH=(hp+9)/10;								// ceil to 0..10 ticks
+
+	bool showA=false; int litA=0;
+	if(me_clip>=0 && me_weaponid>=0 && me_weaponid<64 && me_maxclip[me_weaponid]>0)
+	{
+		int pct=me_clip*100/me_maxclip[me_weaponid];
+		if(pct<0)pct=0; if(pct>100)pct=100;
+		litA=(pct+9)/10; showA=true;				// hidden for knife/grenades (clip<0)
+	}
+
+	(*orig_glLineWidth)(3.0f);
+
+	(*orig_glBegin)(GL_LINES);						// health arc on the left (150..210 deg)
+	for(int i=0;i<10;i++)
+	{
+		float a0=(150.0f+i*6.0f)*DEG, a1=(150.0f+(i+1)*6.0f)*DEG;
+		if(i<litH) (*orig_glColor4f)(0.10f,1.00f,0.20f,0.95f);
+		else       (*orig_glColor4f)(0.10f,0.35f,0.10f,0.45f);
+		(*orig_glVertex2f)(cx+cosf(a0)*R, cy-sinf(a0)*R);
+		(*orig_glVertex2f)(cx+cosf(a1)*R, cy-sinf(a1)*R);
+	}
+	(*orig_glEnd)();
+
+	if(showA)
+	{
+		(*orig_glBegin)(GL_LINES);					// ammo arc on the right (-30..30 deg)
+		for(int i=0;i<10;i++)
+		{
+			float a0=(-30.0f+i*6.0f)*DEG, a1=(-30.0f+(i+1)*6.0f)*DEG;
+			if(i<litA) (*orig_glColor4f)(1.00f,0.85f,0.10f,0.95f);
+			else       (*orig_glColor4f)(0.40f,0.35f,0.10f,0.45f);
+			(*orig_glVertex2f)(cx+cosf(a0)*R, cy-sinf(a0)*R);
+			(*orig_glVertex2f)(cx+cosf(a1)*R, cy-sinf(a1)*R);
+		}
+		(*orig_glEnd)();
+	}
+
+	(*orig_glColor4f)(1,1,1,1);
+}
+
 // Draw ESP for every player in the engine entity list. Called each frame from
 // the wglSwapBuffers hook, in its own 2D pixel-space pass.
 void DrawEngineEsp()
 {
 	eng_players=0;
-	if(!cvar.esp_engine) return;
+	if(!cvar.esp_engine && !cvar.esp_hud) return;
 	eng_frame++;
 
 	GLint vpe[4];
@@ -1417,6 +1784,16 @@ void DrawEngineEsp()
 		return;
 	}
 
+	// own HP / armor / ammo arcs around the crosshair (independent of ESP loop)
+	if(cvar.esp_hud)
+	{
+		HookOwnMsgs();
+		DrawOwnHud(sw,sh);
+	}
+
+	if(cvar.esp_engine)
+	{
+
 	float lo[3]={0,0,0};
 	DWORD local=(DWORD)((eng_GetLocalPlayer_t)fnLocal)();
 	if(local)
@@ -1451,8 +1828,9 @@ void DrawEngineEsp()
 		// alive/stale check: current_position keeps incrementing while a player
 		// receives network updates; it freezes on death / disconnect / round-end.
 		int cur=ReadInt(ent+ENT_CURPOS);
-		if(cur!=eng_lastcurpos[idx]) { eng_lastcurpos[idx]=cur; eng_lastchange[idx]=eng_frame; }
-		bool stale=(eng_frame-eng_lastchange[idx])>ENG_STALE_FRAMES;
+		DWORD now=GetTickCount();
+		if(cur!=eng_lastcurpos[idx]) { eng_lastcurpos[idx]=cur; eng_lastchange[idx]=now; }
+		bool stale=(now-eng_lastchange[idx])>ENG_STALE_MS;	// time-based: same at 60 or 240 fps
 		if(EngDead(idx) || stale) continue;
 
 		float o[3];
@@ -1517,6 +1895,8 @@ void DrawEngineEsp()
 
 	DrawText(8.0f,16.0f,0.2f,1.0f,0.4f,"ENGINE ESP: %i players  team=%s",
 		eng_players, eng_have_extra?"extra":"model");
+
+	}	// end if(cvar.esp_engine)
 
 	(*orig_glMatrixMode)(GL_PROJECTION);
 	(*orig_glPopMatrix)();
@@ -1812,7 +2192,7 @@ void sys_glEnable (GLenum cap)
 
 		// put all text stuff here:
 
-		if(menu.active)	{ DrawMenu(cvar.menu_x,cvar.menu_y); }	// draws menu
+		if(menu.active || menu_alpha>0.002f) { DrawMenu(cvar.menu_x,cvar.menu_y); }	// draw while visible or fading
 		if(checktext)	{ DrawCheckText(40,40); }				// draws check stuff (F11)
 		if(aimkeychanged) // F10 pressed
 		{
