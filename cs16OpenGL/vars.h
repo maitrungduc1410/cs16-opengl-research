@@ -24,12 +24,16 @@ typedef struct {		//player struct
 
 typedef struct { // cvars (of course ;P)
 	int cross;
-	int esp;
-	int esp_box;	// tier1: 2D box ESP
-	int esp_dist;	// tier1: distance text ESP
-	int esp_line;	// tier1: snapline ESP
-	int esp_engine;	// tier2: engine entity-list ESP (real names/team/origin)
-	int esp_hud;	// own HP/armor/ammo arcs around the crosshair
+	int esp;		// (legacy tier1 master; only referenced by the unused DrawMenu_legacy)
+	int esp_line;	// (legacy tier1 snapline; only referenced by DrawMenu_legacy)
+	int esp_engine;	// engine entity-list ESP master (real names/team/origin)
+	int esp_name;	// ESP Engine sub-option: player name
+	int esp_box;	// ESP Engine sub-option: 2D box
+	int esp_dist;	// ESP Engine sub-option: distance text
+	int esp_hud;	// own HP/ammo HUD master (arcs around the crosshair)
+	int hud_hp;		// HUD sub-option: health arc
+	int hud_ammo;	// HUD sub-option: ammo arc
+	int hud_die;	// HUD sub-option: keep showing the HUD while dead (default off)
 	int	aimthru;
 	int	aim;
 	int	fov;

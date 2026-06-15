@@ -84,12 +84,14 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "aimthru %i;"	,&cvar.aimthru);
 					sscanf(str, "target %i;"	,&cvar.target);
 					sscanf(str, "recoil %i;"	,&cvar.recoil);
-					sscanf(str, "esp %i;"		,&cvar.esp);
+					sscanf(str, "esp_engine %i;",&cvar.esp_engine);
+					sscanf(str, "esp_name %i;"	,&cvar.esp_name);
 					sscanf(str, "esp_box %i;"	,&cvar.esp_box);
 					sscanf(str, "esp_dist %i;"	,&cvar.esp_dist);
-					sscanf(str, "esp_line %i;"	,&cvar.esp_line);
-					sscanf(str, "esp_engine %i;",&cvar.esp_engine);
 					sscanf(str, "esp_hud %i;"	,&cvar.esp_hud);
+					sscanf(str, "hud_hp %i;"	,&cvar.hud_hp);
+					sscanf(str, "hud_ammo %i;"	,&cvar.hud_ammo);
+					sscanf(str, "hud_die %i;"	,&cvar.hud_die);
 					sscanf(str, "lambert %i;"	,&cvar.lambert);
 					sscanf(str, "crosshair %i;"	,&cvar.cross);
 					sscanf(str, "fov %i;"		,&cvar.fov);
@@ -199,11 +201,15 @@ void HookInit(bool activate)
 		cvar.aim=0;
 		cvar.aimthru=0;
 		cvar.esp=0;
-		cvar.esp_box=0;
-		cvar.esp_dist=0;
 		cvar.esp_line=0;
 		cvar.esp_engine=0;
+		cvar.esp_name=0;
+		cvar.esp_box=0;
+		cvar.esp_dist=0;
 		cvar.esp_hud=0;
+		cvar.hud_hp=0;
+		cvar.hud_ammo=0;
+		cvar.hud_die=0;
 		cvar.lambert=0;
 		cvar.cross=0;
 		cvar.wall=0;
@@ -593,13 +599,15 @@ void DrawMenu(int x, int y)
 		{"No Flash",    IT_TOGGLE, &cvar.flash,      0,0,0,       0, 0,          0},
 		{"No Smoke",    IT_TOGGLE, &cvar.smoke,      0,0,0,       0, 0,          0},
 		{"Lambert",     IT_TOGGLE, &cvar.lambert,    0,0,0,       0, 0,          0},
-		{"ESP",         IT_TOGGLE, &cvar.esp,        0,0,0,       0, 0,          0},
-		{"ESP Box",     IT_TOGGLE, &cvar.esp_box,    0,0,0,       0, &cvar.esp,  1},
-		{"ESP Dist",    IT_TOGGLE, &cvar.esp_dist,   0,0,0,       0, &cvar.esp,  1},
-		{"ESP Line",    IT_TOGGLE, &cvar.esp_line,   0,0,0,       0, &cvar.esp,  1},
-		{"ESP Engine",  IT_TOGGLE, &cvar.esp_engine, 0,0,0,       0, 0,          0},
-		{"HUD HP/Ammo", IT_TOGGLE, &cvar.esp_hud,    0,0,0,       0, 0,          0},
-		{"Crosshair",   IT_TOGGLE, &cvar.cross,      0,0,0,       0, 0,          0},
+		{"ESP Engine",  IT_TOGGLE, &cvar.esp_engine, 0,0,0,       0, 0,                0},
+		{"Player Name", IT_TOGGLE, &cvar.esp_name,   0,0,0,       0, &cvar.esp_engine, 1},
+		{"Box",         IT_TOGGLE, &cvar.esp_box,    0,0,0,       0, &cvar.esp_engine, 1},
+		{"Distance",    IT_TOGGLE, &cvar.esp_dist,   0,0,0,       0, &cvar.esp_engine, 1},
+		{"HUD HP/Ammo", IT_TOGGLE, &cvar.esp_hud,    0,0,0,       0, 0,                0},
+		{"HP",          IT_TOGGLE, &cvar.hud_hp,     0,0,0,       0, &cvar.esp_hud,    1},
+		{"Ammo",        IT_TOGGLE, &cvar.hud_ammo,   0,0,0,       0, &cvar.esp_hud,    1},
+		{"Show when die",IT_TOGGLE,&cvar.hud_die,    0,0,0,       0, &cvar.esp_hud,    1},
+		{"Crosshair",   IT_TOGGLE, &cvar.cross,      0,0,0,       0, 0,                0},
 	};
 	const int N = sizeof(items)/sizeof(items[0]);
 
@@ -1680,8 +1688,14 @@ void HookOwnMsgs()
 		msg_hooked=false; eng_msg_tries=0;
 		um_node_health=um_node_battery=um_node_curwpn=0;
 	}
-	if(eng_msg_tries>60) return;		// give up scanning if names never show up
+	// The Health/Battery/CurWeapon nodes only get registered AFTER you connect to a
+	// server (HUD_Init), which can be far more than 60 frames after the HUD is first
+	// enabled. Hooking too late means we miss the one-shot spawn messages, so HP shows
+	// 0% and ammo shows nothing until the next update (taking damage / switching guns).
+	// Keep retrying for a long time, but throttle the heap scan so it stays cheap.
 	eng_msg_tries++;
+	if(eng_msg_tries % 8 != 0) return;	// scan the heap ~every 8th frame
+	if(eng_msg_tries > 8000)   return;	// give up only after a long while
 
 	if(um_node_health==0)
 	{ DWORD n=FindUserMsgNode("Health");
@@ -1700,7 +1714,21 @@ void HookOwnMsgs()
 // = current clip. Each tick = 10%. Drawn inside the same 2D pass as DrawEngineEsp.
 void DrawOwnHud(float sw,float sh)
 {
-	const float cx=sw*0.5f, cy=sh*0.5f, R=44.0f, DEG=3.14159265f/180.0f;
+	// Hide the HUD while dead / before the first Health message arrives, unless
+	// "Show when die" is on. me_health stays 1..100 only while alive in a round
+	// (server sends Health=0 on death, Health=100 on respawn).
+	if(me_health<=0 && !cvar.hud_die) return;
+
+	// ui_scale is computed once in BuildFont() from the screen resolution (which is
+	// fixed for the whole session), so the HUD scales the same way as the menu / ESP
+	// text without any per-frame work.
+	const float cx=sw*0.5f, cy=sh*0.5f, DEG=3.14159265f/180.0f;
+	const float R   =52.0f*ui_scale;				// arc radius (scales with resolution)
+	const int   TICKS=10;
+	const float SPAN=96.0f;							// total arc per side (degrees) -> more curve
+	const float SLOT=SPAN/TICKS;					// angular size of one slot
+	const float FILL=0.66f;							// 66% bar + 34% gap -> CrossFire-style ticks
+	const float HALFGAP=SLOT*(1.0f-FILL)*0.5f;		// half the gap, trimmed from each slot end
 
 	int hp=me_health; if(hp<0)hp=0; if(hp>100)hp=100;
 	int litH=(hp+9)/10;								// ceil to 0..10 ticks
@@ -1713,25 +1741,33 @@ void DrawOwnHud(float sw,float sh)
 		litA=(pct+9)/10; showA=true;				// hidden for knife/grenades (clip<0)
 	}
 
-	(*orig_glLineWidth)(3.0f);
+	(*orig_glEnable)(GL_LINE_SMOOTH);				// rounded tick ends (restored by glPopAttrib)
+	(*orig_glLineWidth)(5.5f*ui_scale);				// thicker bars
 
-	(*orig_glBegin)(GL_LINES);						// health arc on the left (150..210 deg)
-	for(int i=0;i<10;i++)
+	if(cvar.hud_hp)
 	{
-		float a0=(150.0f+i*6.0f)*DEG, a1=(150.0f+(i+1)*6.0f)*DEG;
-		if(i<litH) (*orig_glColor4f)(0.10f,1.00f,0.20f,0.95f);
-		else       (*orig_glColor4f)(0.10f,0.35f,0.10f,0.45f);
-		(*orig_glVertex2f)(cx+cosf(a0)*R, cy-sinf(a0)*R);
-		(*orig_glVertex2f)(cx+cosf(a1)*R, cy-sinf(a1)*R);
-	}
-	(*orig_glEnd)();
-
-	if(showA)
-	{
-		(*orig_glBegin)(GL_LINES);					// ammo arc on the right (-30..30 deg)
-		for(int i=0;i<10;i++)
+		const float base=180.0f-SPAN*0.5f;			// health arc centered on the left (180 deg)
+		(*orig_glBegin)(GL_LINES);
+		for(int i=0;i<TICKS;i++)
 		{
-			float a0=(-30.0f+i*6.0f)*DEG, a1=(-30.0f+(i+1)*6.0f)*DEG;
+			float a0=(base+i*SLOT+HALFGAP)*DEG;		// trim both ends -> visible gap
+			float a1=(base+(i+1)*SLOT-HALFGAP)*DEG;
+			if(i<litH) (*orig_glColor4f)(0.10f,1.00f,0.20f,0.95f);
+			else       (*orig_glColor4f)(0.10f,0.35f,0.10f,0.45f);
+			(*orig_glVertex2f)(cx+cosf(a0)*R, cy-sinf(a0)*R);
+			(*orig_glVertex2f)(cx+cosf(a1)*R, cy-sinf(a1)*R);
+		}
+		(*orig_glEnd)();
+	}
+
+	if(cvar.hud_ammo && showA)
+	{
+		const float base=-SPAN*0.5f;				// ammo arc centered on the right (0 deg)
+		(*orig_glBegin)(GL_LINES);
+		for(int i=0;i<TICKS;i++)
+		{
+			float a0=(base+i*SLOT+HALFGAP)*DEG;
+			float a1=(base+(i+1)*SLOT-HALFGAP)*DEG;
 			if(i<litA) (*orig_glColor4f)(1.00f,0.85f,0.10f,0.95f);
 			else       (*orig_glColor4f)(0.40f,0.35f,0.10f,0.45f);
 			(*orig_glVertex2f)(cx+cosf(a0)*R, cy-sinf(a0)*R);
@@ -1775,20 +1811,22 @@ void DrawEngineEsp()
 	DWORD fnLocal=ready?EngFn(ENG_SLOT_GETLOCALPLAYER):0;
 	DWORD fnEnt  =ready?EngFn(ENG_SLOT_GETENTITYBYINDEX):0;
 	DWORD fnInfo =ready?EngFn(ENG_SLOT_GETPLAYERINFO):0;
-	if(!ready || fnLocal<0x10000 || fnEnt<0x10000)
-	{
-		DrawText(8.0f,16.0f,1.0f,0.7f,0.2f,"ENGINE ESP: searching engine table (start a game)...");
-		(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPopMatrix)();
-		(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPopMatrix)();
-		(*orig_glPopAttrib)();
-		return;
-	}
-
-	// own HP / armor / ammo arcs around the crosshair (independent of ESP loop)
+	// own HP / ammo arcs around the crosshair: driven by user messages, not by the
+	// engine entity table, so draw them before the table-ready check below.
 	if(cvar.esp_hud)
 	{
 		HookOwnMsgs();
 		DrawOwnHud(sw,sh);
+	}
+
+	if(!ready || fnLocal<0x10000 || fnEnt<0x10000)
+	{
+		if(cvar.esp_engine)
+			DrawText(8.0f,16.0f,1.0f,0.7f,0.2f,"ENGINE ESP: searching engine table (start a game)...");
+		(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPopMatrix)();
+		(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPopMatrix)();
+		(*orig_glPopAttrib)();
+		return;
 	}
 
 	if(cvar.esp_engine)
@@ -1868,27 +1906,25 @@ void DrawEngineEsp()
 		else if(team==2) { r=0.25f;g=0.55f; b=1.0f;  }	// CT = blue
 		else             { r=0.25f;g=1.0f;  b=0.25f; }	// unknown = green
 
-		(*orig_glLineWidth)(1.5f);
-		(*orig_glColor3f)(r,g,b);
-		(*orig_glBegin)(GL_LINE_LOOP);
-		(*orig_glVertex2f)(x0,y0); (*orig_glVertex2f)(x1,y0);
-		(*orig_glVertex2f)(x1,y1); (*orig_glVertex2f)(x0,y1);
-		(*orig_glEnd)();
-
-		if(cvar.esp_line)
+		if(cvar.esp_box)
 		{
-			(*orig_glLineWidth)(1.0f);
-			(*orig_glBegin)(GL_LINES);
-			(*orig_glVertex2f)(sw*0.5f,sh);
-			(*orig_glVertex2f)(cx,y1);
+			(*orig_glLineWidth)(1.5f);
+			(*orig_glColor3f)(r,g,b);
+			(*orig_glBegin)(GL_LINE_LOOP);
+			(*orig_glVertex2f)(x0,y0); (*orig_glVertex2f)(x1,y0);
+			(*orig_glVertex2f)(x1,y1); (*orig_glVertex2f)(x0,y1);
 			(*orig_glEnd)();
 		}
 
-		DrawText(cx-(float)strlen(namebuf)*4.0f, y0-14.0f, r,g,b, "%s", namebuf);
+		if(cvar.esp_name)
+			DrawText(cx-(float)strlen(namebuf)*4.0f*ui_scale, y0-14.0f*ui_scale, r,g,b, "%s", namebuf);
 
-		float dx=lo[0]-o[0], dy=lo[1]-o[1], dz=lo[2]-o[2];
-		float dist=(float)sqrt(dx*dx+dy*dy+dz*dz)/39.37f;	// units -> meters
-		DrawText(cx-12.0f, y1+2.0f, 1.0f,1.0f,1.0f, "%.0fm", dist);
+		if(cvar.esp_dist)
+		{
+			float dx=lo[0]-o[0], dy=lo[1]-o[1], dz=lo[2]-o[2];
+			float dist=(float)sqrt(dx*dx+dy*dy+dz*dz)/39.37f;	// units -> meters
+			DrawText(cx-12.0f*ui_scale, y1+2.0f, 1.0f,1.0f,1.0f, "%.0fm", dist);
+		}
 
 		eng_players++;
 	}
@@ -1905,106 +1941,7 @@ void DrawEngineEsp()
 	(*orig_glPopAttrib)();
 }
 
-// x,y  = projected head point in NDC (-1..1)
-// fx,fy = projected feet point in NDC (-1..1)
-// dist  = distance to player (raster distance units)
-bool DrawPlayerEsp(float x,float y,float fx,float fy,double dist,long vertcount)
-{
-	GLint cm;
-	GLfloat color[4];
-
-	bool isT1 = IsVertTeam(vertcount,1);
-	bool isT0 = IsVertTeam(vertcount,0);
-	if(!isT0 && !isT1)
-		return false;
-
-	// team color: team1 = blue, team0 = red
-	float r = isT1 ? 0.0f : 1.0f;
-	float g = 0.0f;
-	float b = isT1 ? 1.0f : 0.0f;
-
-	(*orig_glGetIntegerv)(GL_MATRIX_MODE,&cm);
-	(*orig_glGetDoublev)(GL_MODELVIEW_MATRIX,mm);
-	(*orig_glGetDoublev)(GL_PROJECTION_MATRIX ,pm);
-	(*orig_glEnable)(GL_POINT_SMOOTH);
-	(*orig_glDisable)(GL_TEXTURE_2D);
-	(*orig_glMatrixMode)(GL_PROJECTION);
-	(*orig_glPushMatrix)();
-	(*orig_glLoadIdentity)();
-	(*orig_glMatrixMode)(GL_MODELVIEW);
-	(*orig_glPushMatrix)();
-	(*orig_glLoadIdentity)();
-	(*orig_glGetFloatv)(GL_CURRENT_COLOR, color);
-
-	float cx  = (x + fx) * 0.5f;	// horizontal center of the model
-	float top = (y > fy) ? y  : fy;	// head (higher on screen)
-	float bot = (y > fy) ? fy : y;	// feet
-
-	// --- original ESP: head triangle + target rectangle ---
-	if(cvar.esp)
-	{
-		if( (isT1 && cvar.target==1) || (isT0 && cvar.target==0) )	// target marker
-		{
-			(*orig_glLineWidth)(2.0f);
-			(*orig_glBegin)(GL_LINE_STRIP);
-			(*orig_glColor3f)(r,g,b);
-			(*orig_glVertex2f)(x-0.015,y-0.02);
-			(*orig_glVertex2f)(x+0.015,y-0.02);
-			(*orig_glVertex2f)(x+0.015,y-0.05);
-			(*orig_glVertex2f)(x-0.015,y-0.05);
-			(*orig_glVertex2f)(x-0.015,y-0.02);
-			(*orig_glEnd)();
-		}
-		(*orig_glBegin)(GL_TRIANGLES);
-		(*orig_glColor3f)(r,g,b);
-		(*orig_glVertex2f)(x    ,y+0.06);
-		(*orig_glVertex2f)(x-0.02,y+0.1);
-		(*orig_glVertex2f)(x+0.02,y+0.1);
-		(*orig_glEnd)();
-	}
-
-	// --- tier1: 2D bounding box (width derived from on-screen height) ---
-	if(cvar.esp_box)
-	{
-		float h  = top - bot;
-		float hw = h * 0.22f;		// human-ish aspect ratio
-		if(hw < 0.008f) hw = 0.008f;
-		(*orig_glLineWidth)(1.5f);
-		(*orig_glColor3f)(r,g,b);
-		(*orig_glBegin)(GL_LINE_LOOP);
-		(*orig_glVertex2f)(cx-hw, top+0.02f);
-		(*orig_glVertex2f)(cx+hw, top+0.02f);
-		(*orig_glVertex2f)(cx+hw, bot);
-		(*orig_glVertex2f)(cx-hw, bot);
-		(*orig_glEnd)();
-	}
-
-	// --- tier1: snapline from bottom-center of screen to the feet ---
-	if(cvar.esp_line)
-	{
-		(*orig_glLineWidth)(1.0f);
-		(*orig_glColor3f)(r,g,b);
-		(*orig_glBegin)(GL_LINES);
-		(*orig_glVertex2f)(0.0f,-1.0f);
-		(*orig_glVertex2f)(cx, bot);
-		(*orig_glEnd)();
-	}
-
-	// --- tier1: distance text (raster pos uses the identity matrices set above) ---
-	if(cvar.esp_dist)
-		DrawText(cx-0.02f, top+0.05f, 1.0f,1.0f,1.0f, "%.0f", dist);
-
-	(*orig_glMatrixMode)(GL_PROJECTION);
-	(*orig_glPopMatrix)();   
-	(*orig_glMatrixMode)(GL_MODELVIEW);
-	(*orig_glPopMatrix)();
-	(*orig_glMatrixMode)(cm);
-	(*orig_glDisable)(GL_POINT_SMOOTH);
-	(*orig_glEnable)(GL_TEXTURE_2D);
-	(*orig_glColor4f)(color[0],color[1],color[2],color[3]);
-
-	return true;
-}
+// (tier1 DrawPlayerEsp removed - replaced entirely by DrawEngineEsp)
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 /************************************************************************************************/
@@ -2376,16 +2313,8 @@ void sys_glShadeModel (GLenum mode)
 					player.iscorpse=true;
 				else
 				{
-					player.iscorpse=false;
-					if(cvar.esp || cvar.esp_box || cvar.esp_dist || cvar.esp_line)	// if player is alive draw ESP
-					{
-						float px = (float)(wx/(vp[2]/2))-1;		// head (highest point)
-						float py = (float)(wy/(vp[3]/2))-1;
-						float pfx = (float)(wx2/(vp[2]/2))-1;	// feet (lowest point)
-						float pfy = (float)(wy2/(vp[3]/2))-1;
-						DrawPlayerEsp(px,py,pfx,pfy,player.distance,player.vertices);
-					}
-				}
+					player.iscorpse=false;	// tier1 ESP removed; ESP Engine handles all on-screen drawing now.
+				}											// (vertex detection above is kept because the aimbot needs it)
 			}
 
 			float delx = ((float)((vp[2]/2)-(wx)));
