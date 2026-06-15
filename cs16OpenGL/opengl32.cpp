@@ -95,6 +95,12 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "chams %i;"		,&cvar.chams);
 					sscanf(str, "chams_wire %i;",&cvar.chams_wire);
 					sscanf(str, "radar %i;"		,&cvar.radar);
+					sscanf(str, "radar_pos %i;"	,&cvar.radar_pos);
+					sscanf(str, "radar_shape %i;",&cvar.radar_shape);
+					sscanf(str, "hud_pad %i;"	,&cvar.hud_pad);
+					sscanf(str, "esp_box_pad %i;"	,&cvar.esp_box_pad);
+					sscanf(str, "esp_box_radius %i;",&cvar.esp_box_radius);
+					sscanf(str, "esp_team %i;"	,&cvar.esp_team);
 					sscanf(str, "lambert %i;"	,&cvar.lambert);
 					sscanf(str, "crosshair %i;"	,&cvar.cross);
 					sscanf(str, "fov %i;"		,&cvar.fov);
@@ -208,7 +214,10 @@ void HookInit(bool activate)
 		cvar.esp_engine=0;
 		cvar.esp_name=0;
 		cvar.esp_box=0;
+		cvar.esp_box_pad=0;
+		cvar.esp_box_radius=0;
 		cvar.esp_dist=0;
+		cvar.esp_team=0;
 		cvar.esp_hud=0;
 		cvar.hud_hp=0;
 		cvar.hud_ammo=0;
@@ -216,6 +225,9 @@ void HookInit(bool activate)
 		cvar.chams=0;
 		cvar.chams_wire=0;
 		cvar.radar=0;
+		cvar.radar_pos=0;
+		cvar.radar_shape=0;
+		cvar.hud_pad=0;
 		cvar.lambert=0;
 		cvar.cross=0;
 		cvar.wall=0;
@@ -394,6 +406,7 @@ void HandleKey(int key) // keyhandler
 			{
 				key_check=true; 
 				checktext=!checktext;
+				if(checktext) check_open_seq=++ui_open_seq;	// opened last -> draws on top
 			}
 			break;
 		case VK_F10:
@@ -411,6 +424,7 @@ void HandleKey(int key) // keyhandler
 			{
 				keyp.active=true;
 				menu.active=!menu.active;
+				if(menu.active) menu_open_seq=++ui_open_seq;	// opened last -> draws on top
 			}
 			break;
 		case VK_UP:
@@ -588,6 +602,22 @@ typedef struct {
 	int   child;		// 1 = indented sub-item
 } mitem_t;
 
+// Advance the menu fade once per frame. Must be called EVERY frame (even while the
+// menu is hidden) so the time delta never freezes - otherwise re-opening the menu
+// sees a huge dt and snaps to full opacity with no fade-in.
+void UpdateMenuAnim()
+{
+	DWORD now=GetTickCount();
+	if(menu_last_tick==0) menu_last_tick=now;
+	float dt=(now-menu_last_tick)/1000.0f; menu_last_tick=now;
+	if(dt<0) dt=0; if(dt>0.1f) dt=0.1f;
+	g_menu_dt=dt;
+
+	float aTarget = menu.active?1.0f:0.0f;
+	float ka = dt*10.0f; if(ka>1.0f) ka=1.0f;
+	menu_alpha += (aTarget-menu_alpha)*ka;			// ~0.1s fade, both directions
+}
+
 void DrawMenu(int x, int y)
 {
 	static mitem_t items[] = {
@@ -608,28 +638,29 @@ void DrawMenu(int x, int y)
 		{"ESP Engine",  IT_TOGGLE, &cvar.esp_engine, 0,0,0,       0, 0,                0},
 		{"Player Name", IT_TOGGLE, &cvar.esp_name,   0,0,0,       0, &cvar.esp_engine, 1},
 		{"Box",         IT_TOGGLE, &cvar.esp_box,    0,0,0,       0, &cvar.esp_engine, 1},
+		{"Box padding", IT_INT,    &cvar.esp_box_pad,   -10,40,2, 0, &cvar.esp_engine, 1},
+		{"Box radius",  IT_INT,    &cvar.esp_box_radius, 0,20,2,  0, &cvar.esp_engine, 1},
 		{"Distance",    IT_TOGGLE, &cvar.esp_dist,   0,0,0,       0, &cvar.esp_engine, 1},
+		{"Show team",   IT_INT,    &cvar.esp_team,    0,2,1,      1, &cvar.esp_engine, 1},
 		{"HUD HP/Ammo", IT_TOGGLE, &cvar.esp_hud,    0,0,0,       0, 0,                0},
 		{"HP",          IT_TOGGLE, &cvar.hud_hp,     0,0,0,       0, &cvar.esp_hud,    1},
 		{"Ammo",        IT_TOGGLE, &cvar.hud_ammo,   0,0,0,       0, &cvar.esp_hud,    1},
 		{"Show when die",IT_TOGGLE,&cvar.hud_die,    0,0,0,       0, &cvar.esp_hud,    1},
+		{"Padding",     IT_INT,    &cvar.hud_pad,   -20,80,4,     0, &cvar.esp_hud,    1},
 		{"Chams",       IT_TOGGLE, &cvar.chams,      0,0,0,       0, 0,                0},
 		{"Chams Wire",  IT_TOGGLE, &cvar.chams_wire, 0,0,0,       0, &cvar.chams,      1},
 		{"Radar",       IT_TOGGLE, &cvar.radar,      0,0,0,       0, 0,                0},
+		{"Position",    IT_INT,    &cvar.radar_pos,  0,7,1,       1, &cvar.radar,      1},
+		{"Dot shape",   IT_INT,    &cvar.radar_shape,0,1,1,       1, &cvar.radar,      1},
 		{"Crosshair",   IT_TOGGLE, &cvar.cross,      0,0,0,       0, 0,                0},
 	};
 	const int N = sizeof(items)/sizeof(items[0]);
 
-	// time-based animation step (clamped so a hitch can't jump the anim)
-	DWORD now=GetTickCount();
-	if(menu_last_tick==0) menu_last_tick=now;
-	float dt=(now-menu_last_tick)/1000.0f; menu_last_tick=now;
-	if(dt<0) dt=0; if(dt>0.1f) dt=0.1f;
-
-	float aTarget = menu.active?1.0f:0.0f;
-	float ka = dt*10.0f; if(ka>1.0f) ka=1.0f;
-	menu_alpha += (aTarget-menu_alpha)*ka;			// ~0.1s fade
+	// menu_alpha / g_menu_dt are advanced once per frame by UpdateMenuAnim() (from the
+	// swap-buffers overlay pass), so here we only need to draw. The whole menu fades
+	// together via menu_alpha (text through gTextAlpha, panel + highlight via alpha).
 	if(menu_alpha<0.002f) return;					// fully hidden
+	float dt=g_menu_dt;
 
 	// visible rows only (skip those whose parent cvar is off)
 	int vis[32], nvis=0;
@@ -682,12 +713,29 @@ void DrawMenu(int x, int y)
 
 	gTextAlpha=menu_alpha;
 
-	SYSTEMTIME st; GetLocalTime(&st);
-	DrawText(mx, my-39*sc, 1.0f,1.0f,1.0f, "Now the time is: %02d:%02d:%02d", st.wHour,st.wMinute,st.wSecond);
-	DrawText(mx, my-28*sc, 0.7f,0.7f,1.0f, "--------------------------");
-	DrawText(mx, my-17*sc, 0.7f,0.7f,1.0f, "-       panzerGL 2.2        -");
-	DrawText(mx, my-6 *sc, 0.7f,0.7f,1.0f, "-       James34602        -");
-	DrawText(mx, my+2 *sc, 0.7f,0.7f,1.0f, "--------------------------");
+	// dark translucent panel behind the menu for readability (fades with the menu)
+	{
+		float bl=mx-8*sc, bt=my-24*sc, br=mx+168*sc, bb=y0+nvis*line-2*sc;
+		(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
+		(*orig_glDisable)(GL_TEXTURE_2D);
+		(*orig_glEnable)(GL_BLEND);
+		(*orig_glBlendFunc)(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+		(*orig_glColor4f)(0.0f,0.0f,0.0f,0.55f*menu_alpha);
+		(*orig_glBegin)(GL_QUADS);
+		(*orig_glVertex2f)(bl,bt);(*orig_glVertex2f)(br,bt);
+		(*orig_glVertex2f)(br,bb);(*orig_glVertex2f)(bl,bb);
+		(*orig_glEnd)();
+		(*orig_glColor4f)(0.1f,0.6f,1.0f,0.45f*menu_alpha);		// subtle accent border
+		(*orig_glLineWidth)(1.0f);
+		(*orig_glBegin)(GL_LINE_LOOP);
+		(*orig_glVertex2f)(bl,bt);(*orig_glVertex2f)(br,bt);
+		(*orig_glVertex2f)(br,bb);(*orig_glVertex2f)(bl,bb);
+		(*orig_glEnd)();
+		(*orig_glPopAttrib)();
+	}
+
+	DrawText(mx, my-17*sc, 0.85f,0.9f,1.0f, "mtd1410");
+	DrawText(mx, my-6 *sc, 0.55f,0.55f,0.75f, "----------------------");
 
 	// sliding highlight bar behind the selected row
 	{
@@ -715,7 +763,28 @@ void DrawMenu(int x, int y)
 		switch(it->type)
 		{
 		case IT_TOGGLE: sprintf(buf,"%s%s: %s", pre,it->label,(*(int*)it->p)?"On":"Off"); break;
-		case IT_INT:    sprintf(buf,"%s%s: %i", pre,it->label,*(int*)it->p);              break;
+		case IT_INT:
+			if(it->p==&cvar.radar_pos)
+			{
+				static const char *rp[8]={"Top-Left","Top-Center","Top-Right","Mid-Left",
+				                          "Mid-Right","Bot-Left","Bot-Center","Bot-Right"};
+				int v=*(int*)it->p; if(v<0)v=0; if(v>7)v=7;
+				sprintf(buf,"%s%s: %s", pre,it->label,rp[v]);
+			}
+			else if(it->p==&cvar.radar_shape)
+			{
+				static const char *rs[2]={"Circle","Square"};
+				int v=*(int*)it->p; if(v<0)v=0; if(v>1)v=1;
+				sprintf(buf,"%s%s: %s", pre,it->label,rs[v]);
+			}
+			else if(it->p==&cvar.esp_team)
+			{
+				static const char *et[3]={"Both","CT","T"};
+				int v=*(int*)it->p; if(v<0)v=0; if(v>2)v=2;
+				sprintf(buf,"%s%s: %s", pre,it->label,et[v]);
+			}
+			else sprintf(buf,"%s%s: %i", pre,it->label,*(int*)it->p);
+			break;
 		case IT_FLOAT:  sprintf(buf,"%s%s: %.2f", pre,it->label,*(float*)it->p);          break;
 		case IT_TARGET: sprintf(buf,"%s: %s", it->label,(*(int*)it->p)?team[1].name:team[0].name); break;
 		case IT_OFFSET: if(!customoffset) sprintf(buf,"%s: %s",it->label,offsetname);
@@ -734,14 +803,8 @@ void DrawMenu(int x, int y)
 // Kept for reference; safe to delete.
 void DrawMenu_legacy(int x, int y)
 {
-    SYSTEMTIME SysTime;
-    GetLocalTime(&SysTime);
-	char *timestring = "Now the time is: %02d:%02d:%02d";
-
-	DrawText(x,y-39,1.0f,1.0f,1.0f,timestring,SysTime.wHour,SysTime.wMinute,SysTime.wSecond);
 	DrawText(x,y-28,0.7f,0.7f,1.0f,"--------------------------");
-	DrawText(x,y-17,0.7f,0.7f,1.0f,"-       panzerGL 2.2        -");
-	DrawText(x,y-6,0.7f,0.7f,1.0f,"-       James34602        -");
+	DrawText(x,y-17,0.85f,0.9f,1.0f,"-          mtd1410          -");
 	DrawText(x,y+2 ,0.7f,0.7f,1.0f,"--------------------------");
 
 	if(menu.count==0)
@@ -1146,7 +1209,32 @@ void DrawMenu_legacy(int x, int y)
 //////////////////////////////////////////////////////////////////////////////////////////////////
 void DrawCheckText(int x,int y) // bad way of doing this
 {
-	DrawText(x,y,0.7f,0.7f,1.0f,"panzerGL 2.2 MultiMod Hack - Check");
+	static float check_h=300.0f;	// panel height (px), measured on the previous frame
+	int startY=y;
+
+	// dark translucent panel behind the F11 check screen for readability
+	{
+		float pad=8.0f*ui_scale;
+		float pl=(float)x-pad, pt=(float)y-pad, pr=(float)x+540.0f*ui_scale, pb=(float)y+check_h+pad;
+		(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
+		(*orig_glDisable)(GL_TEXTURE_2D);
+		(*orig_glEnable)(GL_BLEND);
+		(*orig_glBlendFunc)(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+		(*orig_glColor4f)(0.0f,0.0f,0.0f,0.6f);
+		(*orig_glBegin)(GL_QUADS);
+		(*orig_glVertex2f)(pl,pt);(*orig_glVertex2f)(pr,pt);
+		(*orig_glVertex2f)(pr,pb);(*orig_glVertex2f)(pl,pb);
+		(*orig_glEnd)();
+		(*orig_glColor4f)(0.1f,0.6f,1.0f,0.45f);
+		(*orig_glLineWidth)(1.0f);
+		(*orig_glBegin)(GL_LINE_LOOP);
+		(*orig_glVertex2f)(pl,pt);(*orig_glVertex2f)(pr,pt);
+		(*orig_glVertex2f)(pr,pb);(*orig_glVertex2f)(pl,pb);
+		(*orig_glEnd)();
+		(*orig_glPopAttrib)();
+	}
+
+	DrawText(x,y,0.7f,0.7f,1.0f,"mtd1410 - Check");
 	y=y+(int)(13*ui_scale);
 	DrawText(x,y,1.0f,1.0f,1.0f,"> Hack file: %s",dllpath);
 	y=y+(int)(13*ui_scale);
@@ -1299,6 +1387,8 @@ void DrawCheckText(int x,int y) // bad way of doing this
 	DrawText(x,y,1.0f,1.0f,1.0f,"> lowest vertex count: %i",player_vertex_min+5);
 	y=y+(int)(13*ui_scale);
 	DrawText(x,y,1.0f,1.0f,1.0f,"> highest vertex count %i",player_vertex_max-5);
+
+	check_h=(float)(y-startY)+13.0f*ui_scale;	// size next frame's panel to fit the text
 }
 
 void DrawKeyInfo() // just drawn if 'aimkeychanged' is true
@@ -1766,7 +1856,8 @@ void DrawOwnHud(float sw,float sh)
 	// fixed for the whole session), so the HUD scales the same way as the menu / ESP
 	// text without any per-frame work.
 	const float cx=sw*0.5f, cy=sh*0.5f, DEG=3.14159265f/180.0f;
-	const float R   =52.0f*ui_scale;				// arc radius (scales with resolution)
+	float R=(52.0f+(float)cvar.hud_pad)*ui_scale;	// arc radius (Padding pushes it out/in)
+	if(R<14.0f*ui_scale) R=14.0f*ui_scale;			// keep it off the crosshair
 	const int   TICKS=10;
 	const float SPAN=96.0f;							// total arc per side (degrees) -> more curve
 	const float SLOT=SPAN/TICKS;					// angular size of one slot
@@ -1820,6 +1911,49 @@ void DrawOwnHud(float sw,float sh)
 	}
 
 	(*orig_glColor4f)(1,1,1,1);
+}
+
+// small filled disc in the current 2D pass (used for radar dots / local marker)
+void FillCircle2D(float cx,float cy,float r)
+{
+	(*orig_glBegin)(GL_TRIANGLE_FAN);
+	(*orig_glVertex2f)(cx,cy);
+	for(int a=0;a<=12;a++){ float t=a*6.2831853f/12.0f; (*orig_glVertex2f)(cx+cosf(t)*r, cy+sinf(t)*r); }
+	(*orig_glEnd)();
+}
+
+// radar dot: filled square or circle of half-size r
+void DrawDot2D(float cx,float cy,float r,int square)
+{
+	if(square)
+	{
+		(*orig_glBegin)(GL_QUADS);
+		(*orig_glVertex2f)(cx-r,cy-r);(*orig_glVertex2f)(cx+r,cy-r);
+		(*orig_glVertex2f)(cx+r,cy+r);(*orig_glVertex2f)(cx-r,cy+r);
+		(*orig_glEnd)();
+	}
+	else FillCircle2D(cx,cy,r);
+}
+
+// ESP box outline, optionally with rounded corners (rad in px, 0 = sharp)
+void DrawBox2D(float x0,float y0,float x1,float y1,float rad)
+{
+	if(rad<0.5f)
+	{
+		(*orig_glBegin)(GL_LINE_LOOP);
+		(*orig_glVertex2f)(x0,y0);(*orig_glVertex2f)(x1,y0);
+		(*orig_glVertex2f)(x1,y1);(*orig_glVertex2f)(x0,y1);
+		(*orig_glEnd)();
+		return;
+	}
+	float w=x1-x0, h=y1-y0, m=(w<h?w:h)*0.5f; if(rad>m) rad=m;
+	const float PI=3.14159265f; const int SEG=5;
+	(*orig_glBegin)(GL_LINE_LOOP);
+	for(int i=0;i<=SEG;i++){ float a=PI      +(PI*0.5f)*i/SEG; (*orig_glVertex2f)(x0+rad+cosf(a)*rad, y0+rad+sinf(a)*rad); }	// TL
+	for(int i=0;i<=SEG;i++){ float a=1.5f*PI +(PI*0.5f)*i/SEG; (*orig_glVertex2f)(x1-rad+cosf(a)*rad, y0+rad+sinf(a)*rad); }	// TR
+	for(int i=0;i<=SEG;i++){ float a=        (PI*0.5f)*i/SEG;  (*orig_glVertex2f)(x1-rad+cosf(a)*rad, y1-rad+sinf(a)*rad); }	// BR
+	for(int i=0;i<=SEG;i++){ float a=0.5f*PI +(PI*0.5f)*i/SEG; (*orig_glVertex2f)(x0+rad+cosf(a)*rad, y1-rad+sinf(a)*rad); }	// BL
+	(*orig_glEnd)();
 }
 
 // Draw ESP for every player in the engine entity list. Called each frame from
@@ -1895,13 +2029,18 @@ void DrawEngineEsp()
 		eng_local_team=EngTeam(eng_local_idx);
 	}
 
-	// ---- 2D radar frame (top-left). Plotted dots are added inside the loop. ----
+	// ---- 2D radar frame. Position is one of 8 screen anchors. Dots are added below. ----
 	float rcx=0,rcy=0,rrad=0; float rcos=1.0f,rsin=0.0f; bool radar_on=false;
 	if(cvar.radar)
 	{
 		rrad=70.0f*ui_scale;
-		rcx =14.0f*ui_scale+rrad;
-		rcy =14.0f*ui_scale+rrad;
+		float marg=14.0f*ui_scale+rrad;
+		float cxs[3]={marg, sw*0.5f, sw-marg};		// left / center / right
+		float cys[3]={marg, sh*0.5f, sh-marg};		// top  / middle / bottom
+		static const int rcol[8]={0,1,2, 0,2, 0,1,2};	// TL TC TR ML MR BL BC BR
+		static const int rrow[8]={0,0,0, 1,1, 2,2,2};
+		int rp=cvar.radar_pos; if(rp<0)rp=0; if(rp>7)rp=7;
+		rcx=cxs[rcol[rp]]; rcy=cys[rrow[rp]];
 		float va[3]={0,0,0};
 		DWORD fnVA=EngFn(ENG_SLOT_GETVIEWANGLES);
 		if(fnVA>=0x10000) ((eng_GetViewAngles_t)fnVA)(va);
@@ -1923,12 +2062,8 @@ void DrawEngineEsp()
 		(*orig_glVertex2f)(rcx-rrad,rcy);(*orig_glVertex2f)(rcx+rrad,rcy);
 		(*orig_glVertex2f)(rcx,rcy-rrad);(*orig_glVertex2f)(rcx,rcy+rrad);
 		(*orig_glEnd)();
-		float ms=3.0f*ui_scale;						// local player marker (white square)
-		(*orig_glColor4f)(1,1,1,1);
-		(*orig_glBegin)(GL_QUADS);
-		(*orig_glVertex2f)(rcx-ms,rcy-ms);(*orig_glVertex2f)(rcx+ms,rcy-ms);
-		(*orig_glVertex2f)(rcx+ms,rcy+ms);(*orig_glVertex2f)(rcx-ms,rcy+ms);
-		(*orig_glEnd)();
+		(*orig_glColor4f)(1,1,1,1);					// local player marker
+		DrawDot2D(rcx,rcy,3.0f*ui_scale,cvar.radar_shape);
 	}
 
 	for(int idx=1; idx<=32; idx++)
@@ -1985,15 +2120,15 @@ void DrawEngineEsp()
 			float px=rcx + rx*sc, py=rcy - ry*sc;	// forward = up (screen y is down)
 			float dd=sqrtf((px-rcx)*(px-rcx)+(py-rcy)*(py-rcy));
 			if(dd>rrad){ px=rcx+(px-rcx)/dd*rrad; py=rcy+(py-rcy)/dd*rrad; }	// clamp to ring
-			float ds=3.0f*ui_scale;
 			(*orig_glColor3f)(r,g,b);
-			(*orig_glBegin)(GL_QUADS);
-			(*orig_glVertex2f)(px-ds,py-ds);(*orig_glVertex2f)(px+ds,py-ds);
-			(*orig_glVertex2f)(px+ds,py+ds);(*orig_glVertex2f)(px-ds,py+ds);
-			(*orig_glEnd)();
+			DrawDot2D(px,py,3.0f*ui_scale,cvar.radar_shape);	// circle/square per player
 		}
 
 		if(!cvar.esp_engine) continue;			// radar-only run: skip the on-screen ESP
+
+		// team filter: 0=both, 1=CT only (team 2), 2=T only (team 1)
+		if(cvar.esp_team==1 && team!=2) continue;
+		if(cvar.esp_team==2 && team!=1) continue;
 
 		int usehull=ReadInt(ent+ENT_CURSTATE+ES_USEHULL);
 		float halfh=(usehull==1)?18.0f:36.0f;	// duck vs stand half-height (units)
@@ -2014,14 +2149,16 @@ void DrawEngineEsp()
 		float cx=(fx+hx)*0.5f;
 		float x0=cx-bxw*0.5f, x1=cx+bxw*0.5f;
 
+		float pad=(float)cvar.esp_box_pad*ui_scale;	// grow/shrink the box around the player
+		x0-=pad; x1+=pad; y0-=pad; y1+=pad;
+		if(x1-x0<2.0f){ float m=(x0+x1)*0.5f; x0=m-1.0f; x1=m+1.0f; }
+		if(y1-y0<2.0f){ float m=(y0+y1)*0.5f; y0=m-1.0f; y1=m+1.0f; }
+
 		if(cvar.esp_box)
 		{
 			(*orig_glLineWidth)(1.5f);
 			(*orig_glColor3f)(r,g,b);
-			(*orig_glBegin)(GL_LINE_LOOP);
-			(*orig_glVertex2f)(x0,y0); (*orig_glVertex2f)(x1,y0);
-			(*orig_glVertex2f)(x1,y1); (*orig_glVertex2f)(x0,y1);
-			(*orig_glEnd)();
+			DrawBox2D(x0,y0,x1,y1,(float)cvar.esp_box_radius*ui_scale);
 		}
 
 		if(cvar.esp_name)
@@ -2244,9 +2381,9 @@ void sys_glEnable (GLenum cap)
 		enabledraw=false;
 
 		// put all text stuff here:
+		// NOTE: the menu + F11 check are drawn later (in wglSwapBuffers, via
+		// DrawOverlayUI) so they sit ON TOP of the radar / engine ESP overlay.
 
-		if(menu.active || menu_alpha>0.002f) { DrawMenu(cvar.menu_x,cvar.menu_y); }	// draw while visible or fading
-		if(checktext)	{ DrawCheckText(40,40); }				// draws check stuff (F11)
 		if(aimkeychanged) // F10 pressed
 		{
 			if(pTimer(5)) // draw key change info for 5 seconds
@@ -2685,10 +2822,54 @@ PROC sys_wglGetProcAddress(LPCSTR ProcName)
 	return orig_wglGetProcAddress(ProcName);
 }
 
+// Top UI layer: the hack menu and the F11 check screen, drawn AFTER DrawEngineEsp
+// so they sit above the radar / engine ESP. Between themselves, whichever was opened
+// last draws on top. The menu fade is ticked here every frame so it stays smooth.
+void DrawOverlayUI()
+{
+	UpdateMenuAnim();	// tick the fade every frame (even while hidden) -> smooth in/out
+
+	bool showMenu  = (menu.active || menu_alpha>0.002f);
+	bool showCheck = checktext;
+	if(!showMenu && !showCheck) return;
+
+	GLint vpe[4];
+	(*orig_glGetIntegerv)(GL_VIEWPORT,vpe);
+	float sw=(float)vpe[2], sh=(float)vpe[3];
+	if(sw<=0||sh<=0) return;
+
+	(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
+	(*orig_glDisable)(GL_DEPTH_TEST);
+	(*orig_glDisable)(GL_TEXTURE_2D);
+	(*orig_glEnable)(GL_BLEND);
+	(*orig_glBlendFunc)(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+	(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPushMatrix)(); (*orig_glLoadIdentity)();
+	(*orig_glOrtho)(0,sw,sh,0,-1,1);
+	(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPushMatrix)(); (*orig_glLoadIdentity)();
+
+	if(menu_open_seq >= check_open_seq)		// menu opened last -> on top
+	{
+		if(showCheck) DrawCheckText(40,40);
+		if(showMenu)  DrawMenu(cvar.menu_x,cvar.menu_y);
+	}
+	else									// F11 check opened last -> on top
+	{
+		if(showMenu)  DrawMenu(cvar.menu_x,cvar.menu_y);
+		if(showCheck) DrawCheckText(40,40);
+	}
+
+	(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPopMatrix)();
+	(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPopMatrix)();
+	(*orig_glPopAttrib)();
+}
+
 void sys_wglSwapBuffers(HDC hDC)
 {
-	if(hookactive)			// tier2: draw engine entity-list ESP as the last thing each frame
-		DrawEngineEsp();
+	if(hookactive)
+	{
+		DrawEngineEsp();	// radar + engine ESP + own HUD (bottom overlay layer)
+		DrawOverlayUI();	// hack menu + F11 check (top overlay layer)
+	}
 	viewportcount=0;		// reset viewport count, cuz this is the last function called every frame
 	(*orig_wglSwapBuffers) (hDC);
 }

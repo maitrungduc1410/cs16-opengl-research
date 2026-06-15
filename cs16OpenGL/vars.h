@@ -29,14 +29,20 @@ typedef struct { // cvars (of course ;P)
 	int esp_engine;	// engine entity-list ESP master (real names/team/origin)
 	int esp_name;	// ESP Engine sub-option: player name
 	int esp_box;	// ESP Engine sub-option: 2D box
+	int esp_box_pad;	// ESP Engine sub-option: box padding around the player (px)
+	int esp_box_radius;	// ESP Engine sub-option: box corner radius (px, 0=sharp)
 	int esp_dist;	// ESP Engine sub-option: distance text
+	int esp_team;	// ESP Engine sub-option: which team to draw (0=both,1=CT,2=T)
 	int esp_hud;	// own HP/ammo HUD master (arcs around the crosshair)
 	int hud_hp;		// HUD sub-option: health arc
 	int hud_ammo;	// HUD sub-option: ammo arc
 	int hud_die;	// HUD sub-option: keep showing the HUD while dead (default off)
 	int chams;		// model chams: flat color / wireframe player models
 	int chams_wire;	// chams sub-option: wireframe instead of solid fill
-	int radar;		// 2D radar (top-left) built from the engine entity list
+	int radar;		// 2D radar built from the engine entity list
+	int radar_pos;	// radar sub-option: 0..7 screen anchor (TL,TC,TR,ML,MR,BL,BC,BR)
+	int radar_shape;// radar sub-option: 0=circle dots, 1=square dots
+	int hud_pad;	// HUD sub-option: extra arc padding around the crosshair (units)
 	int	aimthru;
 	int	aim;
 	int	fov;
@@ -186,3 +192,7 @@ float	gTextAlpha		=1.0f;	// global alpha multiplier for DrawText (menu fade)
 float	menu_alpha		=0.0f;	// 0..1 fade state of the menu
 float	menu_sel_anim	=0.0f;	// animated (smoothly sliding) selected-row index
 DWORD	menu_last_tick	=0;		// last GetTickCount() for time-based animation
+float	g_menu_dt		=0.0f;	// per-frame anim delta (seconds), updated every frame
+int		ui_open_seq		=0;		// monotonic counter: who (menu/F11) was opened last
+int		menu_open_seq	=0;		// ui_open_seq stamp when the menu was last opened
+int		check_open_seq	=0;		// ui_open_seq stamp when the F11 check was last opened
