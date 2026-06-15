@@ -92,6 +92,9 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "hud_hp %i;"	,&cvar.hud_hp);
 					sscanf(str, "hud_ammo %i;"	,&cvar.hud_ammo);
 					sscanf(str, "hud_die %i;"	,&cvar.hud_die);
+					sscanf(str, "chams %i;"		,&cvar.chams);
+					sscanf(str, "chams_wire %i;",&cvar.chams_wire);
+					sscanf(str, "radar %i;"		,&cvar.radar);
 					sscanf(str, "lambert %i;"	,&cvar.lambert);
 					sscanf(str, "crosshair %i;"	,&cvar.cross);
 					sscanf(str, "fov %i;"		,&cvar.fov);
@@ -210,6 +213,9 @@ void HookInit(bool activate)
 		cvar.hud_hp=0;
 		cvar.hud_ammo=0;
 		cvar.hud_die=0;
+		cvar.chams=0;
+		cvar.chams_wire=0;
+		cvar.radar=0;
 		cvar.lambert=0;
 		cvar.cross=0;
 		cvar.wall=0;
@@ -607,6 +613,9 @@ void DrawMenu(int x, int y)
 		{"HP",          IT_TOGGLE, &cvar.hud_hp,     0,0,0,       0, &cvar.esp_hud,    1},
 		{"Ammo",        IT_TOGGLE, &cvar.hud_ammo,   0,0,0,       0, &cvar.esp_hud,    1},
 		{"Show when die",IT_TOGGLE,&cvar.hud_die,    0,0,0,       0, &cvar.esp_hud,    1},
+		{"Chams",       IT_TOGGLE, &cvar.chams,      0,0,0,       0, 0,                0},
+		{"Chams Wire",  IT_TOGGLE, &cvar.chams_wire, 0,0,0,       0, &cvar.chams,      1},
+		{"Radar",       IT_TOGGLE, &cvar.radar,      0,0,0,       0, 0,                0},
 		{"Crosshair",   IT_TOGGLE, &cvar.cross,      0,0,0,       0, 0,                0},
 	};
 	const int N = sizeof(items)/sizeof(items[0]);
@@ -1353,6 +1362,7 @@ bool IsVertTeam(long vertcount,int t)	// helper: does vertcount belong to team t
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 #define ENG_SLOT_GETPLAYERINFO		21	// cl_enginefunc_t indices (DWORD slots)
+#define ENG_SLOT_GETVIEWANGLES		34	// pfnGetViewAngles(float* -> pitch,yaw,roll)
 #define ENG_SLOT_GETLOCALPLAYER		51
 #define ENG_SLOT_GETENTITYBYINDEX	53
 #define ENG_SLOT_PTRIAPI			82
@@ -1388,6 +1398,7 @@ typedef void* (__cdecl *eng_GetLocalPlayer_t)(void);
 typedef void* (__cdecl *eng_GetEntityByIndex_t)(int idx);
 typedef void  (__cdecl *eng_GetPlayerInfo_t)(int idx, hud_player_info_t *info);
 typedef int   (__cdecl *eng_WorldToScreen_t)(float *world, float *screen);
+typedef void  (__cdecl *eng_GetViewAngles_t)(float *angles);
 
 bool IsReadable(DWORD addr,DWORD len)	// is [addr,addr+len) committed & readable?
 {
@@ -1595,18 +1606,38 @@ typedef int (__cdecl *pfnUserMsgHook)(const char *name,int size,void *buf);
 static pfnUserMsgHook um_org_health  = 0;	// saved original client.dll handlers
 static pfnUserMsgHook um_org_battery = 0;
 static pfnUserMsgHook um_org_curwpn  = 0;
+static pfnUserMsgHook um_org_death   = 0;
+static pfnUserMsgHook um_org_reset   = 0;
 static DWORD um_node_health  = 0;			// usermsg_t node addresses we patched
 static DWORD um_node_battery = 0;
 static DWORD um_node_curwpn  = 0;
+static DWORD um_node_death   = 0;
+static DWORD um_node_reset   = 0;
 
 int __cdecl Hk_Health(const char *n,int s,void *b)
 {
-	if(b && s>=1)
-	{
-		me_health=*(unsigned char*)b;
-		me_dead=(me_health<=0);		// server sends Health=0 on death, Health>0 on (re)spawn
-	}
+	// Only updates the displayed value. We deliberately do NOT infer death from this:
+	// while dead+spectating, the server feeds us the SPECTATED player's Health, so a
+	// health>0 here would wrongly mark us alive. Death is driven by DeathMsg instead.
+	if(b && s>=1) me_health=*(unsigned char*)b;
 	return um_org_health ? um_org_health(n,s,b) : 1;
+}
+// DeathMsg layout (CS 1.6): byte killer, byte victim, byte headshot, string weapon.
+// We mark ourselves dead when the victim index is our own player index.
+int __cdecl Hk_DeathMsg(const char *n,int s,void *b)
+{
+	if(b && s>=2)
+	{
+		int victim=((unsigned char*)b)[1];
+		if(victim==eng_local_idx && eng_local_idx>0) me_dead=true;
+	}
+	return um_org_death ? um_org_death(n,s,b) : 1;
+}
+// ResetHUD is sent to us on our own (re)spawn -> we are alive again.
+int __cdecl Hk_ResetHUD(const char *n,int s,void *b)
+{
+	me_dead=false;
+	return um_org_reset ? um_org_reset(n,s,b) : 1;
 }
 int __cdecl Hk_Battery(const char *n,int s,void *b)
 {
@@ -1788,7 +1819,7 @@ void DrawOwnHud(float sw,float sh)
 void DrawEngineEsp()
 {
 	eng_players=0;
-	if(!cvar.esp_engine && !cvar.esp_hud) return;
+	if(!cvar.esp_engine && !cvar.esp_hud && !cvar.radar) return;
 	eng_frame++;
 
 	GLint vpe[4];
@@ -1833,7 +1864,7 @@ void DrawEngineEsp()
 		return;
 	}
 
-	if(cvar.esp_engine)
+	if(cvar.esp_engine || cvar.radar)
 	{
 
 	float lo[3]={0,0,0};
@@ -1845,6 +1876,42 @@ void DrawEngineEsp()
 		lo[2]=ReadFlt(local+ENT_ORIGIN+8);
 		eng_local_idx =ReadInt(local+ENT_INDEX);
 		eng_local_team=EngTeam(eng_local_idx);
+	}
+
+	// ---- 2D radar frame (top-left). Plotted dots are added inside the loop. ----
+	float rcx=0,rcy=0,rrad=0; float rcos=1.0f,rsin=0.0f; bool radar_on=false;
+	if(cvar.radar)
+	{
+		rrad=70.0f*ui_scale;
+		rcx =14.0f*ui_scale+rrad;
+		rcy =14.0f*ui_scale+rrad;
+		float va[3]={0,0,0};
+		DWORD fnVA=EngFn(ENG_SLOT_GETVIEWANGLES);
+		if(fnVA>=0x10000) ((eng_GetViewAngles_t)fnVA)(va);
+		float yaw=va[1]*3.14159265f/180.0f;		// rotate so local forward points up
+		rcos=cosf(yaw); rsin=sinf(yaw);
+		radar_on=true;
+
+		(*orig_glColor4f)(0.0f,0.0f,0.0f,0.45f);	// translucent disc
+		(*orig_glBegin)(GL_TRIANGLE_FAN);
+		(*orig_glVertex2f)(rcx,rcy);
+		for(int a=0;a<=32;a++){ float t=a*6.2831853f/32.0f; (*orig_glVertex2f)(rcx+cosf(t)*rrad, rcy+sinf(t)*rrad); }
+		(*orig_glEnd)();
+		(*orig_glColor4f)(0.85f,0.85f,0.85f,0.7f);	// ring + cross-hairs
+		(*orig_glLineWidth)(1.0f);
+		(*orig_glBegin)(GL_LINE_LOOP);
+		for(int a=0;a<32;a++){ float t=a*6.2831853f/32.0f; (*orig_glVertex2f)(rcx+cosf(t)*rrad, rcy+sinf(t)*rrad); }
+		(*orig_glEnd)();
+		(*orig_glBegin)(GL_LINES);
+		(*orig_glVertex2f)(rcx-rrad,rcy);(*orig_glVertex2f)(rcx+rrad,rcy);
+		(*orig_glVertex2f)(rcx,rcy-rrad);(*orig_glVertex2f)(rcx,rcy+rrad);
+		(*orig_glEnd)();
+		float ms=3.0f*ui_scale;						// local player marker (white square)
+		(*orig_glColor4f)(1,1,1,1);
+		(*orig_glBegin)(GL_QUADS);
+		(*orig_glVertex2f)(rcx-ms,rcy-ms);(*orig_glVertex2f)(rcx+ms,rcy-ms);
+		(*orig_glVertex2f)(rcx+ms,rcy+ms);(*orig_glVertex2f)(rcx-ms,rcy+ms);
+		(*orig_glEnd)();
 	}
 
 	for(int idx=1; idx<=32; idx++)
@@ -1884,6 +1951,33 @@ void DrawEngineEsp()
 			if(o[0]==0&&o[1]==0&&o[2]==0) continue;
 		}
 
+		// team color (shared by the radar dot and the on-screen ESP below)
+		int team=EngTeam(idx);
+		if(team==0) team=TeamFromModel(modelbuf);
+		float r,g,b;
+		if(team==1)      { r=1.0f; g=0.25f; b=0.25f; }	// T  = red
+		else if(team==2) { r=0.25f;g=0.55f; b=1.0f;  }	// CT = blue
+		else             { r=0.25f;g=1.0f;  b=0.25f; }	// unknown = green
+
+		if(radar_on)								// plot this player on the radar
+		{
+			float ddx=o[0]-lo[0], ddy=o[1]-lo[1];
+			float rx= ddx*rsin - ddy*rcos;		// distance to the right of local
+			float ry= ddx*rcos + ddy*rsin;		// distance in front of local
+			float sc=rrad/1500.0f;				// ~1500 units maps to the radar edge
+			float px=rcx + rx*sc, py=rcy - ry*sc;	// forward = up (screen y is down)
+			float dd=sqrtf((px-rcx)*(px-rcx)+(py-rcy)*(py-rcy));
+			if(dd>rrad){ px=rcx+(px-rcx)/dd*rrad; py=rcy+(py-rcy)/dd*rrad; }	// clamp to ring
+			float ds=3.0f*ui_scale;
+			(*orig_glColor3f)(r,g,b);
+			(*orig_glBegin)(GL_QUADS);
+			(*orig_glVertex2f)(px-ds,py-ds);(*orig_glVertex2f)(px+ds,py-ds);
+			(*orig_glVertex2f)(px+ds,py+ds);(*orig_glVertex2f)(px-ds,py+ds);
+			(*orig_glEnd)();
+		}
+
+		if(!cvar.esp_engine) continue;			// radar-only run: skip the on-screen ESP
+
 		int usehull=ReadInt(ent+ENT_CURSTATE+ES_USEHULL);
 		float halfh=(usehull==1)?18.0f:36.0f;	// duck vs stand half-height (units)
 		float zoff =(usehull==1)?6.0f :0.0f;
@@ -1902,13 +1996,6 @@ void DrawEngineEsp()
 		float bxw=bxh*0.45f;
 		float cx=(fx+hx)*0.5f;
 		float x0=cx-bxw*0.5f, x1=cx+bxw*0.5f;
-
-		int team=EngTeam(idx);					// team color (extra info if found,
-		if(team==0) team=TeamFromModel(modelbuf);	// else fall back to model name)
-		float r,g,b;
-		if(team==1)      { r=1.0f; g=0.25f; b=0.25f; }	// T  = red
-		else if(team==2) { r=0.25f;g=0.55f; b=1.0f;  }	// CT = blue
-		else             { r=0.25f;g=1.0f;  b=0.25f; }	// unknown = green
 
 		if(cvar.esp_box)
 		{
@@ -1933,10 +2020,11 @@ void DrawEngineEsp()
 		eng_players++;
 	}
 
-	DrawText(8.0f,16.0f,0.2f,1.0f,0.4f,"ENGINE ESP: %i players  team=%s",
-		eng_players, eng_have_extra?"extra":"model");
+	if(cvar.esp_engine)
+		DrawText(8.0f,16.0f,0.2f,1.0f,0.4f,"ENGINE ESP: %i players  team=%s",
+			eng_players, eng_have_extra?"extra":"model");
 
-	}	// end if(cvar.esp_engine)
+	}	// end if(cvar.esp_engine || cvar.radar)
 
 	(*orig_glMatrixMode)(GL_PROJECTION);
 	(*orig_glPopMatrix)();
@@ -2208,7 +2296,14 @@ void sys_glOrtho (GLdouble left,  GLdouble right,  GLdouble bottom,  GLdouble to
 void sys_glPopMatrix (void)
 {
 	if (player.get) // player was drawn
+	{
 		player.get=false;
+		if (cvar.chams)							// undo chams render state after each model
+		{										// (so the world keeps its fill + textures)
+			(*orig_glPolygonMode)(GL_FRONT_AND_BACK, GL_FILL);
+			(*orig_glEnable)(GL_TEXTURE_2D);
+		}
+	}
 
 	if(cvar.wall)
 		bWall=false;
@@ -2269,6 +2364,11 @@ void sys_glShadeModel (GLenum mode)
 		player.highest_z=-99999;
 		player.lowest_z=-99999;
 		player.vertices=0;
+		if (cvar.chams && cvar.chams_wire)		// wireframe ("spider") chams; restored in glPopMatrix
+		{
+			(*orig_glPolygonMode)(GL_FRONT_AND_BACK, GL_LINE);
+			(*orig_glLineWidth)(1.0f);
+		}
 	}
 	else
 	{
@@ -2462,11 +2562,17 @@ void sys_glVertex3f (GLfloat x,  GLfloat y,  GLfloat z)
 		}
 
 		player.height=player.highest_z-player.lowest_z;
-		
-		(*orig_glEnable)(GL_TEXTURE_2D);
+
+		if (cvar.chams)							// flat silhouette / colored wireframe model
+		{
+			(*orig_glDisable)(GL_TEXTURE_2D);
+			(*orig_glColor3f)(1.0f, 0.15f, 0.95f);	// chams color (magenta, easy to spot)
+		}
+		else
+			(*orig_glEnable)(GL_TEXTURE_2D);
 	}
 
-	if (cvar.lambert)
+	if (cvar.lambert && !(player.get && cvar.chams))	// chams color overrides lambert on models
 		glColor3f(1.0f, 1.0f, 1.0f);
 
 	(*orig_glVertex3f) (x, y, z);

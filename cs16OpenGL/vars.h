@@ -34,6 +34,9 @@ typedef struct { // cvars (of course ;P)
 	int hud_hp;		// HUD sub-option: health arc
 	int hud_ammo;	// HUD sub-option: ammo arc
 	int hud_die;	// HUD sub-option: keep showing the HUD while dead (default off)
+	int chams;		// model chams: flat color / wireframe player models
+	int chams_wire;	// chams sub-option: wireframe instead of solid fill
+	int radar;		// 2D radar (top-left) built from the engine entity list
 	int	aimthru;
 	int	aim;
 	int	fov;
