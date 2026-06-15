@@ -1719,9 +1719,11 @@ void HookOwnMsgs()
 		if(um_node_health  && ReadDW(um_node_health +UM_PFN)!=(DWORD)Hk_Health)    ok=false;
 		if(um_node_battery && ReadDW(um_node_battery+UM_PFN)!=(DWORD)Hk_Battery)   ok=false;
 		if(um_node_curwpn  && ReadDW(um_node_curwpn +UM_PFN)!=(DWORD)Hk_CurWeapon) ok=false;
+		if(um_node_death   && ReadDW(um_node_death  +UM_PFN)!=(DWORD)Hk_DeathMsg)  ok=false;
+		if(um_node_reset   && ReadDW(um_node_reset  +UM_PFN)!=(DWORD)Hk_ResetHUD)  ok=false;
 		if(ok) return;
 		msg_hooked=false; eng_msg_tries=0;
-		um_node_health=um_node_battery=um_node_curwpn=0;
+		um_node_health=um_node_battery=um_node_curwpn=um_node_death=um_node_reset=0;
 	}
 	// The Health/Battery/CurWeapon nodes only get registered AFTER you connect to a
 	// server (HUD_Init), which can be far more than 60 frames after the HUD is first
@@ -1741,17 +1743,23 @@ void HookOwnMsgs()
 	if(um_node_curwpn==0)
 	{ DWORD n=FindUserMsgNode("CurWeapon");
 	  if(n){ um_node_curwpn=n; um_org_curwpn=(pfnUserMsgHook)ReadDW(n+UM_PFN); PatchPfn(n,(DWORD)Hk_CurWeapon); } }
+	if(um_node_death==0)
+	{ DWORD n=FindUserMsgNode("DeathMsg");
+	  if(n){ um_node_death=n; um_org_death=(pfnUserMsgHook)ReadDW(n+UM_PFN); PatchPfn(n,(DWORD)Hk_DeathMsg); } }
+	if(um_node_reset==0)
+	{ DWORD n=FindUserMsgNode("ResetHUD");
+	  if(n){ um_node_reset=n; um_org_reset=(pfnUserMsgHook)ReadDW(n+UM_PFN); PatchPfn(n,(DWORD)Hk_ResetHUD); } }
 
-	if(um_node_health && um_node_battery && um_node_curwpn) msg_hooked=true;
+	if(um_node_health && um_node_battery && um_node_curwpn && um_node_death && um_node_reset) msg_hooked=true;
 }
 
 // Two 10-tick arcs flanking the crosshair: green (left) = health, yellow (right)
 // = current clip. Each tick = 10%. Drawn inside the same 2D pass as DrawEngineEsp.
 void DrawOwnHud(float sw,float sh)
 {
-	// "Show when die" ONLY controls visibility while dead. While alive (or before we
-	// have captured any HP yet) the HUD always shows. me_dead is true only after an
-	// actual Health=0 message, so a not-yet-captured HP is never mistaken for death.
+	// "Show when die" ONLY controls visibility while dead. me_dead is driven by the
+	// DeathMsg/ResetHUD hooks (not by the Health value), so spectating a live teammate
+	// after death can't flip us back to "alive" and re-show the HUD.
 	if(me_dead && !cvar.hud_die) return;
 
 	// ui_scale is computed once in BuildFont() from the screen resolution (which is
@@ -1846,6 +1854,15 @@ void DrawEngineEsp()
 	DWORD fnLocal=ready?EngFn(ENG_SLOT_GETLOCALPLAYER):0;
 	DWORD fnEnt  =ready?EngFn(ENG_SLOT_GETENTITYBYINDEX):0;
 	DWORD fnInfo =ready?EngFn(ENG_SLOT_GETPLAYERINFO):0;
+
+	// Keep our own player index fresh so the DeathMsg hook can tell when WE died,
+	// even when ESP Engine / Radar are off and the loop below never runs.
+	if(fnLocal>=0x10000)
+	{
+		DWORD lp=(DWORD)((eng_GetLocalPlayer_t)fnLocal)();
+		if(lp) eng_local_idx=ReadInt(lp+ENT_INDEX);
+	}
+
 	// own HP / ammo arcs around the crosshair: driven by user messages, not by the
 	// engine entity table, so draw them before the table-ready check below.
 	if(cvar.esp_hud)

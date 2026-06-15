@@ -172,9 +172,9 @@ int		me_health		=100;	// local player health   (Health msg, 0..100). Defaults to
 								// 100 because the spawn "Health=100" message is sent once and
 								// may be missed before our hook installs; you always spawn at
 								// 100, so this shows the correct value until the first update.
-bool	me_dead			=false;	// true only after a Health msg of 0 (we actually died);
-								// stays false until then, so "alive but HP not captured
-								// yet" is NOT treated as dead.
+bool	me_dead			=false;	// set by the DeathMsg hook (victim == us) and cleared by
+								// the ResetHUD hook (respawn). Independent of the Health
+								// value so spectating a teammate can't fake "alive".
 int		me_armor		=0;		// local player armor    (Battery msg, 0..100)
 int		me_clip			=-1;	// current weapon clip   (CurWeapon msg, -1 = no clip)
 int		me_weaponid		=-1;	// active weapon id      (CurWeapon msg)
