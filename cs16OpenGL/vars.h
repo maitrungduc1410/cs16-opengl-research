@@ -125,8 +125,6 @@ bool bSmoke=false;
 bool bScope=false;
 bool bWall=false;
 bool bSky=false;
-bool b2D=false;		// true while the engine is in its 2D/ortho pass (HUD, scope, sprites)
-					// -> used to keep the wallhack from touching 2D draws like the AWP scope
 bool ch=false;
 bool key_init=false;
 bool key_check=false;

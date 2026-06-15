@@ -2077,26 +2077,18 @@ void sys_glAlphaFunc (GLenum func,  GLclampf ref)
 
 void sys_glBegin (GLenum mode)
 {
-	// Is this draw part of the 3D world (where the wallhack belongs)? bWall is set on
-	// every glPushMatrix, so it's also true during the 2D HUD/scope pass; and b2D
-	// (from glOrtho/glFrustum call order) isn't reliable for the sniper scope when
-	// switching zoom levels. So when the wallhack is about to fire, confirm against
-	// the LIVE projection matrix: perspective has [2][3]==-1, ortho has it ==0. This
-	// keeps the wallhack out of the scope/crosshair pass (no square scope, no lost
-	// crosshair) no matter how the engine set the projection up.
-	bool world3d = !b2D;
-	if (cvar.wall && bWall && world3d)
-	{
-		GLfloat proj[16];
-		(*orig_glGetFloatv)(GL_PROJECTION_MATRIX, proj);
-		if (proj[11] == 0.0f) world3d = false;	// orthographic => 2D overlay, leave it alone
-	}
+	// No Flash: bFlash must only suppress vertices of the ONE white fullscreen quad the
+	// engine draws for a flashbang. It used to leak past that quad (it was never cleared
+	// for non-QUADS primitives), so once any white quad set it, every later glVertex2f
+	// draw - including the AWP scope rings and crosshair - got dropped too. Clear it at
+	// the start of every primitive; the GL_QUADS block below re-arms it when needed.
+	bFlash=false;
 
-	if ((cvar.wall==1) && (bWall) && (world3d) && (mode==GL_TRIANGLE_FAN || mode==GL_TRIANGLE_STRIP))
+	if ((cvar.wall==1) && (bWall) && (mode==GL_TRIANGLE_FAN || mode==GL_TRIANGLE_STRIP))
 	{
 		(*orig_glDisable)(GL_DEPTH_TEST);
 	}
-	else if((cvar.wall==2) && (bWall) && (world3d))
+	else if((cvar.wall==2) && (bWall))
 	{
 		(*orig_glGetFloatv)(GL_CURRENT_COLOR, curcolor);
 		(*orig_glDisable)(GL_DEPTH_TEST);
@@ -2104,7 +2096,7 @@ void sys_glBegin (GLenum mode)
 		(*orig_glBlendFunc)(GL_SRC_ALPHA, GL_ONE);
 		(*orig_glColor4f)(curcolor[0], curcolor[1], curcolor[2], 255.0);
 	}
-	else if((cvar.wall==3) && (bWall) && (world3d))
+	else if((cvar.wall==3) && (bWall))
 	{
 		(*orig_glGetFloatv)(GL_CURRENT_COLOR, curcolor);
 		(*orig_glDisable)(GL_DEPTH_TEST);
@@ -2315,13 +2307,11 @@ void sys_glEnd (void)
 
 void sys_glFrustum (GLdouble left,  GLdouble right,  GLdouble bottom,  GLdouble top,  GLdouble zNear,  GLdouble zFar)
 {
-	b2D=false;		// perspective projection => we're in the 3D world pass
 	(*orig_glFrustum) (left, right, bottom, top, zNear, zFar);
 }
 
 void sys_glOrtho (GLdouble left,  GLdouble right,  GLdouble bottom,  GLdouble top,  GLdouble zNear,  GLdouble zFar)
 {
-	b2D=true;		// orthographic projection => we're in the 2D HUD/scope pass
 	(*orig_glOrtho) (left, right, bottom, top, zNear, zFar);
 }
 
