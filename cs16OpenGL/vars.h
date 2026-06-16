@@ -34,6 +34,13 @@ typedef struct { // cvars (of course ;P)
 	int esp_box_width;	// ESP Engine sub-option: box stroke width (px, scaled)
 	int esp_dist;	// ESP Engine sub-option: distance text
 	int esp_team;	// ESP Engine sub-option: which team to draw (0=both,1=CT,2=T)
+	// ---- new ESP Engine sub-options (#2,#3,#4,#5,#6) ----
+	int esp_snap;	// snapline from a fixed anchor to each enemy (0=off,1=bottom,2=top,3=crosshair)
+	int esp_head;	// head dot above each player
+	int esp_vischeck;	// 1 = dim/recolor when target is occluded (depth-buffer test)
+	int esp_maxdist;	// max distance (meters) to draw ESP for; 0 = unlimited
+	int esp_fade;	// 1 = fade ESP alpha by distance (closer = fully opaque)
+	int esp_arrow;	// 1 = off-screen arrow pointing at enemies behind/outside view
 	int esp_hud;	// own HP/ammo HUD master (arcs around the crosshair)
 	int hud_hp;		// HUD sub-option: health arc
 	int hud_ammo;	// HUD sub-option: ammo arc
@@ -44,9 +51,15 @@ typedef struct { // cvars (of course ;P)
 	int radar_x;	// radar center position x (pre-ui_scale units, free-moved like the menu)
 	int radar_y;	// radar center position y (pre-ui_scale units)
 	int radar_shape;// radar sub-option: 0=circle dots, 1=square dots
+	int radar_zoom;	// world units that map to the radar edge (200..5000); smaller = closer view
+	int radar_rotate;// 1 = rotate with view yaw (north = facing dir); 0 = fixed north-up
+	int radar_names;// 1 = draw short player name next to their dot
+	int radar_rings;// 1 = draw concentric range rings inside the radar
 	int hud_pad;	// HUD sub-option: extra arc padding around the crosshair (units)
 	int	aimthru;
 	int	aim;
+	int	aim_mode;	// 0=legacy (vertex-based + gluProject), 1=engine entity-list (W2S)
+	int	aim_smooth;	// 0=snap, 1..10 = smoothing strength (higher = smoother/slower)
 	int	fov;
 	int lambert;
 	int	recoil;
@@ -204,3 +217,12 @@ int		ui_open_seq		=0;		// monotonic counter: who (menu/F11) was opened last
 int		menu_open_seq	=0;		// ui_open_seq stamp when the menu was last opened
 int		check_open_seq	=0;		// ui_open_seq stamp when the F11 check was last opened
 int		menu_move_mode	=0;		// 0=off, 1=moving hack menu, 2=moving F11 panel
+
+// ---- engine-based aimbot state (cvar.aim_mode==1) --------------------------
+// Computed once per frame inside DrawEngineEsp (which has the entity list +
+// WorldToScreen available), then consumed by sys_glViewport which actually
+// nudges the OS mouse. Decoupling avoids re-reading the engine table twice.
+bool	eng_aim_have	=false;	// did we pick a target this frame?
+float	eng_aim_sx		=0.0f;	// target screen x (px, 0..vp[2])
+float	eng_aim_sy		=0.0f;	// target screen y (px, 0..vp[3])
+bool	eng_aim_visible	=true;	// false if blocked by a wall (depth-buffer test)

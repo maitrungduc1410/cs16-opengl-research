@@ -95,6 +95,8 @@ void LoadFile(char *thefile,int ftype)
 				{
 					//cvar scan
 					sscanf(str, "aim %i;"		,&cvar.aim);
+					sscanf(str, "aim_mode %i;"	,&cvar.aim_mode);
+					sscanf(str, "aim_smooth %i;",&cvar.aim_smooth);
 					sscanf(str, "aimthru %i;"	,&cvar.aimthru);
 					sscanf(str, "target %i;"	,&cvar.target);
 					sscanf(str, "recoil %i;"	,&cvar.recoil);
@@ -112,10 +114,20 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "radar_x %i;"	,&cvar.radar_x);
 					sscanf(str, "radar_y %i;"	,&cvar.radar_y);
 					sscanf(str, "radar_shape %i;",&cvar.radar_shape);
+					sscanf(str, "radar_zoom %i;",&cvar.radar_zoom);
+					sscanf(str, "radar_rotate %i;",&cvar.radar_rotate);
+					sscanf(str, "radar_names %i;",&cvar.radar_names);
+					sscanf(str, "radar_rings %i;",&cvar.radar_rings);
 					sscanf(str, "hud_pad %i;"	,&cvar.hud_pad);
 					sscanf(str, "esp_box_pad %i;"	,&cvar.esp_box_pad);
 					sscanf(str, "esp_box_radius %i;",&cvar.esp_box_radius);
 					sscanf(str, "esp_box_width %i;",&cvar.esp_box_width);
+					sscanf(str, "esp_head %i;"	,&cvar.esp_head);
+					sscanf(str, "esp_snap %i;"	,&cvar.esp_snap);
+					sscanf(str, "esp_vischeck %i;",&cvar.esp_vischeck);
+					sscanf(str, "esp_arrow %i;"	,&cvar.esp_arrow);
+					sscanf(str, "esp_maxdist %i;",&cvar.esp_maxdist);
+					sscanf(str, "esp_fade %i;"	,&cvar.esp_fade);
 					sscanf(str, "esp_team %i;"	,&cvar.esp_team);
 					sscanf(str, "lambert %i;"	,&cvar.lambert);
 					sscanf(str, "crosshair %i;"	,&cvar.cross);
@@ -221,6 +233,8 @@ void SaveSettings()
 	if(!f) return;
 	fprintf(f,"// auto-saved settings (mtd) - edited from the in-game menu\n");
 	fprintf(f,"aim %i\n",cvar.aim);
+	fprintf(f,"aim_mode %i\n",cvar.aim_mode);
+	fprintf(f,"aim_smooth %i\n",cvar.aim_smooth);
 	fprintf(f,"aimthru %i\n",cvar.aimthru);
 	fprintf(f,"target %i\n",cvar.target);
 	fprintf(f,"shoot %i\n",cvar.shoot);
@@ -239,6 +253,12 @@ void SaveSettings()
 	fprintf(f,"esp_box_radius %i\n",cvar.esp_box_radius);
 	fprintf(f,"esp_box_width %i\n",cvar.esp_box_width);
 	fprintf(f,"esp_dist %i\n",cvar.esp_dist);
+	fprintf(f,"esp_head %i\n",cvar.esp_head);
+	fprintf(f,"esp_snap %i\n",cvar.esp_snap);
+	fprintf(f,"esp_vischeck %i\n",cvar.esp_vischeck);
+	fprintf(f,"esp_arrow %i\n",cvar.esp_arrow);
+	fprintf(f,"esp_maxdist %i\n",cvar.esp_maxdist);
+	fprintf(f,"esp_fade %i\n",cvar.esp_fade);
 	fprintf(f,"esp_team %i\n",cvar.esp_team);
 	fprintf(f,"esp_hud %i\n",cvar.esp_hud);
 	fprintf(f,"hud_hp %i\n",cvar.hud_hp);
@@ -251,6 +271,10 @@ void SaveSettings()
 	fprintf(f,"radar_x %i\n",cvar.radar_x);
 	fprintf(f,"radar_y %i\n",cvar.radar_y);
 	fprintf(f,"radar_shape %i\n",cvar.radar_shape);
+	fprintf(f,"radar_zoom %i\n",cvar.radar_zoom);
+	fprintf(f,"radar_rotate %i\n",cvar.radar_rotate);
+	fprintf(f,"radar_names %i\n",cvar.radar_names);
+	fprintf(f,"radar_rings %i\n",cvar.radar_rings);
 	fprintf(f,"aimkey %i\n",cvar.aimkey);
 	fprintf(f,"menu_x %i\n",cvar.menu_x);
 	fprintf(f,"menu_y %i\n",cvar.menu_y);
@@ -279,6 +303,8 @@ void LoadSettings()
 		if(!fgets(str,256,f)) break;
 		if(strstr(str,"//")) continue;
 		sscanf(str,"aim %i"			,&cvar.aim);
+		sscanf(str,"aim_mode %i"	,&cvar.aim_mode);
+		sscanf(str,"aim_smooth %i"	,&cvar.aim_smooth);
 		sscanf(str,"aimthru %i"		,&cvar.aimthru);
 		sscanf(str,"target %i"		,&cvar.target);
 		sscanf(str,"shoot %i"		,&cvar.shoot);
@@ -297,6 +323,12 @@ void LoadSettings()
 		sscanf(str,"esp_box_radius %i",&cvar.esp_box_radius);
 		sscanf(str,"esp_box_width %i",&cvar.esp_box_width);
 		sscanf(str,"esp_dist %i"	,&cvar.esp_dist);
+		sscanf(str,"esp_head %i"	,&cvar.esp_head);
+		sscanf(str,"esp_snap %i"	,&cvar.esp_snap);
+		sscanf(str,"esp_vischeck %i",&cvar.esp_vischeck);
+		sscanf(str,"esp_arrow %i"	,&cvar.esp_arrow);
+		sscanf(str,"esp_maxdist %i"	,&cvar.esp_maxdist);
+		sscanf(str,"esp_fade %i"	,&cvar.esp_fade);
 		sscanf(str,"esp_team %i"	,&cvar.esp_team);
 		sscanf(str,"esp_hud %i"		,&cvar.esp_hud);
 		sscanf(str,"hud_hp %i"		,&cvar.hud_hp);
@@ -309,6 +341,10 @@ void LoadSettings()
 		sscanf(str,"radar_x %i"		,&cvar.radar_x);
 		sscanf(str,"radar_y %i"		,&cvar.radar_y);
 		sscanf(str,"radar_shape %i"	,&cvar.radar_shape);
+		sscanf(str,"radar_zoom %i"	,&cvar.radar_zoom);
+		sscanf(str,"radar_rotate %i",&cvar.radar_rotate);
+		sscanf(str,"radar_names %i"	,&cvar.radar_names);
+		sscanf(str,"radar_rings %i"	,&cvar.radar_rings);
 		sscanf(str,"aimkey %i"		,&cvar.aimkey);
 		sscanf(str,"menu_x %i"		,&cvar.menu_x);
 		sscanf(str,"menu_y %i"		,&cvar.menu_y);
@@ -359,6 +395,8 @@ void HookInit(bool activate)
 	else if(!activate) // hack turned off, set all things to 0 (not activated)
 	{
 		cvar.aim=0;
+		cvar.aim_mode=0;
+		cvar.aim_smooth=0;
 		cvar.aimthru=0;
 		cvar.esp=0;
 		cvar.esp_line=0;
@@ -369,6 +407,12 @@ void HookInit(bool activate)
 		cvar.esp_box_radius=0;
 		cvar.esp_box_width=0;
 		cvar.esp_dist=0;
+		cvar.esp_head=0;
+		cvar.esp_snap=0;
+		cvar.esp_vischeck=0;
+		cvar.esp_arrow=0;
+		cvar.esp_maxdist=0;
+		cvar.esp_fade=0;
 		cvar.esp_team=0;
 		cvar.esp_hud=0;
 		cvar.hud_hp=0;
@@ -378,6 +422,10 @@ void HookInit(bool activate)
 		cvar.chams_wire=0;
 		cvar.radar=0;
 		cvar.radar_shape=0;
+		cvar.radar_zoom=0;
+		cvar.radar_rotate=0;
+		cvar.radar_names=0;
+		cvar.radar_rings=0;
 		cvar.hud_pad=0;
 		cvar.lambert=0;
 		cvar.cross=0;
@@ -819,10 +867,12 @@ void DrawMenu(int x, int y)
 		{"Stand_h",     IT_FLOAT,  &cvar.stand_h,    10,26,0.25f, 1, 0,          0},
 		{"Duck_h",      IT_FLOAT,  &cvar.duck_h,     10,28,0.25f, 1, 0,          0},
 		{"Aimbot",      IT_TOGGLE, &cvar.aim,        0,0,0,       0, 0,          0},
+		{"Aim mode",    IT_INT,    &cvar.aim_mode,   0,1,1,       1, &cvar.aim,  1},
+		{"Aim smooth",  IT_INT,    &cvar.aim_smooth, 0,10,1,      0, &cvar.aim,  1},
 		{"Target",      IT_TARGET, &cvar.target,     0,0,0,       0, &cvar.aim,  1},
 		{"Shoot",       IT_TOGGLE, &cvar.shoot,      0,0,0,       0, &cvar.aim,  1},
 		{"Aimthru",     IT_TOGGLE, &cvar.aimthru,    0,0,0,       0, &cvar.aim,  1},
-		{"FOV",         IT_INT,    &cvar.fov,        0,1000,50,   1, &cvar.aim,  1},
+		{"FOV",         IT_INT,    &cvar.fov,        0,1000,10,   1, &cvar.aim,  1},
 		{"Recoil",      IT_INT,    &cvar.recoil,     0,5,1,       1, 0,          0},
 		{"Wallhack",    IT_INT,    &cvar.wall,       0,3,1,       1, 0,          0},
 		{"No Sky",      IT_TOGGLE, &cvar.sky,        0,0,0,       0, 0,          0},
@@ -836,6 +886,12 @@ void DrawMenu(int x, int y)
 		{"Box radius",  IT_INT,    &cvar.esp_box_radius, 0,20,2,  0, &cvar.esp_engine, 1},
 		{"Box width",   IT_INT,    &cvar.esp_box_width,  1,8,1,   0, &cvar.esp_engine, 1},
 		{"Distance",    IT_TOGGLE, &cvar.esp_dist,   0,0,0,       0, &cvar.esp_engine, 1},
+		{"Head dot",    IT_TOGGLE, &cvar.esp_head,   0,0,0,       0, &cvar.esp_engine, 1},
+		{"Snaplines",   IT_INT,    &cvar.esp_snap,   0,3,1,       1, &cvar.esp_engine, 1},
+		{"Vis check",   IT_TOGGLE, &cvar.esp_vischeck,0,0,0,      0, &cvar.esp_engine, 1},
+		{"Off-screen arrow",IT_TOGGLE,&cvar.esp_arrow,0,0,0,      0, &cvar.esp_engine, 1},
+		{"Max distance",IT_INT,    &cvar.esp_maxdist, 0,200,5,    0, &cvar.esp_engine, 1},
+		{"Distance fade",IT_TOGGLE,&cvar.esp_fade,    0,0,0,      0, &cvar.esp_engine, 1},
 		{"Show team",   IT_INT,    &cvar.esp_team,    0,2,1,      1, &cvar.esp_engine, 1},
 		{"HUD HP/Ammo", IT_TOGGLE, &cvar.esp_hud,    0,0,0,       0, 0,                0},
 		{"HP",          IT_TOGGLE, &cvar.hud_hp,     0,0,0,       0, &cvar.esp_hud,    1},
@@ -847,6 +903,10 @@ void DrawMenu(int x, int y)
 		{"Radar",       IT_TOGGLE, &cvar.radar,      0,0,0,       0, 0,                0},
 		{"Move radar",  IT_MOVE,   0,               3,0,0,       0, &cvar.radar,      1},
 		{"Dot shape",   IT_INT,    &cvar.radar_shape,0,1,1,       1, &cvar.radar,      1},
+		{"Zoom (units)",IT_INT,    &cvar.radar_zoom, 200,5000,100,0, &cvar.radar,      1},
+		{"Rotate view", IT_TOGGLE, &cvar.radar_rotate,0,0,0,      0, &cvar.radar,      1},
+		{"Names",       IT_TOGGLE, &cvar.radar_names, 0,0,0,      0, &cvar.radar,      1},
+		{"Range rings", IT_TOGGLE, &cvar.radar_rings, 0,0,0,      0, &cvar.radar,      1},
 		{"Crosshair",   IT_TOGGLE, &cvar.cross,      0,0,0,       0, 0,                0},
 		{"Move hack menu", IT_MOVE,  0,             1,0,0,       0, 0,                0},
 		{"Move F11 panel", IT_MOVE,  0,             2,0,0,       0, 0,                0},
@@ -861,7 +921,7 @@ void DrawMenu(int x, int y)
 	float dt=g_menu_dt;
 
 	// visible rows only (skip those whose parent cvar is off)
-	int vis[48], nvis=0;
+	int vis[64], nvis=0;
 	for(int i=0;i<N;i++)
 		if(items[i].dep==0 || *(items[i].dep)!=0) vis[nvis++]=i;
 	if(nvis==0) return;
@@ -981,6 +1041,24 @@ void DrawMenu(int x, int y)
 				static const char *et[3]={"Both","CT","T"};
 				int v=*(int*)it->p; if(v<0)v=0; if(v>2)v=2;
 				sprintf(buf,"%s%s: %s", pre,it->label,et[v]);
+			}
+			else if(it->p==&cvar.aim_mode)
+			{
+				static const char *am[2]={"Legacy","Engine"};
+				int v=*(int*)it->p; if(v<0)v=0; if(v>1)v=1;
+				sprintf(buf,"%s%s: %s", pre,it->label,am[v]);
+			}
+			else if(it->p==&cvar.esp_snap)
+			{
+				static const char *sn[4]={"Off","Bottom","Top","Crosshair"};
+				int v=*(int*)it->p; if(v<0)v=0; if(v>3)v=3;
+				sprintf(buf,"%s%s: %s", pre,it->label,sn[v]);
+			}
+			else if(it->p==&cvar.esp_maxdist)
+			{
+				int v=*(int*)it->p;
+				if(v<=0) sprintf(buf,"%s%s: Unlimited", pre,it->label);
+				else     sprintf(buf,"%s%s: %im", pre,it->label,v);
 			}
 			else sprintf(buf,"%s%s: %i", pre,it->label,*(int*)it->p);
 			break;
@@ -2189,18 +2267,58 @@ void FillRoundRect2D(float x0,float y0,float x1,float y1,float rad)
 	(*orig_glEnd)();
 }
 
+// Filled triangle "arrow" pointing along (dx,dy) (assumed unit vector), centered at (cx,cy).
+// size = half-length from tip to base; used by the off-screen enemy indicator.
+void DrawArrow2D(float cx,float cy,float dx,float dy,float size)
+{
+	float nx=-dy, ny=dx;					// perpendicular for the base
+	float tipx=cx+dx*size,     tipy=cy+dy*size;
+	float blx =cx-dx*size*0.6f+nx*size*0.6f, bly=cy-dy*size*0.6f+ny*size*0.6f;
+	float brx =cx-dx*size*0.6f-nx*size*0.6f, bry=cy-dy*size*0.6f-ny*size*0.6f;
+	(*orig_glBegin)(GL_TRIANGLES);
+	(*orig_glVertex2f)(tipx,tipy);
+	(*orig_glVertex2f)(blx ,bly );
+	(*orig_glVertex2f)(brx ,bry );
+	(*orig_glEnd)();
+}
+
+// Depth-buffer visibility test for a 3D world point. Returns true if the point
+// is NOT occluded (i.e. visible from the current camera). MUST be called from
+// the 3D pass while the engine's MVP matrix is still active - that's why we
+// snapshot mm/pm BEFORE switching to the 2D ortho pass in DrawEngineEsp.
+bool IsWorldVisible(float x,float y,float z,GLdouble *mm_in,GLdouble *pm_in,GLint *vp_in)
+{
+	GLdouble wx,wy,wz; GLfloat pix;
+	if(gluProject(x,y,z,mm_in,pm_in,vp_in,&wx,&wy,&wz)!=GL_TRUE) return false;
+	if(wz<=0.0||wz>=1.0) return false;
+	if(wx<0||wy<0||wx>=vp_in[2]||wy>=vp_in[3]) return false;
+	(*orig_glReadPixels)((int)wx,(int)wy,1,1,GL_DEPTH_COMPONENT,GL_FLOAT,&pix);
+	return (pix>wz-0.0008f);		// tiny epsilon: head usually pokes ~through model surface
+}
+
 // Draw ESP for every player in the engine entity list. Called each frame from
 // the wglSwapBuffers hook, in its own 2D pixel-space pass.
 void DrawEngineEsp()
 {
 	eng_players=0;
-	if(!cvar.esp_engine && !cvar.esp_hud && !cvar.radar) return;
+	eng_aim_have=false;								// reset per-frame aim pick
+	// We must enter the loop ALSO when engine aimbot is on (even if ESP/radar/HUD are off),
+	// otherwise we never compute a target screen position to feed the viewport hook.
+	bool need_aim = (cvar.aim && cvar.aim_mode==1);
+	if(!cvar.esp_engine && !cvar.esp_hud && !cvar.radar && !need_aim) return;
 	eng_frame++;
 
 	GLint vpe[4];
 	(*orig_glGetIntegerv)(GL_VIEWPORT,vpe);
 	float sw=(float)vpe[2], sh=(float)vpe[3];
 	if(sw<=0||sh<=0) return;
+
+	// Snapshot the engine's 3D MVP BEFORE we switch to 2D ortho, so the
+	// per-player depth-buffer visibility test (esp_vischeck) can still
+	// project world->screen using the actual game camera.
+	GLdouble mm_w[16], pm_w[16];
+	(*orig_glGetDoublev)(GL_MODELVIEW_MATRIX,mm_w);
+	(*orig_glGetDoublev)(GL_PROJECTION_MATRIX,pm_w);
 
 	bool ready=EngineResolve();
 
@@ -2248,7 +2366,7 @@ void DrawEngineEsp()
 		return;
 	}
 
-	if(cvar.esp_engine || cvar.radar)
+	if(cvar.esp_engine || cvar.radar || need_aim)
 	{
 
 	float lo[3]={0,0,0};
@@ -2269,11 +2387,15 @@ void DrawEngineEsp()
 		rrad=70.0f*ui_scale;
 		rcx=(float)cvar.radar_x*ui_scale;			// pre-scale center -> pixels
 		rcy=(float)cvar.radar_y*ui_scale;
-		float va[3]={0,0,0};
-		DWORD fnVA=EngFn(ENG_SLOT_GETVIEWANGLES);
-		if(fnVA>=0x10000) ((eng_GetViewAngles_t)fnVA)(va);
-		float yaw=va[1]*3.14159265f/180.0f;		// rotate so local forward points up
-		rcos=cosf(yaw); rsin=sinf(yaw);
+		if(cvar.radar_rotate)
+		{
+			float va[3]={0,0,0};
+			DWORD fnVA=EngFn(ENG_SLOT_GETVIEWANGLES);
+			if(fnVA>=0x10000) ((eng_GetViewAngles_t)fnVA)(va);
+			float yaw=va[1]*3.14159265f/180.0f;	// rotate so local forward points up
+			rcos=cosf(yaw); rsin=sinf(yaw);
+		}
+		else { rcos=1.0f; rsin=0.0f; }				// fixed north-up
 		radar_on=true;
 
 		(*orig_glColor4f)(0.0f,0.0f,0.0f,0.45f);	// translucent disc
@@ -2281,7 +2403,7 @@ void DrawEngineEsp()
 		(*orig_glVertex2f)(rcx,rcy);
 		for(int a=0;a<=32;a++){ float t=a*6.2831853f/32.0f; (*orig_glVertex2f)(rcx+cosf(t)*rrad, rcy+sinf(t)*rrad); }
 		(*orig_glEnd)();
-		(*orig_glColor4f)(0.85f,0.85f,0.85f,0.7f);	// ring + cross-hairs
+		(*orig_glColor4f)(0.85f,0.85f,0.85f,0.7f);	// outer ring + cross-hairs
 		(*orig_glLineWidth)(1.0f);
 		(*orig_glBegin)(GL_LINE_LOOP);
 		for(int a=0;a<32;a++){ float t=a*6.2831853f/32.0f; (*orig_glVertex2f)(rcx+cosf(t)*rrad, rcy+sinf(t)*rrad); }
@@ -2290,9 +2412,28 @@ void DrawEngineEsp()
 		(*orig_glVertex2f)(rcx-rrad,rcy);(*orig_glVertex2f)(rcx+rrad,rcy);
 		(*orig_glVertex2f)(rcx,rcy-rrad);(*orig_glVertex2f)(rcx,rcy+rrad);
 		(*orig_glEnd)();
+		if(cvar.radar_rings)						// concentric range rings (1/3, 2/3 of zoom)
+		{
+			(*orig_glColor4f)(0.85f,0.85f,0.85f,0.3f);
+			for(int k=1;k<=2;k++)
+			{
+				float rr=rrad*k/3.0f;
+				(*orig_glBegin)(GL_LINE_LOOP);
+				for(int a=0;a<24;a++){ float t=a*6.2831853f/24.0f; (*orig_glVertex2f)(rcx+cosf(t)*rr, rcy+sinf(t)*rr); }
+				(*orig_glEnd)();
+			}
+		}
 		(*orig_glColor4f)(1,1,1,1);					// local player marker
 		DrawDot2D(rcx,rcy,3.0f*ui_scale,cvar.radar_shape);
 	}
+
+	// engine-aim per-frame best pick (closest to crosshair, in FOV, alive, target team)
+	float aim_best_d2 = 1e18f;
+	float aim_best_sx = 0.0f, aim_best_sy = 0.0f;
+	bool  aim_best_vis = true;
+	bool  aim_found = false;
+	float aim_cx = sw*0.5f, aim_cy = sh*0.5f;		// screen center is the crosshair
+	int aim_target_team = cvar.target;				// 0 or 1, same convention as legacy aim
 
 	for(int idx=1; idx<=32; idx++)
 	{
@@ -2339,17 +2480,71 @@ void DrawEngineEsp()
 		else if(team==2) { r=0.25f;g=0.55f; b=1.0f;  }	// CT = blue
 		else             { r=0.25f;g=1.0f;  b=0.25f; }	// unknown = green
 
+		// distance once (meters) - used by radar name, distance text, fade and the max-dist filter
+		float ddx3=lo[0]-o[0], ddy3=lo[1]-o[1], ddz3=lo[2]-o[2];
+		float distM=(float)sqrt(ddx3*ddx3+ddy3*ddy3+ddz3*ddz3)/39.37f;
+
 		if(radar_on)								// plot this player on the radar
 		{
 			float ddx=o[0]-lo[0], ddy=o[1]-lo[1];
 			float rx= ddx*rsin - ddy*rcos;		// distance to the right of local
 			float ry= ddx*rcos + ddy*rsin;		// distance in front of local
-			float sc=rrad/1500.0f;				// ~1500 units maps to the radar edge
+			float zoomU=(float)cvar.radar_zoom; if(zoomU<200.0f) zoomU=200.0f;
+			float sc=rrad/zoomU;					// user-tunable zoom (radar_zoom units = ring)
 			float px=rcx + rx*sc, py=rcy - ry*sc;	// forward = up (screen y is down)
 			float dd=sqrtf((px-rcx)*(px-rcx)+(py-rcy)*(py-rcy));
 			if(dd>rrad){ px=rcx+(px-rcx)/dd*rrad; py=rcy+(py-rcy)/dd*rrad; }	// clamp to ring
 			(*orig_glColor3f)(r,g,b);
 			DrawDot2D(px,py,3.0f*ui_scale,cvar.radar_shape);	// circle/square per player
+
+			if(cvar.radar_names && namebuf[0])
+			{
+				char shortn[10]; int sl=0;
+				for(; sl<9 && namebuf[sl]; sl++) shortn[sl]=namebuf[sl];
+				shortn[sl]=0;
+				DrawText(px+4.0f*ui_scale, py-4.0f*ui_scale, r,g,b, "%s", shortn);
+			}
+		}
+
+		// engine-aim candidate check (independent of ESP being on). cvar.target
+		// here uses the legacy meaning: 0 = team[0] (T), 1 = team[1] (CT). Map to
+		// the engine team numbers (1=T, 2=CT) to compare safely.
+		if(need_aim)
+		{
+			int want = (aim_target_team==0)?1:2;
+			if(team==want)
+			{
+				int usehullA=ReadInt(ent+ENT_CURSTATE+ES_USEHULL);
+				float halfhA=(usehullA==1)?18.0f:36.0f;
+				float zoffA =(usehullA==1)?6.0f :0.0f;
+				float headA[3]={o[0],o[1],o[2]+halfhA+zoffA-2.0f};	// just below head top
+				float sA[3];
+				if(EngWorldToScreen(headA,sA))
+				{
+					float ax=(sA[0]*0.5f+0.5f)*sw, ay=sh-(sA[1]*0.5f+0.5f)*sh;
+					if(ax>=0 && ay>=0 && ax<sw && ay<sh)
+					{
+						float ddx=ax-aim_cx, ddy=ay-aim_cy;
+						float d2=ddx*ddx+ddy*ddy;
+						// FOV is a radius in px (same field used by the legacy aimbot)
+						float fovr=(float)cvar.fov*0.5f;
+						if(fovr<1.0f || d2<=fovr*fovr)
+						{
+							bool v=true;
+							if(!cvar.aimthru)
+								v=IsWorldVisible(o[0],o[1],o[2]+10.0f,mm_w,pm_w,vp);
+							if(cvar.aimthru || v)
+							{
+								if(d2<aim_best_d2)
+								{
+									aim_best_d2=d2; aim_best_sx=ax; aim_best_sy=ay;
+									aim_best_vis=v; aim_found=true;
+								}
+							}
+						}
+					}
+				}
+			}
 		}
 
 		if(!cvar.esp_engine) continue;			// radar-only run: skip the on-screen ESP
@@ -2358,6 +2553,9 @@ void DrawEngineEsp()
 		if(cvar.esp_team==1 && team!=2) continue;
 		if(cvar.esp_team==2 && team!=1) continue;
 
+		// max-distance filter: skip if too far (0 = unlimited)
+		if(cvar.esp_maxdist>0 && distM>(float)cvar.esp_maxdist) continue;
+
 		int usehull=ReadInt(ent+ENT_CURSTATE+ES_USEHULL);
 		float halfh=(usehull==1)?18.0f:36.0f;	// duck vs stand half-height (units)
 		float zoff =(usehull==1)?6.0f :0.0f;
@@ -2365,11 +2563,56 @@ void DrawEngineEsp()
 		float feet[3]={o[0],o[1],o[2]-halfh+zoff};
 		float head[3]={o[0],o[1],o[2]+halfh+zoff};
 		float sfeet[3],shead[3];
-		if(!EngWorldToScreen(feet,sfeet)) continue;
-		if(!EngWorldToScreen(head,shead)) continue;
+		bool on_feet = EngWorldToScreen(feet,sfeet);
+		bool on_head = EngWorldToScreen(head,shead);
 
-		float fx=(sfeet[0]*0.5f+0.5f)*sw, fy=sh-(sfeet[1]*0.5f+0.5f)*sh;
-		float hx=(shead[0]*0.5f+0.5f)*sw, hy=sh-(shead[1]*0.5f+0.5f)*sh;
+		// Off-screen arrow: when both projections are behind the camera or land
+		// outside the viewport, draw an arrow on the screen edge pointing at the
+		// world position. Uses a simple yaw-relative direction so it stays correct
+		// even when the player is directly behind us (W2S returns garbage there).
+		bool offscreen = !on_feet || !on_head;
+		float fx=0,fy=0,hx=0,hy=0;
+		if(on_feet && on_head)
+		{
+			fx=(sfeet[0]*0.5f+0.5f)*sw; fy=sh-(sfeet[1]*0.5f+0.5f)*sh;
+			hx=(shead[0]*0.5f+0.5f)*sw; hy=sh-(shead[1]*0.5f+0.5f)*sh;
+			float midx=(fx+hx)*0.5f, midy=(fy+hy)*0.5f;
+			if(midx<0||midx>=sw||midy<0||midy>=sh) offscreen=true;
+		}
+		if(offscreen)
+		{
+			if(cvar.esp_arrow)
+			{
+				// Direction in world space relative to local yaw -> screen vector.
+				// We reuse rcos/rsin (computed earlier in the radar block) ONLY if
+				// the radar is on; otherwise compute yaw here.
+				float vcos=rcos, vsin=rsin;
+				if(!radar_on)
+				{
+					float va[3]={0,0,0};
+					DWORD fnVA2=EngFn(ENG_SLOT_GETVIEWANGLES);
+					if(fnVA2>=0x10000) ((eng_GetViewAngles_t)fnVA2)(va);
+					float yaw=va[1]*3.14159265f/180.0f;
+					vcos=cosf(yaw); vsin=sinf(yaw);
+				}
+				float wx=o[0]-lo[0], wy=o[1]-lo[1];
+				float rx= wx*vsin - wy*vcos;		// right of local
+				float ry= wx*vcos + wy*vsin;		// in front of local
+				float ang=atan2f(rx,ry);			// 0 = directly ahead
+				float cxs=sw*0.5f, cys=sh*0.5f;
+				float dxs=sinf(ang), dys=-cosf(ang);	// screen-space direction
+				float mar=40.0f*ui_scale;
+				// clamp the arrow to the screen rim along that direction
+				float tx = (dxs>0) ? (sw-mar-cxs)/dxs : (dxs<0) ? (mar-cxs)/dxs : 1e9f;
+				float ty = (dys>0) ? (sh-mar-cys)/dys : (dys<0) ? (mar-cys)/dys : 1e9f;
+				float t=(tx<ty)?tx:ty; if(t<0) t=0;
+				float ax=cxs+dxs*t, ay=cys+dys*t;
+				(*orig_glColor3f)(r,g,b);
+				DrawArrow2D(ax,ay,dxs,dys,12.0f*ui_scale);
+				eng_players++;
+			}
+			continue;			// no box / name / dot drawing while off-screen
+		}
 
 		float y0=(hy<fy)?hy:fy, y1=(hy<fy)?fy:hy;	// top / bottom
 		float bxh=y1-y0; if(bxh<4.0f) bxh=4.0f;
@@ -2382,32 +2625,83 @@ void DrawEngineEsp()
 		if(x1-x0<2.0f){ float m=(x0+x1)*0.5f; x0=m-1.0f; x1=m+1.0f; }
 		if(y1-y0<2.0f){ float m=(y0+y1)*0.5f; y0=m-1.0f; y1=m+1.0f; }
 
+		// distance fade: closer = full alpha; > esp_maxdist (or 60m default) = 0.35
+		float esp_a = 1.0f;
+		if(cvar.esp_fade)
+		{
+			float lim = (cvar.esp_maxdist>0)?(float)cvar.esp_maxdist:60.0f;
+			float t = distM/lim; if(t<0) t=0; if(t>1) t=1;
+			esp_a = 1.0f - t*0.65f;		// 1.0 .. 0.35
+		}
+
+		// visibility check via depth buffer (dim/recolor when occluded)
+		bool visible = true;
+		if(cvar.esp_vischeck)
+		{
+			float chest[3]={o[0],o[1],o[2]+10.0f};	// chest height is the most reliable test
+			visible = IsWorldVisible(chest[0],chest[1],chest[2],mm_w,pm_w,vp);
+		}
+		float vr=r, vg=g, vb=b;
+		if(cvar.esp_vischeck && !visible) { vr*=0.4f; vg*=0.4f; vb*=0.4f; }		// dim when hidden
+
 		if(cvar.esp_box)
 		{
 			float bw=(float)cvar.esp_box_width*ui_scale; if(bw<1.0f) bw=1.0f;	// user-tunable thickness
 			(*orig_glLineWidth)(bw);
-			(*orig_glColor3f)(r,g,b);
+			(*orig_glColor4f)(vr,vg,vb,esp_a);
 			DrawBox2D(x0,y0,x1,y1,(float)cvar.esp_box_radius*ui_scale);
 		}
 
+		// head dot (small filled circle just above the head)
+		if(cvar.esp_head)
+		{
+			(*orig_glColor4f)(vr,vg,vb,esp_a);
+			FillCircle2D(hx, hy-3.0f*ui_scale, 3.0f*ui_scale);
+		}
+
+		// snapline: 1=screen bottom-center, 2=top-center, 3=crosshair
+		if(cvar.esp_snap)
+		{
+			float ax=sw*0.5f, ay=sh*0.5f;
+			if(cvar.esp_snap==1) ay=sh-2.0f;
+			else if(cvar.esp_snap==2) ay=2.0f;
+			(*orig_glColor4f)(vr,vg,vb,esp_a*0.85f);
+			(*orig_glLineWidth)(1.0f*ui_scale);
+			(*orig_glBegin)(GL_LINES);
+			(*orig_glVertex2f)(ax,ay);
+			(*orig_glVertex2f)(cx,(y0+y1)*0.5f);
+			(*orig_glEnd)();
+		}
+
 		if(cvar.esp_name)
-			DrawText(cx-(float)strlen(namebuf)*4.0f*ui_scale, y0-14.0f*ui_scale, r,g,b, "%s", namebuf);
+		{
+			float ta=gTextAlpha; gTextAlpha=esp_a;
+			DrawText(cx-(float)strlen(namebuf)*4.0f*ui_scale, y0-14.0f*ui_scale, vr,vg,vb, "%s", namebuf);
+			gTextAlpha=ta;
+		}
 
 		if(cvar.esp_dist)
 		{
-			float dx=lo[0]-o[0], dy=lo[1]-o[1], dz=lo[2]-o[2];
-			float dist=(float)sqrt(dx*dx+dy*dy+dz*dz)/39.37f;	// units -> meters
-			DrawText(cx-12.0f*ui_scale, y1+2.0f, 1.0f,1.0f,1.0f, "%.0fm", dist);
+			float ta=gTextAlpha; gTextAlpha=esp_a;
+			DrawText(cx-12.0f*ui_scale, y1+2.0f, 1.0f,1.0f,1.0f, "%.0fm", distM);
+			gTextAlpha=ta;
 		}
 
 		eng_players++;
+	}
+
+	if(aim_found)
+	{
+		eng_aim_have=true;
+		eng_aim_sx=aim_best_sx; eng_aim_sy=aim_best_sy;
+		eng_aim_visible=aim_best_vis;
 	}
 
 	if(cvar.esp_engine)
 		DrawText(8.0f,16.0f,0.2f,1.0f,0.4f,"ENGINE ESP: %i players  team=%s",
 			eng_players, eng_have_extra?"extra":"model");
 
-	}	// end if(cvar.esp_engine || cvar.radar)
+	}	// end if(cvar.esp_engine || cvar.radar || need_aim)
 
 	(*orig_glMatrixMode)(GL_PROJECTION);
 	(*orig_glPopMatrix)();
@@ -2991,9 +3285,47 @@ void sys_glViewport (GLint x,  GLint y,  GLsizei width,  GLsizei height)
 	if(viewportcount >= 5)
 		enabledraw=true;	// enable drawing of text when viewport is called 5th time
 
+	// ---- engine-based aimbot (cvar.aim_mode==1) ----
+	// Independent of the vertex-aim path below; consumes the screen target
+	// computed by DrawEngineEsp's player loop on the PREVIOUS frame (DrawEngineEsp
+	// runs at the end of each frame in wglSwapBuffers, this viewport hook runs
+	// during the next frame). We clear eng_aim_have to ensure exactly one mouse
+	// nudge per frame even though sys_glViewport is called many times.
+	if(cvar.aim && cvar.aim_mode==1 && eng_aim_have && hookactive && enabledraw)
+	{
+		eng_aim_have=false;			// consume the per-frame pick
+		bool keyok = (cvar.aimkey==0)
+			|| (cvar.aimkey==1 && GetAsyncKeyState(VK_LBUTTON))
+			|| (cvar.aimkey==2 && GetAsyncKeyState(VK_RBUTTON))
+			|| (cvar.aimkey==3 && GetAsyncKeyState(VK_MBUTTON));
+		if(keyok)
+		{
+			// Convert screen target to absolute mouse coords (0..65535 in vp space).
+			// Optional smoothing: divide the move into N steps, only apply 1/N this frame.
+			POINT cur; GetCursorPos(&cur);
+			float s=(float)cvar.aim_smooth; if(s<0)s=0; if(s>10)s=10;
+			float fac=(s<=0.0f)?1.0f:(1.0f/(1.0f+s*0.8f));	// 1.0 .. ~0.11
+			float tx=eng_aim_sx, ty=eng_aim_sy;
+			// Blend cursor toward (tx,ty) in screen-space pixels.
+			// NOTE: GetCursorPos returns desktop coords. We assume CS runs fullscreen
+			// with viewport == desktop, which is the common case for build 4554.
+			float gx = (float)cur.x + (tx-(float)cur.x)*fac;
+			float gy = (float)cur.y + (ty-(float)cur.y)*fac;
+			DWORD mvx = (DWORD)((gx*65535.0f)/(float)vp[2]);
+			DWORD mvy = (DWORD)((gy*65535.0f)/(float)vp[3]);
+			mouse_event(MOUSEEVENTF_MOVE|MOUSEEVENTF_ABSOLUTE,mvx,mvy,0,0);
+			HandleKey(VK_LBUTTON);		// preserve recoil compensation
+			if(cvar.shoot && eng_aim_visible)
+			{
+				mouse_event(MOUSEEVENTF_LEFTDOWN,0,0,0,0);
+				mouse_event(MOUSEEVENTF_LEFTUP,0,0,0,0);
+			}
+		}
+	}
+
 	if (modelviewport)
 	{					// if the player is in target team and one of the selected aim method is chosen ...
-		if ((aimat==cvar.target) && (cvar.aim) && ((cvar.aimkey==0) || ((cvar.aimkey==1) && (GetAsyncKeyState(VK_LBUTTON))) || ((cvar.aimkey==2) && (GetAsyncKeyState(VK_RBUTTON))) || ((cvar.aimkey==3) && (GetAsyncKeyState(VK_MBUTTON)))))
+		if ((aimat==cvar.target) && (cvar.aim) && (cvar.aim_mode==0) && ((cvar.aimkey==0) || ((cvar.aimkey==1) && (GetAsyncKeyState(VK_LBUTTON))) || ((cvar.aimkey==2) && (GetAsyncKeyState(VK_RBUTTON))) || ((cvar.aimkey==3) && (GetAsyncKeyState(VK_MBUTTON)))))
 		{
 			if (!cvar.aimthru)	// ...and aimthru is off
 			{					// we check if player is behind a wall
