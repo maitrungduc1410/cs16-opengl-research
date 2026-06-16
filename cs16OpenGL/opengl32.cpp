@@ -3388,52 +3388,85 @@ void DrawToast()
 	(*orig_glPopAttrib)();
 }
 
+// Low-level mouse hook callback. We ONLY care about the physical left button and
+// must ignore our own injected clicks, otherwise the autofire would react to its
+// own events. mouse_event/SendInput set LLMHF_INJECTED on the event flags, so we
+// filter those out and record only genuine hardware presses/releases.
+LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam)
+{
+	if(nCode==HC_ACTION)
+	{
+		MSLLHOOKSTRUCT *m=(MSLLHOOKSTRUCT*)lParam;
+		if(!(m->flags & LLMHF_INJECTED))		// hardware event only
+		{
+			if(wParam==WM_LBUTTONDOWN) g_phys_lb=true;
+			else if(wParam==WM_LBUTTONUP) g_phys_lb=false;
+		}
+	}
+	return CallNextHookEx(g_ll_hook, nCode, wParam, lParam);
+}
+
 // Auto-pistol / auto-knife (cvar.autofire). Driven exactly once per frame from
 // wglSwapBuffers.
+//
+// Firing model: GoldSrc fires a semi-auto shot only when IN_ATTACK goes 0 -> 1
+// between two usercmds (one per frame). So a same-frame up+down nets to "down"
+// and never fires while you physically hold. We therefore split each shot: one
+// frame fully RELEASED (UP), the next frame PRESSED (DOWN) -> a real 0->1 edge.
+//
+// Hold detection: we cannot trust GetAsyncKeyState because our own injected
+// clicks pollute it (causing the earlier "fires forever" latch). Instead we read
+// g_phys_lb, the true physical button state from the low-level hook, which
+// ignores injected events. So we start/stop strictly on YOUR real hold/release.
 void UpdateAutofire()
 {
-	static bool  our_down=false;		// last button state WE injected (our baseline)
-	static bool  user_down=false;		// our belief about the PHYSICAL button
-	static DWORD af_t=0;				// tick of the last injected pulse
+	static bool  phase_press=false;		// next injected event is the DOWN (fire) half
+	static bool  our_down=false;		// did WE leave the button injected-down?
+	static bool  prev_phys=false;		// physical state last frame (for the press edge)
+	static DWORD af_t=0;				// tick of the last shot (rate measured from here)
 
 	bool enabled = cvar.autofire && hookactive && !menu.active;
 	af_on = enabled?1:0;
-	if(!enabled)
+
+	// Lazily install the physical-button hook the first time autofire is used.
+	if(enabled && !g_ll_hook)
 	{
-		if(our_down){ mouse_event(MOUSEEVENTF_LEFTUP,0,0,0,0); our_down=false; }	// never leave it stuck down
-		user_down=false;
-		return;
+		g_ll_hook=SetWindowsHookEx(WH_MOUSE_LL, LowLevelMouseProc, g_self_inst, 0);
+		g_phys_lb=(GetAsyncKeyState(VK_LBUTTON)&0x8000)!=0;	// seed current state
 	}
 
-	bool async = (GetAsyncKeyState(VK_LBUTTON)&0x8000)!=0;
-	af_async = async?1:0;
+	bool phys=g_phys_lb;
+	if(phys && !prev_phys) af_t=GetTickCount();	// your manual press already fired once; wait a full rate
+	prev_phys=phys;
 
-	// A physical edge is the ONLY thing that makes async differ from our baseline.
-	if(async != our_down)
-	{
-		user_down = async;				// down vs our up = your press; up vs our down = your release
-		our_down  = async;				// resync baseline to reality
-		if(user_down) af_t=GetTickCount();	// your manual press already fired once; wait a full rate
-	}
-	af_exp = user_down?1:0;				// DEBUG: our belief that you're holding
-	af_aup = our_down?1:0;				// DEBUG: the injected baseline
+	af_async = (GetAsyncKeyState(VK_LBUTTON)&0x8000)?1:0;	// reference only
+	af_exp   = phys?1:0;
+	af_aup   = our_down?1:0;
 
-	if(!user_down)						// you're not holding -> make sure our injection isn't holding it
+	if(!enabled || !phys)				// not holding (or disabled) -> stop, release if needed
 	{
 		if(our_down){ mouse_event(MOUSEEVENTF_LEFTUP,0,0,0,0); af_up++; our_down=false; }
+		phase_press=false;
 		return;
 	}
 
-	// You ARE holding -> emit one clean release+press pulse every rate ms.
+	if(phase_press)						// previous frame was the release -> press now = fire
+	{
+		mouse_event(MOUSEEVENTF_LEFTDOWN,0,0,0,0); af_down++;
+		our_down=true;
+		phase_press=false;
+		af_t=GetTickCount();			// rate counts from the shot
+		return;
+	}
+
 	DWORD now=GetTickCount();
 	int rate=cvar.autofire_rate; if(rate<15) rate=15;	// ms between shots
 	af_dt = now-af_t;
-	if((now-af_t)>=(DWORD)rate)
+	if((now-af_t)>=(DWORD)rate)			// time for the next shot: release this frame...
 	{
-		mouse_event(MOUSEEVENTF_LEFTUP,0,0,0,0);   af_up++;		// release...
-		mouse_event(MOUSEEVENTF_LEFTDOWN,0,0,0,0); af_down++;	// ...press = one shot
-		our_down=true;					// settled DOWN; a real release flips async next frame
-		af_t=now;
+		mouse_event(MOUSEEVENTF_LEFTUP,0,0,0,0); af_up++;	// ...DOWN comes next frame -> 0->1 edge
+		our_down=false;
+		phase_press=true;
 	}
 }
 
@@ -3465,10 +3498,10 @@ void DrawAutofireDebug()
 	(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPushMatrix)(); (*orig_glLoadIdentity)();
 
 	DrawText(16.0f*ui_scale, sh-60.0f*ui_scale, 1.0f,0.4f,0.4f,
-		"AUTOFIRE DBG: on=%i async=%i aup=%i exp=%i rate=%i dt=%lu",
-		af_on, af_async, af_aup, af_exp, cvar.autofire_rate, (unsigned long)af_dt);
+		"AUTOFIRE DBG: on=%i phys_hold=%i our_down=%i async=%i rate=%i dt=%lu",
+		af_on, af_exp, af_aup, af_async, cvar.autofire_rate, (unsigned long)af_dt);
 	DrawText(16.0f*ui_scale, sh-40.0f*ui_scale, 1.0f,0.4f,0.4f,
-		"            up=%i down=%i (if these climb but no shots -> engine ignores injected clicks while held)",
+		"            up=%i down=%i (release: phys_hold must go 0 and up/down must STOP)",
 		af_up, af_down);
 
 	(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPopMatrix)();
@@ -3495,10 +3528,16 @@ BOOL __stdcall DllMain (HINSTANCE hinstDll, DWORD fdwReason, LPVOID lpvReserved)
 	switch(fdwReason)
 	{
 		case DLL_PROCESS_ATTACH:
+			g_self_inst = hinstDll;			// remember our own module for the low-level hook
 			DisableThreadLibraryCalls (hOriginalDll);
 			return Init();
 
 		case DLL_PROCESS_DETACH:
+			if ( g_ll_hook != NULL )			// remove the physical-button hook
+			{
+				UnhookWindowsHookEx(g_ll_hook);
+				g_ll_hook = NULL;
+			}
 			if ( hOriginalDll != NULL )
 			{
 				FreeLibrary(hOriginalDll);
