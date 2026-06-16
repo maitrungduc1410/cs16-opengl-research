@@ -792,8 +792,24 @@ GLvoid BuildFont(GLvoid) // loads the opengl font into memory
 	"Verdana");
 	oldfont = (HFONT)SelectObject(hDC, font);           
 	wglUseFontBitmaps(hDC, 32, 96, base);				
+	GetCharWidth32(hDC, 32, 127, g_fontw);	// record per-char widths for accurate text centering
 	SelectObject(hDC, oldfont);							
 	DeleteObject(font);									
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+// Pixel width of a string in the current bitmap font (uses the widths captured
+// in BuildFont). Already in scaled pixels, so no extra ui_scale is needed.
+float TextWidthPx(const char *s)
+{
+	if(!s) return 0.0f;
+	float w=0.0f;
+	for(; *s; s++)
+	{
+		unsigned char c=(unsigned char)*s;
+		if(c>=32 && c<128) w+=(float)g_fontw[c-32];
+	}
+	return w;
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2378,7 +2394,7 @@ void DrawEngineEsp()
 	if(!ready || fnLocal<0x10000 || fnEnt<0x10000)
 	{
 		if(cvar.esp_engine)
-			DrawText(8.0f,16.0f,1.0f,0.7f,0.2f,"ENGINE ESP: searching engine table (start a game)...");
+			DrawText(16.0f*ui_scale,24.0f*ui_scale,1.0f,0.7f,0.2f,"ENGINE ESP: searching engine table (start a game)...");
 		(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPopMatrix)();
 		(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPopMatrix)();
 		(*orig_glPopAttrib)();
@@ -2748,12 +2764,14 @@ void DrawEngineEsp()
 	if(det_cur>det_peak) det_peak=det_cur;
 	det_avg += ((float)det_cur - det_avg)*0.05f;	// exponential moving average
 
+	// top-left debug readouts: padded off the corner and spaced apart (scaled)
+	float dbgx=16.0f*ui_scale, dbgy=24.0f*ui_scale, dbgline=20.0f*ui_scale;
 	if(cvar.esp_engine)
-		DrawText(8.0f,16.0f,0.2f,1.0f,0.4f,"ENGINE ESP: %i players  team=%s",
+		DrawText(dbgx,dbgy,0.2f,1.0f,0.4f,"ENGINE ESP: %i players  team=%s",
 			eng_players, eng_have_extra?"extra":"model");
 
 	if(cvar.esp_log)
-		DrawText(8.0f,30.0f,0.6f,0.9f,1.0f,"PVS/detect: cur=%i  peak=%i  avg=%.1f",
+		DrawText(dbgx,dbgy+dbgline,0.6f,0.9f,1.0f,"PVS/detect: cur=%i  peak=%i  avg=%.1f",
 			det_cur, det_peak, det_avg);
 
 	}	// end if(cvar.esp_engine || cvar.radar || need_aim)
@@ -3357,14 +3375,22 @@ void DrawToast()
 	(*orig_glOrtho)(0,sw,sh,0,-1,1);
 	(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPushMatrix)(); (*orig_glLoadIdentity)();
 
-	int len=(int)strlen(toast_msg);
-	float tw=len*7.0f*ui_scale, th=16.0f*ui_scale;
-	float cx=sw*0.5f, ty=sh*0.80f;
-	(*orig_glColor4f)(0.0f,0.0f,0.0f,0.55f*a);				// translucent pill behind the text
-	FillRoundRect2D(cx-tw*0.5f-8.0f*ui_scale, ty-3.0f*ui_scale,
-	                cx+tw*0.5f+8.0f*ui_scale, ty+th, 6.0f*ui_scale);
+	float tw=TextWidthPx(toast_msg);						// exact text width -> true centering
+	float padX=16.0f*ui_scale, padY=10.0f*ui_scale;			// generous padding on all 4 sides
+	float charH=10.0f*ui_scale;								// font cap height (~10px @1080p)
+	float cx=sw*0.5f, cyc=sh*0.80f;							// horizontal + vertical center of the pill
+	float x0=cx-tw*0.5f-padX, x1=cx+tw*0.5f+padX;
+	float y0=cyc-charH*0.5f-padY, y1=cyc+charH*0.5f+padY;
+	float rad=6.0f*ui_scale;
+
+	(*orig_glColor4f)(0.0f,0.0f,0.0f,0.55f*a);				// translucent fill
+	FillRoundRect2D(x0,y0,x1,y1,rad);
+	(*orig_glColor4f)(1.0f,0.9f,0.4f,a);					// yellow border to match the text
+	(*orig_glLineWidth)(2.0f*ui_scale);						// same stroke width as the hack menu
+	DrawBox2D(x0,y0,x1,y1,rad);
+
 	float ta=gTextAlpha; gTextAlpha=a;
-	DrawText(cx-tw*0.5f, ty+11.0f*ui_scale, 1.0f,0.9f,0.4f, "%s", toast_msg);
+	DrawText(cx-tw*0.5f, cyc+charH*0.5f, 1.0f,0.9f,0.4f, "%s", toast_msg);	// centered
 	gTextAlpha=ta;
 
 	(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPopMatrix)();

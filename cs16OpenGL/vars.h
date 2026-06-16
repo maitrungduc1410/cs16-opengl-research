@@ -209,6 +209,7 @@ int		eng_msg_tries	=0;		// how many times we tried to find the msg nodes
 
 // ---- UI scaling + menu animation -------------------------------------------
 float	ui_scale		=1.0f;	// text/menu scale vs 1080p baseline (set in BuildFont)
+int		g_fontw[96]		={0};	// pixel advance width of ASCII 32..127 (filled in BuildFont)
 float	gTextAlpha		=1.0f;	// global alpha multiplier for DrawText (menu fade)
 float	menu_alpha		=0.0f;	// 0..1 fade state of the menu
 float	check_alpha		=0.0f;	// 0..1 fade state of the F11 check screen
