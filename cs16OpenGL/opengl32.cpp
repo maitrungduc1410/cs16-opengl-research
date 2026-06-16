@@ -3446,11 +3446,15 @@ void UpdateAutofire()
 	bool enabled = cvar.autofire && hookactive && !menu.active;
 	af_on = enabled?1:0;
 
-	// Lazily spin up the dedicated hook thread the first time autofire is used.
-	if(enabled && !g_hook_thread)
+	// Lazily spin up the dedicated hook thread ONCE, the first time autofire is
+	// used. It then lives for the whole session (toggling autofire off/on does
+	// NOT create more threads). We close the handle immediately since we never
+	// join it; the thread self-manages and is reclaimed by the OS on exit.
+	if(enabled && !g_hook_started)
 	{
 		g_phys_lb=(GetAsyncKeyState(VK_LBUTTON)&0x8000)!=0;	// seed current state
-		g_hook_thread=CreateThread(NULL,0,MouseHookThread,NULL,0,NULL);
+		HANDLE h=CreateThread(NULL,0,MouseHookThread,NULL,0,NULL);
+		if(h){ CloseHandle(h); g_hook_started=true; }
 	}
 
 	bool phys=g_phys_lb;
