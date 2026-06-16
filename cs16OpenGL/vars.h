@@ -34,6 +34,7 @@ typedef struct { // cvars (of course ;P)
 	int esp_box_width;	// ESP Engine sub-option: box stroke width (px, scaled)
 	int esp_dist;	// ESP Engine sub-option: distance text
 	int esp_team;	// ESP Engine sub-option: which team to draw (0=both,1=CT,2=T)
+	int esp_dbg;	// ESP Engine sub-option: top-left "ENGINE ESP" debug readout text
 	// ---- new ESP Engine sub-options (#2,#3,#4,#5,#6) ----
 	int esp_snap;	// snapline from a fixed anchor to each enemy (0=off,1=bottom,2=top,3=crosshair)
 	int esp_head;	// head dot above each player

@@ -135,6 +135,7 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "esp_maxdist %i;",&cvar.esp_maxdist);
 					sscanf(str, "esp_fade %i;"	,&cvar.esp_fade);
 					sscanf(str, "esp_team %i;"	,&cvar.esp_team);
+					sscanf(str, "esp_dbg %i;"	,&cvar.esp_dbg);
 					sscanf(str, "lambert %i;"	,&cvar.lambert);
 					sscanf(str, "crosshair %i;"	,&cvar.cross);
 					sscanf(str, "fov %i;"		,&cvar.fov);
@@ -271,6 +272,7 @@ void SaveSettings()
 	fprintf(f,"esp_maxdist %i\n",cvar.esp_maxdist);
 	fprintf(f,"esp_fade %i\n",cvar.esp_fade);
 	fprintf(f,"esp_team %i\n",cvar.esp_team);
+	fprintf(f,"esp_dbg %i\n",cvar.esp_dbg);
 	fprintf(f,"esp_hud %i\n",cvar.esp_hud);
 	fprintf(f,"hud_hp %i\n",cvar.hud_hp);
 	fprintf(f,"hud_ammo %i\n",cvar.hud_ammo);
@@ -346,6 +348,7 @@ void LoadSettings()
 		sscanf(str,"esp_maxdist %i"	,&cvar.esp_maxdist);
 		sscanf(str,"esp_fade %i"	,&cvar.esp_fade);
 		sscanf(str,"esp_team %i"	,&cvar.esp_team);
+		sscanf(str,"esp_dbg %i"		,&cvar.esp_dbg);
 		sscanf(str,"esp_hud %i"		,&cvar.esp_hud);
 		sscanf(str,"hud_hp %i"		,&cvar.hud_hp);
 		sscanf(str,"hud_ammo %i"	,&cvar.hud_ammo);
@@ -436,6 +439,7 @@ void HookInit(bool activate)
 		cvar.esp_maxdist=0;
 		cvar.esp_fade=0;
 		cvar.esp_team=0;
+		cvar.esp_dbg=0;
 		cvar.esp_hud=0;
 		cvar.hud_hp=0;
 		cvar.hud_ammo=0;
@@ -946,6 +950,7 @@ void DrawMenu(int x, int y)
 		{"Max distance",IT_INT,    &cvar.esp_maxdist, 0,200,5,    0, &cvar.esp_engine, 1},
 		{"Distance fade",IT_TOGGLE,&cvar.esp_fade,    0,0,0,      0, &cvar.esp_engine, 1},
 		{"Show team",   IT_INT,    &cvar.esp_team,    0,2,1,      1, &cvar.esp_engine, 1},
+		{"Debug text",  IT_TOGGLE, &cvar.esp_dbg,    0,0,0,      0, &cvar.esp_engine, 1},
 		{"HUD HP/Ammo", IT_TOGGLE, &cvar.esp_hud,    0,0,0,       0, 0,                0},
 		{"HP",          IT_TOGGLE, &cvar.hud_hp,     0,0,0,       0, &cvar.esp_hud,    1},
 		{"Ammo",        IT_TOGGLE, &cvar.hud_ammo,   0,0,0,       0, &cvar.esp_hud,    1},
@@ -2393,7 +2398,7 @@ void DrawEngineEsp()
 
 	if(!ready || fnLocal<0x10000 || fnEnt<0x10000)
 	{
-		if(cvar.esp_engine)
+		if(cvar.esp_engine && cvar.esp_dbg)
 			DrawText(16.0f*ui_scale,24.0f*ui_scale,1.0f,0.7f,0.2f,"ENGINE ESP: searching engine table (start a game)...");
 		(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPopMatrix)();
 		(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPopMatrix)();
@@ -2766,7 +2771,7 @@ void DrawEngineEsp()
 
 	// top-left debug readouts: padded off the corner and spaced apart (scaled)
 	float dbgx=16.0f*ui_scale, dbgy=24.0f*ui_scale, dbgline=20.0f*ui_scale;
-	if(cvar.esp_engine)
+	if(cvar.esp_engine && cvar.esp_dbg)
 		DrawText(dbgx,dbgy,0.2f,1.0f,0.4f,"ENGINE ESP: %i players  team=%s",
 			eng_players, eng_have_extra?"extra":"model");
 
@@ -3269,22 +3274,6 @@ void sys_glViewport (GLint x,  GLint y,  GLsizei width,  GLsizei height)
 		}
 	}
 
-	// ---- auto-pistol / auto-knife (cvar.autofire) ----
-	// While mouse1 is physically held, spam clicks at autofire_rate ms intervals.
-	// Turns semi-auto pistols and the knife into rapid fire via mouse_event.
-	if(cvar.autofire && hookactive && enabledraw && (GetAsyncKeyState(VK_LBUTTON)&0x8000))
-	{
-		static DWORD af_last=0;
-		DWORD now=GetTickCount();
-		int rate=cvar.autofire_rate; if(rate<20) rate=20;	// clamp to a sane max rate
-		if((now-af_last)>=(DWORD)rate)
-		{
-			mouse_event(MOUSEEVENTF_LEFTDOWN,0,0,0,0);
-			mouse_event(MOUSEEVENTF_LEFTUP,0,0,0,0);
-			af_last=now;
-		}
-	}
-
 	modelviewport=false;
 	ch=false;
 
@@ -3398,10 +3387,50 @@ void DrawToast()
 	(*orig_glPopAttrib)();
 }
 
+// Auto-pistol / auto-knife (cvar.autofire). Driven exactly once per frame from
+// wglSwapBuffers. Two things make this work where the old code failed:
+//  1) Once-per-frame stepping: the engine polls input once per frame, so a
+//     same-frame down+up is seen as no edge and won't refire. We split the
+//     release and the press across two frames -> the up->down edge fires the
+//     weapon every cycle (semi-auto pistols + knife).
+//  2) Self-tracked shot phase: after we inject events, GetAsyncKeyState reports
+//     OUR state (a held physical button never resends "down"), so trusting it
+//     would latch off after the first shot. Instead each shot settles back to
+//     the DOWN state, so a *real* physical release flips async to up and is
+//     detected, while we keep firing as long as you hold.
+void UpdateAutofire()
+{
+	static bool  af_expect_up=false;	// we injected an UP last frame; the DOWN (fire) is due now
+	static DWORD af_t=0;				// tick of the last UP -> rate is measured from here
+
+	bool enabled = cvar.autofire && hookactive && enabledraw && !menu.active;
+	if(!enabled){ af_expect_up=false; return; }
+
+	if(af_expect_up)								// complete the shot started last frame
+	{
+		mouse_event(MOUSEEVENTF_LEFTDOWN,0,0,0,0);	// up(prev frame) -> down = firing edge
+		af_expect_up=false;
+		return;
+	}
+
+	if(GetAsyncKeyState(VK_LBUTTON)&0x8000)			// you are physically holding mouse1
+	{
+		DWORD now=GetTickCount();
+		int rate=cvar.autofire_rate; if(rate<15) rate=15;	// ms between shots
+		if((now-af_t)>=(DWORD)rate)
+		{
+			mouse_event(MOUSEEVENTF_LEFTUP,0,0,0,0);	// release now, press next frame
+			af_expect_up=true;
+			af_t=now;
+		}
+	}
+}
+
 void sys_wglSwapBuffers(HDC hDC)
 {
 	if(hookactive)
 	{
+		UpdateAutofire();	// once-per-frame auto-pistol/auto-knife
 		DrawEngineEsp();	// radar + engine ESP + own HUD (bottom overlay layer)
 		DrawToast();		// feature toggle notifications (middle layer)
 		DrawOverlayUI();	// hack menu + F11 check (top overlay layer)
