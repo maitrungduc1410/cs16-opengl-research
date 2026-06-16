@@ -267,3 +267,4 @@ DWORD	af_dt			=0;		// (now - af_t) at the last held-check
 HHOOK			g_ll_hook		=NULL;	// WH_MOUSE_LL handle (0 until installed)
 volatile bool	g_phys_lb		=false;	// true while the physical left button is down
 HINSTANCE		g_self_inst		=NULL;	// this proxy DLL's own module handle (for the hook)
+HANDLE			g_hook_thread	=NULL;	// dedicated thread that owns + pumps the hook

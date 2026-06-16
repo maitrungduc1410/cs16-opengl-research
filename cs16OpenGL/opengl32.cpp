@@ -3406,6 +3406,24 @@ LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam)
 	return CallNextHookEx(g_ll_hook, nCode, wParam, lParam);
 }
 
+// The low-level hook MUST live on a thread that constantly pumps messages. We
+// give it its OWN thread instead of the render thread: an LL hook on the render
+// thread froze the game while click-spamming, and if the busy render thread let
+// the hook time out Windows silently skipped events (missing the UP -> autofire
+// stuck on). This thread does nothing but service the hook, so it stays reliable.
+DWORD WINAPI MouseHookThread(LPVOID)
+{
+	g_ll_hook = SetWindowsHookEx(WH_MOUSE_LL, LowLevelMouseProc, g_self_inst, 0);
+	MSG msg;
+	while(GetMessage(&msg, NULL, 0, 0) > 0)		// keeps the hook serviced
+	{
+		TranslateMessage(&msg);
+		DispatchMessage(&msg);
+	}
+	if(g_ll_hook){ UnhookWindowsHookEx(g_ll_hook); g_ll_hook=NULL; }
+	return 0;
+}
+
 // Auto-pistol / auto-knife (cvar.autofire). Driven exactly once per frame from
 // wglSwapBuffers.
 //
@@ -3428,11 +3446,11 @@ void UpdateAutofire()
 	bool enabled = cvar.autofire && hookactive && !menu.active;
 	af_on = enabled?1:0;
 
-	// Lazily install the physical-button hook the first time autofire is used.
-	if(enabled && !g_ll_hook)
+	// Lazily spin up the dedicated hook thread the first time autofire is used.
+	if(enabled && !g_hook_thread)
 	{
-		g_ll_hook=SetWindowsHookEx(WH_MOUSE_LL, LowLevelMouseProc, g_self_inst, 0);
 		g_phys_lb=(GetAsyncKeyState(VK_LBUTTON)&0x8000)!=0;	// seed current state
+		g_hook_thread=CreateThread(NULL,0,MouseHookThread,NULL,0,NULL);
 	}
 
 	bool phys=g_phys_lb;
