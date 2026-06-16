@@ -3389,69 +3389,64 @@ void DrawToast()
 }
 
 // Auto-pistol / auto-knife (cvar.autofire). Driven exactly once per frame from
-// wglSwapBuffers. Two things make this work where the old code failed:
-//  1) Once-per-frame stepping: the engine polls input once per frame, so a
-//     same-frame down+up is seen as no edge and won't refire. We split the
-//     release and the press across two frames -> the up->down edge fires the
-//     weapon every cycle (semi-auto pistols + knife).
-//  2) Self-tracked shot phase: after we inject events, GetAsyncKeyState reports
-//     OUR state (a held physical button never resends "down"), so trusting it
-//     would latch off after the first shot. Instead each shot settles back to
-//     the DOWN state, so a *real* physical release flips async to up and is
-//     detected, while we keep firing as long as you hold.
+// wglSwapBuffers.
 void UpdateAutofire()
 {
-	static bool  af_expect_up=false;	// we injected an UP last frame; the DOWN (fire) is due now
-	static DWORD af_t=0;				// tick of the last UP -> rate is measured from here
+	static bool  our_down=false;		// last button state WE injected (our baseline)
+	static bool  user_down=false;		// our belief about the PHYSICAL button
+	static DWORD af_t=0;				// tick of the last injected pulse
 
-	// NOTE: do NOT gate on enabledraw here. enabledraw is a "draw text once this
-	// frame" flag that the glShadeModel text pass clears mid-frame; by the time
-	// this runs (end of frame, in wglSwapBuffers) it is already false, which made
-	// the whole autofire path dead (on=0). hookactive + a running game is enough.
 	bool enabled = cvar.autofire && hookactive && !menu.active;
 	af_on = enabled?1:0;
-	if(!enabled){ af_expect_up=false; af_exp=0; return; }
-
-	int asyncbit = (GetAsyncKeyState(VK_LBUTTON)&0x8000)?1:0;
-
-	if(af_expect_up)								// complete the shot started last frame
+	if(!enabled)
 	{
-		af_aup = asyncbit;							// DEBUG: did our injected UP register? (expect 0=up)
-		mouse_event(MOUSEEVENTF_LEFTDOWN,0,0,0,0);	// up(prev frame) -> down = firing edge
-		af_down++;									// DEBUG
-		af_expect_up=false; af_exp=0;
+		if(our_down){ mouse_event(MOUSEEVENTF_LEFTUP,0,0,0,0); our_down=false; }	// never leave it stuck down
+		user_down=false;
 		return;
 	}
 
-	af_async = asyncbit;							// DEBUG: is the physical hold detected?
-	if(asyncbit)									// you are physically holding mouse1
+	bool async = (GetAsyncKeyState(VK_LBUTTON)&0x8000)!=0;
+	af_async = async?1:0;
+
+	// A physical edge is the ONLY thing that makes async differ from our baseline.
+	if(async != our_down)
 	{
-		DWORD now=GetTickCount();
-		int rate=cvar.autofire_rate; if(rate<15) rate=15;	// ms between shots
-		af_dt = now-af_t;							// DEBUG
-		if((now-af_t)>=(DWORD)rate)
-		{
-			mouse_event(MOUSEEVENTF_LEFTUP,0,0,0,0);	// release now, press next frame
-			af_up++;								// DEBUG
-			af_expect_up=true; af_exp=1;
-			af_t=now;
-		}
+		user_down = async;				// down vs our up = your press; up vs our down = your release
+		our_down  = async;				// resync baseline to reality
+		if(user_down) af_t=GetTickCount();	// your manual press already fired once; wait a full rate
+	}
+	af_exp = user_down?1:0;				// DEBUG: our belief that you're holding
+	af_aup = our_down?1:0;				// DEBUG: the injected baseline
+
+	if(!user_down)						// you're not holding -> make sure our injection isn't holding it
+	{
+		if(our_down){ mouse_event(MOUSEEVENTF_LEFTUP,0,0,0,0); af_up++; our_down=false; }
+		return;
+	}
+
+	// You ARE holding -> emit one clean release+press pulse every rate ms.
+	DWORD now=GetTickCount();
+	int rate=cvar.autofire_rate; if(rate<15) rate=15;	// ms between shots
+	af_dt = now-af_t;
+	if((now-af_t)>=(DWORD)rate)
+	{
+		mouse_event(MOUSEEVENTF_LEFTUP,0,0,0,0);   af_up++;		// release...
+		mouse_event(MOUSEEVENTF_LEFTDOWN,0,0,0,0); af_down++;	// ...press = one shot
+		our_down=true;					// settled DOWN; a real release flips async next frame
+		af_t=now;
 	}
 }
 
 // TEMPORARY autofire diagnostics. Sets up its own 2D ortho pass (like DrawToast)
-// and prints the live UpdateAutofire state so we can see, in-game, exactly which
-// link in the chain is broken. Shown whenever autofire is enabled.
+// and prints the live UpdateAutofire state. Shown whenever autofire is enabled.
 //   on     : the per-frame run condition is satisfied
-//   async  : GetAsyncKeyState sees mouse1 held during the held-check
-//   aup    : async bit on the "press" frame -> 0 means our injected UP took effect
-//   exp    : current cycle phase (1 = a DOWN/fire is due next frame)
+//   async  : raw GetAsyncKeyState bit (physical OR our injection)
+//   aup    : our_down baseline (the button state we last injected)
+//   exp    : user_down -> our belief that YOU are physically holding mouse1
 //   up/down: how many LEFTUP / LEFTDOWN events we have injected this session
-//   dt     : ms since the last UP (compare against your rate)
-// Interpretation:
-//   up/down climb but gun stays silent  -> engine ignores injected clicks while
-//                                           the button is physically held.
-//   async stays 0 while you hold        -> the hold itself isn't being detected.
+//   dt     : ms since the last injected pulse (compare against your rate)
+// Correct behaviour: when you release, exp must go to 0 and up/down must STOP
+// climbing. If up/down keep climbing with exp=1 after you let go -> still latched.
 void DrawAutofireDebug()
 {
 	if(!cvar.autofire || !hookactive) return;
