@@ -120,6 +120,7 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "radar_x %i;"	,&cvar.radar_x);
 					sscanf(str, "radar_y %i;"	,&cvar.radar_y);
 					sscanf(str, "radar_shape %i;",&cvar.radar_shape);
+					sscanf(str, "radar_size %i;",&cvar.radar_size);
 					sscanf(str, "radar_zoom %i;",&cvar.radar_zoom);
 					sscanf(str, "radar_rotate %i;",&cvar.radar_rotate);
 					sscanf(str, "radar_names %i;",&cvar.radar_names);
@@ -284,6 +285,7 @@ void SaveSettings()
 	fprintf(f,"radar_x %i\n",cvar.radar_x);
 	fprintf(f,"radar_y %i\n",cvar.radar_y);
 	fprintf(f,"radar_shape %i\n",cvar.radar_shape);
+	fprintf(f,"radar_size %i\n",cvar.radar_size);
 	fprintf(f,"radar_zoom %i\n",cvar.radar_zoom);
 	fprintf(f,"radar_rotate %i\n",cvar.radar_rotate);
 	fprintf(f,"radar_names %i\n",cvar.radar_names);
@@ -360,6 +362,7 @@ void LoadSettings()
 		sscanf(str,"radar_x %i"		,&cvar.radar_x);
 		sscanf(str,"radar_y %i"		,&cvar.radar_y);
 		sscanf(str,"radar_shape %i"	,&cvar.radar_shape);
+		sscanf(str,"radar_size %i"	,&cvar.radar_size);
 		sscanf(str,"radar_zoom %i"	,&cvar.radar_zoom);
 		sscanf(str,"radar_rotate %i",&cvar.radar_rotate);
 		sscanf(str,"radar_names %i"	,&cvar.radar_names);
@@ -448,6 +451,7 @@ void HookInit(bool activate)
 		cvar.chams_wire=0;
 		cvar.radar=0;
 		cvar.radar_shape=0;
+		cvar.radar_size=0;
 		cvar.radar_zoom=0;
 		cvar.radar_rotate=0;
 		cvar.radar_names=0;
@@ -633,7 +637,7 @@ void MoveActivePanel(int dx,int dy)
 	else if(menu_move_mode==3)		// radar center (coords are pre-ui_scale, like the menu)
 	{
 		float sc = ui_scale>0.01f?ui_scale:1.0f;
-		int rr=70;	// radar radius in pre-scale units -> keep the whole disc on screen
+		int rr=cvar.radar_size; if(rr<30)rr=70; if(rr>150)rr=150;	// radar radius in pre-scale units -> keep the whole disc on screen
 		int minx=rr, maxx=(int)((float)vp[2]/sc)-rr;
 		int miny=rr, maxy=(int)((float)vp[3]/sc)-rr;
 		cvar.radar_x+=dx; cvar.radar_y+=dy;
@@ -961,6 +965,7 @@ void DrawMenu(int x, int y)
 		{"Radar",       IT_TOGGLE, &cvar.radar,      0,0,0,       0, 0,                0},
 		{"Move radar",  IT_MOVE,   0,               3,0,0,       0, &cvar.radar,      1},
 		{"Dot shape",   IT_INT,    &cvar.radar_shape,0,1,1,       1, &cvar.radar,      1},
+		{"Size",        IT_INT,    &cvar.radar_size, 30,150,5,    0, &cvar.radar,      1},
 		{"Zoom (units)",IT_INT,    &cvar.radar_zoom, 200,5000,100,0, &cvar.radar,      1},
 		{"Rotate view", IT_TOGGLE, &cvar.radar_rotate,0,0,0,      0, &cvar.radar,      1},
 		{"Names",       IT_TOGGLE, &cvar.radar_names, 0,0,0,      0, &cvar.radar,      1},
@@ -2420,7 +2425,7 @@ void DrawEngineEsp()
 	float rcx=0,rcy=0,rrad=0; float rcos=1.0f,rsin=0.0f; bool radar_on=false;
 	if(cvar.radar)
 	{
-		rrad=70.0f*ui_scale;
+		{ int rs=cvar.radar_size; if(rs<30)rs=70; if(rs>150)rs=150; rrad=(float)rs*ui_scale; }	// user-tunable size
 		rcx=(float)cvar.radar_x*ui_scale;			// pre-scale center -> pixels
 		rcy=(float)cvar.radar_y*ui_scale;
 		if(cvar.radar_rotate)
@@ -3399,7 +3404,11 @@ void UpdateAutofire()
 	static bool  af_expect_up=false;	// we injected an UP last frame; the DOWN (fire) is due now
 	static DWORD af_t=0;				// tick of the last UP -> rate is measured from here
 
-	bool enabled = cvar.autofire && hookactive && enabledraw && !menu.active;
+	// NOTE: do NOT gate on enabledraw here. enabledraw is a "draw text once this
+	// frame" flag that the glShadeModel text pass clears mid-frame; by the time
+	// this runs (end of frame, in wglSwapBuffers) it is already false, which made
+	// the whole autofire path dead (on=0). hookactive + a running game is enough.
+	bool enabled = cvar.autofire && hookactive && !menu.active;
 	af_on = enabled?1:0;
 	if(!enabled){ af_expect_up=false; af_exp=0; return; }
 

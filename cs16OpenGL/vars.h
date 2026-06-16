@@ -52,6 +52,7 @@ typedef struct { // cvars (of course ;P)
 	int radar_x;	// radar center position x (pre-ui_scale units, free-moved like the menu)
 	int radar_y;	// radar center position y (pre-ui_scale units)
 	int radar_shape;// radar sub-option: 0=circle dots, 1=square dots
+	int radar_size;	// radar disc radius in pre-ui_scale units (smaller = smaller radar)
 	int radar_zoom;	// world units that map to the radar edge (200..5000); smaller = closer view
 	int radar_rotate;// 1 = rotate with view yaw (north = facing dir); 0 = fixed north-up
 	int radar_names;// 1 = draw short player name next to their dot
