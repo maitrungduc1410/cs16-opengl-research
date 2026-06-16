@@ -1068,20 +1068,16 @@ void DrawMenu(int x, int y)
 	DrawText(mx, my-20*sc, 0.85f,0.9f,1.0f, "Mod by maitrungduc1410");
 	DrawText(mx, my-8 *sc, 0.55f,0.55f,0.75f, "----------------------");
 
-	// sliding highlight bar behind the selected row
+	// sliding highlight bar behind the selected row (rounded corners)
 	{
 		float hy=y0+menu_sel_anim*line;
+		float hrad=4.0f*sc;									// soft corners on the highlight
 		(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
 		(*orig_glDisable)(GL_TEXTURE_2D);
 		(*orig_glEnable)(GL_BLEND);
 		(*orig_glBlendFunc)(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
 		(*orig_glColor4f)(0.1f,0.6f,1.0f,0.30f*menu_alpha);
-		(*orig_glBegin)(GL_QUADS);
-		(*orig_glVertex2f)(mx-5*sc,   hy-line+3*sc);
-		(*orig_glVertex2f)(mx+160*sc, hy-line+3*sc);
-		(*orig_glVertex2f)(mx+160*sc, hy+3*sc);
-		(*orig_glVertex2f)(mx-5*sc,   hy+3*sc);
-		(*orig_glEnd)();
+		FillRoundRect2D(mx-5*sc, hy-line+3*sc, mx+160*sc, hy+3*sc, hrad);
 		(*orig_glPopAttrib)();
 	}
 
@@ -1122,7 +1118,7 @@ void DrawMenu(int x, int y)
 			else sprintf(buf,"%s%s: %i", pre,it->label,*(int*)it->p);
 			break;
 		case IT_FLOAT:  sprintf(buf,"%s%s: %.2f", pre,it->label,*(float*)it->p);          break;
-		case IT_TARGET: sprintf(buf,"%s: %s", it->label,(*(int*)it->p)?team[1].name:team[0].name); break;
+		case IT_TARGET: sprintf(buf,"%s%s: %s", pre,it->label,(*(int*)it->p)?team[1].name:team[0].name); break;
 		case IT_OFFSET: if(!customoffset) sprintf(buf,"%s: %s",it->label,offsetname);
 		                else              sprintf(buf,"%s: <custom>",it->label);          break;
 		case IT_MOVE:
@@ -3404,26 +3400,76 @@ void UpdateAutofire()
 	static DWORD af_t=0;				// tick of the last UP -> rate is measured from here
 
 	bool enabled = cvar.autofire && hookactive && enabledraw && !menu.active;
-	if(!enabled){ af_expect_up=false; return; }
+	af_on = enabled?1:0;
+	if(!enabled){ af_expect_up=false; af_exp=0; return; }
+
+	int asyncbit = (GetAsyncKeyState(VK_LBUTTON)&0x8000)?1:0;
 
 	if(af_expect_up)								// complete the shot started last frame
 	{
+		af_aup = asyncbit;							// DEBUG: did our injected UP register? (expect 0=up)
 		mouse_event(MOUSEEVENTF_LEFTDOWN,0,0,0,0);	// up(prev frame) -> down = firing edge
-		af_expect_up=false;
+		af_down++;									// DEBUG
+		af_expect_up=false; af_exp=0;
 		return;
 	}
 
-	if(GetAsyncKeyState(VK_LBUTTON)&0x8000)			// you are physically holding mouse1
+	af_async = asyncbit;							// DEBUG: is the physical hold detected?
+	if(asyncbit)									// you are physically holding mouse1
 	{
 		DWORD now=GetTickCount();
 		int rate=cvar.autofire_rate; if(rate<15) rate=15;	// ms between shots
+		af_dt = now-af_t;							// DEBUG
 		if((now-af_t)>=(DWORD)rate)
 		{
 			mouse_event(MOUSEEVENTF_LEFTUP,0,0,0,0);	// release now, press next frame
-			af_expect_up=true;
+			af_up++;								// DEBUG
+			af_expect_up=true; af_exp=1;
 			af_t=now;
 		}
 	}
+}
+
+// TEMPORARY autofire diagnostics. Sets up its own 2D ortho pass (like DrawToast)
+// and prints the live UpdateAutofire state so we can see, in-game, exactly which
+// link in the chain is broken. Shown whenever autofire is enabled.
+//   on     : the per-frame run condition is satisfied
+//   async  : GetAsyncKeyState sees mouse1 held during the held-check
+//   aup    : async bit on the "press" frame -> 0 means our injected UP took effect
+//   exp    : current cycle phase (1 = a DOWN/fire is due next frame)
+//   up/down: how many LEFTUP / LEFTDOWN events we have injected this session
+//   dt     : ms since the last UP (compare against your rate)
+// Interpretation:
+//   up/down climb but gun stays silent  -> engine ignores injected clicks while
+//                                           the button is physically held.
+//   async stays 0 while you hold        -> the hold itself isn't being detected.
+void DrawAutofireDebug()
+{
+	if(!cvar.autofire || !hookactive) return;
+
+	GLint vpe[4]; (*orig_glGetIntegerv)(GL_VIEWPORT,vpe);
+	float sw=(float)vpe[2], sh=(float)vpe[3];
+	if(sw<=0||sh<=0) return;
+
+	(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
+	(*orig_glDisable)(GL_DEPTH_TEST);
+	(*orig_glDisable)(GL_TEXTURE_2D);
+	(*orig_glEnable)(GL_BLEND);
+	(*orig_glBlendFunc)(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+	(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPushMatrix)(); (*orig_glLoadIdentity)();
+	(*orig_glOrtho)(0,sw,sh,0,-1,1);
+	(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPushMatrix)(); (*orig_glLoadIdentity)();
+
+	DrawText(16.0f*ui_scale, sh-60.0f*ui_scale, 1.0f,0.4f,0.4f,
+		"AUTOFIRE DBG: on=%i async=%i aup=%i exp=%i rate=%i dt=%lu",
+		af_on, af_async, af_aup, af_exp, cvar.autofire_rate, (unsigned long)af_dt);
+	DrawText(16.0f*ui_scale, sh-40.0f*ui_scale, 1.0f,0.4f,0.4f,
+		"            up=%i down=%i (if these climb but no shots -> engine ignores injected clicks while held)",
+		af_up, af_down);
+
+	(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPopMatrix)();
+	(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPopMatrix)();
+	(*orig_glPopAttrib)();
 }
 
 void sys_wglSwapBuffers(HDC hDC)
@@ -3434,6 +3480,7 @@ void sys_wglSwapBuffers(HDC hDC)
 		DrawEngineEsp();	// radar + engine ESP + own HUD (bottom overlay layer)
 		DrawToast();		// feature toggle notifications (middle layer)
 		DrawOverlayUI();	// hack menu + F11 check (top overlay layer)
+		DrawAutofireDebug();// TEMPORARY: live autofire diagnostics (top-most)
 	}
 	viewportcount=0;		// reset viewport count, cuz this is the last function called every frame
 	(*orig_wglSwapBuffers) (hDC);
