@@ -249,18 +249,6 @@ int		det_cur			=0;		// enemy players received from the server this frame
 int		det_peak		=0;		// highest enemy count seen this session
 float	det_avg			=0.0f;	// exponential moving average of det_cur
 
-// ---- autofire debug instrumentation (temporary, drawn on-screen) ----------
-// These mirror the internal state of UpdateAutofire so we can see, live, why a
-// held semi-auto pistol may not be firing: is the hold detected (af_async), is
-// the gate firing (af_up/af_down counters climbing), what is the cycle phase.
-int		af_on			=0;		// condition to run autofire this frame (1/0)
-int		af_async		=0;		// raw GetAsyncKeyState(VK_LBUTTON) bit (reference)
-int		af_aup			=0;		// our injected baseline (1=down)
-int		af_exp			=0;		// our belief you're physically holding mouse1
-int		af_up			=0;		// count of injected MOUSEEVENTF_LEFTUP
-int		af_down			=0;		// count of injected MOUSEEVENTF_LEFTDOWN
-DWORD	af_dt			=0;		// (now - af_t) at the last held-check
-
 // Low-level mouse hook: tracks the TRUE PHYSICAL mouse1 state, ignoring our own
 // injected clicks (via LLMHF_INJECTED). This is the only injection-immune signal
 // we have, so autofire uses it to know when YOU are really holding the button.

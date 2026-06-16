@@ -3444,7 +3444,6 @@ void UpdateAutofire()
 	static DWORD af_t=0;				// tick of the last shot (rate measured from here)
 
 	bool enabled = cvar.autofire && hookactive && !menu.active;
-	af_on = enabled?1:0;
 
 	// Lazily spin up the dedicated hook thread ONCE, the first time autofire is
 	// used. It then lives for the whole session (toggling autofire off/on does
@@ -3461,20 +3460,16 @@ void UpdateAutofire()
 	if(phys && !prev_phys) af_t=GetTickCount();	// your manual press already fired once; wait a full rate
 	prev_phys=phys;
 
-	af_async = (GetAsyncKeyState(VK_LBUTTON)&0x8000)?1:0;	// reference only
-	af_exp   = phys?1:0;
-	af_aup   = our_down?1:0;
-
 	if(!enabled || !phys)				// not holding (or disabled) -> stop, release if needed
 	{
-		if(our_down){ mouse_event(MOUSEEVENTF_LEFTUP,0,0,0,0); af_up++; our_down=false; }
+		if(our_down){ mouse_event(MOUSEEVENTF_LEFTUP,0,0,0,0); our_down=false; }
 		phase_press=false;
 		return;
 	}
 
 	if(phase_press)						// previous frame was the release -> press now = fire
 	{
-		mouse_event(MOUSEEVENTF_LEFTDOWN,0,0,0,0); af_down++;
+		mouse_event(MOUSEEVENTF_LEFTDOWN,0,0,0,0);
 		our_down=true;
 		phase_press=false;
 		af_t=GetTickCount();			// rate counts from the shot
@@ -3483,52 +3478,12 @@ void UpdateAutofire()
 
 	DWORD now=GetTickCount();
 	int rate=cvar.autofire_rate; if(rate<15) rate=15;	// ms between shots
-	af_dt = now-af_t;
 	if((now-af_t)>=(DWORD)rate)			// time for the next shot: release this frame...
 	{
-		mouse_event(MOUSEEVENTF_LEFTUP,0,0,0,0); af_up++;	// ...DOWN comes next frame -> 0->1 edge
+		mouse_event(MOUSEEVENTF_LEFTUP,0,0,0,0);	// ...DOWN comes next frame -> 0->1 edge
 		our_down=false;
 		phase_press=true;
 	}
-}
-
-// TEMPORARY autofire diagnostics. Sets up its own 2D ortho pass (like DrawToast)
-// and prints the live UpdateAutofire state. Shown whenever autofire is enabled.
-//   on     : the per-frame run condition is satisfied
-//   async  : raw GetAsyncKeyState bit (physical OR our injection)
-//   aup    : our_down baseline (the button state we last injected)
-//   exp    : user_down -> our belief that YOU are physically holding mouse1
-//   up/down: how many LEFTUP / LEFTDOWN events we have injected this session
-//   dt     : ms since the last injected pulse (compare against your rate)
-// Correct behaviour: when you release, exp must go to 0 and up/down must STOP
-// climbing. If up/down keep climbing with exp=1 after you let go -> still latched.
-void DrawAutofireDebug()
-{
-	if(!cvar.autofire || !hookactive) return;
-
-	GLint vpe[4]; (*orig_glGetIntegerv)(GL_VIEWPORT,vpe);
-	float sw=(float)vpe[2], sh=(float)vpe[3];
-	if(sw<=0||sh<=0) return;
-
-	(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
-	(*orig_glDisable)(GL_DEPTH_TEST);
-	(*orig_glDisable)(GL_TEXTURE_2D);
-	(*orig_glEnable)(GL_BLEND);
-	(*orig_glBlendFunc)(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
-	(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPushMatrix)(); (*orig_glLoadIdentity)();
-	(*orig_glOrtho)(0,sw,sh,0,-1,1);
-	(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPushMatrix)(); (*orig_glLoadIdentity)();
-
-	DrawText(16.0f*ui_scale, sh-60.0f*ui_scale, 1.0f,0.4f,0.4f,
-		"AUTOFIRE DBG: on=%i phys_hold=%i our_down=%i async=%i rate=%i dt=%lu",
-		af_on, af_exp, af_aup, af_async, cvar.autofire_rate, (unsigned long)af_dt);
-	DrawText(16.0f*ui_scale, sh-40.0f*ui_scale, 1.0f,0.4f,0.4f,
-		"            up=%i down=%i (release: phys_hold must go 0 and up/down must STOP)",
-		af_up, af_down);
-
-	(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPopMatrix)();
-	(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPopMatrix)();
-	(*orig_glPopAttrib)();
 }
 
 void sys_wglSwapBuffers(HDC hDC)
@@ -3539,7 +3494,6 @@ void sys_wglSwapBuffers(HDC hDC)
 		DrawEngineEsp();	// radar + engine ESP + own HUD (bottom overlay layer)
 		DrawToast();		// feature toggle notifications (middle layer)
 		DrawOverlayUI();	// hack menu + F11 check (top overlay layer)
-		DrawAutofireDebug();// TEMPORARY: live autofire diagnostics (top-most)
 	}
 	viewportcount=0;		// reset viewport count, cuz this is the last function called every frame
 	(*orig_wglSwapBuffers) (hDC);
