@@ -31,6 +31,7 @@ typedef struct { // cvars (of course ;P)
 	int esp_box;	// ESP Engine sub-option: 2D box
 	int esp_box_pad;	// ESP Engine sub-option: box padding around the player (px)
 	int esp_box_radius;	// ESP Engine sub-option: box corner radius (px, 0=sharp)
+	int esp_box_width;	// ESP Engine sub-option: box stroke width (px, scaled)
 	int esp_dist;	// ESP Engine sub-option: distance text
 	int esp_team;	// ESP Engine sub-option: which team to draw (0=both,1=CT,2=T)
 	int esp_hud;	// own HP/ammo HUD master (arcs around the crosshair)
@@ -40,7 +41,8 @@ typedef struct { // cvars (of course ;P)
 	int chams;		// model chams: flat color / wireframe player models
 	int chams_wire;	// chams sub-option: wireframe instead of solid fill
 	int radar;		// 2D radar built from the engine entity list
-	int radar_pos;	// radar sub-option: 0..7 screen anchor (TL,TC,TR,ML,MR,BL,BC,BR)
+	int radar_x;	// radar center position x (pre-ui_scale units, free-moved like the menu)
+	int radar_y;	// radar center position y (pre-ui_scale units)
 	int radar_shape;// radar sub-option: 0=circle dots, 1=square dots
 	int hud_pad;	// HUD sub-option: extra arc padding around the crosshair (units)
 	int	aimthru;
@@ -57,6 +59,8 @@ typedef struct { // cvars (of course ;P)
 	int sky;
 	int menu_x;
 	int menu_y;
+	int check_x;	// F11 check-screen panel position (x)
+	int check_y;	// F11 check-screen panel position (y)
 	int pronefix;
 	int aimkey;
 	float stand_h;
@@ -146,6 +150,7 @@ bool checktext=false;		// F11, check text
 bool gotflashed=false;
 bool cfgfail=false;			// true if config couldnt be find
 bool mdlfail=false;			// true if model file couldnt be find
+bool saveloaded=false;		// true if oglsave.cfg (user settings) was loaded this session
 
 char filename[256]="";
 char dllpath[256]="";
@@ -155,6 +160,7 @@ char modelfile[52]="";
 
 char modelpath[256]="";
 char configpath[256]="";
+char savepath[256]="";		// full path to oglsave.cfg (for the F11 check screen)
 
 // ---- tier2: engine entity-list ESP ----------------------------------------
 // Cached pointers/addresses we discover at runtime (0 = not found yet).
@@ -190,9 +196,11 @@ int		eng_msg_tries	=0;		// how many times we tried to find the msg nodes
 float	ui_scale		=1.0f;	// text/menu scale vs 1080p baseline (set in BuildFont)
 float	gTextAlpha		=1.0f;	// global alpha multiplier for DrawText (menu fade)
 float	menu_alpha		=0.0f;	// 0..1 fade state of the menu
+float	check_alpha		=0.0f;	// 0..1 fade state of the F11 check screen
 float	menu_sel_anim	=0.0f;	// animated (smoothly sliding) selected-row index
 DWORD	menu_last_tick	=0;		// last GetTickCount() for time-based animation
 float	g_menu_dt		=0.0f;	// per-frame anim delta (seconds), updated every frame
 int		ui_open_seq		=0;		// monotonic counter: who (menu/F11) was opened last
 int		menu_open_seq	=0;		// ui_open_seq stamp when the menu was last opened
 int		check_open_seq	=0;		// ui_open_seq stamp when the F11 check was last opened
+int		menu_move_mode	=0;		// 0=off, 1=moving hack menu, 2=moving F11 panel

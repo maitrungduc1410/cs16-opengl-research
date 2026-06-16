@@ -48,6 +48,20 @@ void UnvalidVertex();	// turn all vert counts invalid
 int GetVertexMin();		// get lowest vert count
 int GetVertexMax();		// get highest vert count
 float curcolor[4];
+
+// default on-screen panel positions + move-mode step (used by HookInit / menu / HandleKey)
+#define MENU_DEF_X   40
+#define MENU_DEF_Y   50
+#define CHECK_DEF_X  40
+#define CHECK_DEF_Y  40
+#define RADAR_DEF_X  84		// radar center default (pre-ui_scale): ~14px margin + 70px radius
+#define RADAR_DEF_Y  84
+#define MOVE_STEP    2		// px per polled frame while in move mode (held = continuous)
+
+// rounded-rectangle helpers (defined lower, used by the menu / F11 panels above them)
+void DrawBox2D(float x0,float y0,float x1,float y1,float rad);			// rounded outline
+void FillRoundRect2D(float x0,float y0,float x1,float y1,float rad);		// rounded fill
+
 //////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -95,11 +109,13 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "chams %i;"		,&cvar.chams);
 					sscanf(str, "chams_wire %i;",&cvar.chams_wire);
 					sscanf(str, "radar %i;"		,&cvar.radar);
-					sscanf(str, "radar_pos %i;"	,&cvar.radar_pos);
+					sscanf(str, "radar_x %i;"	,&cvar.radar_x);
+					sscanf(str, "radar_y %i;"	,&cvar.radar_y);
 					sscanf(str, "radar_shape %i;",&cvar.radar_shape);
 					sscanf(str, "hud_pad %i;"	,&cvar.hud_pad);
 					sscanf(str, "esp_box_pad %i;"	,&cvar.esp_box_pad);
 					sscanf(str, "esp_box_radius %i;",&cvar.esp_box_radius);
+					sscanf(str, "esp_box_width %i;",&cvar.esp_box_width);
 					sscanf(str, "esp_team %i;"	,&cvar.esp_team);
 					sscanf(str, "lambert %i;"	,&cvar.lambert);
 					sscanf(str, "crosshair %i;"	,&cvar.cross);
@@ -110,6 +126,8 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "nosmoke %i;"	,&cvar.smoke);
 					sscanf(str, "menu_x %i;"	,&cvar.menu_x);
 					sscanf(str, "menu_y %i;"	,&cvar.menu_y);
+					sscanf(str, "check_x %i;"	,&cvar.check_x);
+					sscanf(str, "check_y %i;"	,&cvar.check_y);
 					sscanf(str, "stand_h %f;"	,&cvar.stand_h);
 					sscanf(str, "duck_h %f;"	,&cvar.duck_h);
 					sscanf(str, "pronefix %f;"	,&cvar.pronefix);
@@ -184,16 +202,149 @@ void LoadFile(char *thefile,int ftype)
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
+// Persistent user settings.
+//   * oglconf.cfg stays the shipped DEFAULTS (+ offsets / modelfile).
+//   * oglsave.cfg holds whatever the user last tuned in the menu and is rewritten
+//     on every change. On load, a missing file or a missing line just keeps the
+//     default value of that option, so we always degrade gracefully.
+static void GetSavePath(char *out)
+{
+	GetCurrentDirectory(_MAX_PATH, out);
+	strcat(out,"\\oglsave.cfg");
+}
+
+void SaveSettings()
+{
+	if(!hookactive) return;				// never persist the all-zero "hack off" state
+	char path[_MAX_PATH]=""; GetSavePath(path);
+	FILE *f=fopen(path,"w");
+	if(!f) return;
+	fprintf(f,"// auto-saved settings (mtd) - edited from the in-game menu\n");
+	fprintf(f,"aim %i\n",cvar.aim);
+	fprintf(f,"aimthru %i\n",cvar.aimthru);
+	fprintf(f,"target %i\n",cvar.target);
+	fprintf(f,"shoot %i\n",cvar.shoot);
+	fprintf(f,"fov %i\n",cvar.fov);
+	fprintf(f,"recoil %i\n",cvar.recoil);
+	fprintf(f,"wall %i\n",cvar.wall);
+	fprintf(f,"nosky %i\n",cvar.sky);
+	fprintf(f,"noflash %i\n",cvar.flash);
+	fprintf(f,"nosmoke %i\n",cvar.smoke);
+	fprintf(f,"lambert %i\n",cvar.lambert);
+	fprintf(f,"crosshair %i\n",cvar.cross);
+	fprintf(f,"esp_engine %i\n",cvar.esp_engine);
+	fprintf(f,"esp_name %i\n",cvar.esp_name);
+	fprintf(f,"esp_box %i\n",cvar.esp_box);
+	fprintf(f,"esp_box_pad %i\n",cvar.esp_box_pad);
+	fprintf(f,"esp_box_radius %i\n",cvar.esp_box_radius);
+	fprintf(f,"esp_box_width %i\n",cvar.esp_box_width);
+	fprintf(f,"esp_dist %i\n",cvar.esp_dist);
+	fprintf(f,"esp_team %i\n",cvar.esp_team);
+	fprintf(f,"esp_hud %i\n",cvar.esp_hud);
+	fprintf(f,"hud_hp %i\n",cvar.hud_hp);
+	fprintf(f,"hud_ammo %i\n",cvar.hud_ammo);
+	fprintf(f,"hud_die %i\n",cvar.hud_die);
+	fprintf(f,"hud_pad %i\n",cvar.hud_pad);
+	fprintf(f,"chams %i\n",cvar.chams);
+	fprintf(f,"chams_wire %i\n",cvar.chams_wire);
+	fprintf(f,"radar %i\n",cvar.radar);
+	fprintf(f,"radar_x %i\n",cvar.radar_x);
+	fprintf(f,"radar_y %i\n",cvar.radar_y);
+	fprintf(f,"radar_shape %i\n",cvar.radar_shape);
+	fprintf(f,"aimkey %i\n",cvar.aimkey);
+	fprintf(f,"menu_x %i\n",cvar.menu_x);
+	fprintf(f,"menu_y %i\n",cvar.menu_y);
+	fprintf(f,"check_x %i\n",cvar.check_x);
+	fprintf(f,"check_y %i\n",cvar.check_y);
+	fprintf(f,"curoffset %i\n",curoffset);
+	fprintf(f,"customoffset %i\n",customoffset?1:0);
+	fprintf(f,"stand_h %f\n",cvar.stand_h);
+	fprintf(f,"duck_h %f\n",cvar.duck_h);
+	fclose(f);
+}
+
+void LoadSettings()
+{
+	char path[_MAX_PATH]=""; GetSavePath(path);
+	strcpy(savepath,path);				// remember it for the F11 check screen
+	saveloaded=false;
+	FILE *f=fopen(path,"r");
+	if(!f) return;						// no save yet -> everything keeps its default
+	saveloaded=true;					// file opened OK -> user settings are in effect
+	char str[256]="";
+	int ci=customoffset?1:0;			// keeps current value if the line is absent
+	while(!feof(f))
+	{
+		str[0]=0;
+		if(!fgets(str,256,f)) break;
+		if(strstr(str,"//")) continue;
+		sscanf(str,"aim %i"			,&cvar.aim);
+		sscanf(str,"aimthru %i"		,&cvar.aimthru);
+		sscanf(str,"target %i"		,&cvar.target);
+		sscanf(str,"shoot %i"		,&cvar.shoot);
+		sscanf(str,"fov %i"			,&cvar.fov);
+		sscanf(str,"recoil %i"		,&cvar.recoil);
+		sscanf(str,"wall %i"		,&cvar.wall);
+		sscanf(str,"nosky %i"		,&cvar.sky);
+		sscanf(str,"noflash %i"		,&cvar.flash);
+		sscanf(str,"nosmoke %i"		,&cvar.smoke);
+		sscanf(str,"lambert %i"		,&cvar.lambert);
+		sscanf(str,"crosshair %i"	,&cvar.cross);
+		sscanf(str,"esp_engine %i"	,&cvar.esp_engine);
+		sscanf(str,"esp_name %i"	,&cvar.esp_name);
+		sscanf(str,"esp_box %i"		,&cvar.esp_box);
+		sscanf(str,"esp_box_pad %i"	,&cvar.esp_box_pad);
+		sscanf(str,"esp_box_radius %i",&cvar.esp_box_radius);
+		sscanf(str,"esp_box_width %i",&cvar.esp_box_width);
+		sscanf(str,"esp_dist %i"	,&cvar.esp_dist);
+		sscanf(str,"esp_team %i"	,&cvar.esp_team);
+		sscanf(str,"esp_hud %i"		,&cvar.esp_hud);
+		sscanf(str,"hud_hp %i"		,&cvar.hud_hp);
+		sscanf(str,"hud_ammo %i"	,&cvar.hud_ammo);
+		sscanf(str,"hud_die %i"		,&cvar.hud_die);
+		sscanf(str,"hud_pad %i"		,&cvar.hud_pad);
+		sscanf(str,"chams %i"		,&cvar.chams);
+		sscanf(str,"chams_wire %i"	,&cvar.chams_wire);
+		sscanf(str,"radar %i"		,&cvar.radar);
+		sscanf(str,"radar_x %i"		,&cvar.radar_x);
+		sscanf(str,"radar_y %i"		,&cvar.radar_y);
+		sscanf(str,"radar_shape %i"	,&cvar.radar_shape);
+		sscanf(str,"aimkey %i"		,&cvar.aimkey);
+		sscanf(str,"menu_x %i"		,&cvar.menu_x);
+		sscanf(str,"menu_y %i"		,&cvar.menu_y);
+		sscanf(str,"check_x %i"		,&cvar.check_x);
+		sscanf(str,"check_y %i"		,&cvar.check_y);
+		sscanf(str,"curoffset %i"	,&curoffset);
+		sscanf(str,"customoffset %i",&ci);
+		sscanf(str,"stand_h %f"		,&cvar.stand_h);
+		sscanf(str,"duck_h %f"		,&cvar.duck_h);
+	}
+	customoffset=(ci!=0);
+	fclose(f);
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
 void HookInit(bool activate)
 {
 	if(activate)					// if hack is activated once:
 	{
 		UnvalidVertex();			// turn all vert counts invalid
-		LoadFile("oglconf.cfg",0);	// read cvar settings and modelfile
+		menu_move_mode=0;
+		cvar.menu_x=MENU_DEF_X;   cvar.menu_y=MENU_DEF_Y;	// position defaults (oglconf/save override)
+		cvar.check_x=CHECK_DEF_X; cvar.check_y=CHECK_DEF_Y;
+		cvar.radar_x=RADAR_DEF_X; cvar.radar_y=RADAR_DEF_Y;
+		LoadFile("oglconf.cfg",0);	// read DEFAULT cvar settings and modelfile
 		LoadFile(modelfile,1);		// read modelfile, store all verts and team name
 		CountOffset();				// count number of custom offsets
 		SetOffsetNames();			// set the names
-		SetOffset(curoffset);		// set start offset
+		LoadSettings();				// override defaults with the user's saved settings (if any)
+		if(curoffset<0||curoffset>9) curoffset=0;	// hard bound (offset[] has 10 slots)
+		if(offsetcount>0 && curoffset>offsetcount-1) curoffset=offsetcount-1;
+		if(customoffset)			// keep the custom stand/duck heights restored by LoadSettings
+			strcpy(offsetname, offset[(curoffset>=0&&curoffset<offsetcount)?curoffset:0].name);
+		else
+			SetOffset(curoffset);	// non-custom: take stand/duck from the selected offset
+		oldtarget=cvar.target;		// sync so the line below keeps the restored target
 		cvar.target=oldtarget;		// set current target (if hack was turned off and on again, it kept old target)
 		cvar.scope=0;				// cvar which i didnt add into menu, removes sniper crosshair
 		hookactive=true;			// turn bool true, e.g. to allow menu etc.
@@ -216,6 +367,7 @@ void HookInit(bool activate)
 		cvar.esp_box=0;
 		cvar.esp_box_pad=0;
 		cvar.esp_box_radius=0;
+		cvar.esp_box_width=0;
 		cvar.esp_dist=0;
 		cvar.esp_team=0;
 		cvar.esp_hud=0;
@@ -225,7 +377,6 @@ void HookInit(bool activate)
 		cvar.chams=0;
 		cvar.chams_wire=0;
 		cvar.radar=0;
-		cvar.radar_pos=0;
 		cvar.radar_shape=0;
 		cvar.hud_pad=0;
 		cvar.lambert=0;
@@ -238,6 +389,7 @@ void HookInit(bool activate)
 		cvar.recoil=0;
 		oldtarget=cvar.target; // save last chosen target team
 		cvar.target=0;
+		menu_move_mode=0;
 		hookactive=false;
 	}
 }
@@ -387,6 +539,35 @@ void GetNearestPlayer()
 }*/
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
+// Nudge whichever panel is currently being moved, clamped to stay on screen.
+void MoveActivePanel(int dx,int dy)
+{
+	if(menu_move_mode==1)			// hack menu (coords are pre-ui_scale)
+	{
+		float sc = ui_scale>0.01f?ui_scale:1.0f;
+		int maxx=(int)((float)vp[2]/sc)-40, maxy=(int)((float)vp[3]/sc)-30;
+		cvar.menu_x+=dx; cvar.menu_y+=dy;
+		if(cvar.menu_x<0) cvar.menu_x=0; if(cvar.menu_x>maxx) cvar.menu_x=maxx;
+		if(cvar.menu_y<10) cvar.menu_y=10; if(cvar.menu_y>maxy) cvar.menu_y=maxy;
+	}
+	else if(menu_move_mode==2)		// F11 panel (x is raw px, y is raw px)
+	{
+		cvar.check_x+=dx; cvar.check_y+=dy;
+		if(cvar.check_x<0) cvar.check_x=0; if(cvar.check_x>vp[2]-100) cvar.check_x=vp[2]-100;
+		if(cvar.check_y<14) cvar.check_y=14; if(cvar.check_y>vp[3]-40) cvar.check_y=vp[3]-40;
+	}
+	else if(menu_move_mode==3)		// radar center (coords are pre-ui_scale, like the menu)
+	{
+		float sc = ui_scale>0.01f?ui_scale:1.0f;
+		int rr=70;	// radar radius in pre-scale units -> keep the whole disc on screen
+		int minx=rr, maxx=(int)((float)vp[2]/sc)-rr;
+		int miny=rr, maxy=(int)((float)vp[3]/sc)-rr;
+		cvar.radar_x+=dx; cvar.radar_y+=dy;
+		if(cvar.radar_x<minx) cvar.radar_x=minx; if(cvar.radar_x>maxx) cvar.radar_x=maxx;
+		if(cvar.radar_y<miny) cvar.radar_y=miny; if(cvar.radar_y>maxy) cvar.radar_y=maxy;
+	}
+}
+
 void HandleKey(int key) // keyhandler
 {
 	if(GetAsyncKeyState(key))
@@ -417,32 +598,44 @@ void HandleKey(int key) // keyhandler
 				cvar.aimkey++;
 				if(cvar.aimkey>3) { cvar.aimkey=0; }
 				else if(cvar.aimkey<0) { cvar.aimkey=3; }
+				SaveSettings();	// persist the aim-key choice too
 			}
 			break;
 		case VK_INSERT:
 			if(!keyp.active)
 			{
 				keyp.active=true;
-				menu.active=!menu.active;
-				if(menu.active) menu_open_seq=++ui_open_seq;	// opened last -> draws on top
+				if(menu_move_mode)			// in move mode: Insert = finish (don't close menu)
+				{
+					menu_move_mode=0;
+					SaveSettings();			// persist the new position
+				}
+				else
+				{
+					menu.active=!menu.active;
+					if(menu.active) menu_open_seq=++ui_open_seq;	// opened last -> on top
+				}
 			}
 			break;
 		case VK_UP:
-			if(menu.active && !keyp.up)
+			if(menu_move_mode) MoveActivePanel(0,-MOVE_STEP);	// continuous while held
+			else if(menu.active && !keyp.up)
 			{
 				keyp.up=true;
 				menu.count-=1;
 			}
 			break;
 		case VK_DOWN:
-			if(menu.active && !keyp.down)
+			if(menu_move_mode) MoveActivePanel(0,MOVE_STEP);
+			else if(menu.active && !keyp.down)
 			{
 				keyp.down=true;
 				menu.count+=1;
 			}
 			break;
 		case VK_RIGHT:
-			if(menu.active && !keyp.right)
+			if(menu_move_mode) MoveActivePanel(MOVE_STEP,0);
+			else if(menu.active && !keyp.right)
 			{
 				keyp.right=true;
 				menu.select=true;
@@ -450,7 +643,8 @@ void HandleKey(int key) // keyhandler
 			}
 			break;
 		case VK_LEFT:
-			if(menu.active && !keyp.left)
+			if(menu_move_mode) MoveActivePanel(-MOVE_STEP,0);
+			else if(menu.active && !keyp.left)
 			{
 				keyp.left=true;
 				menu.select=true;
@@ -591,7 +785,7 @@ void DrawText(float x, float y,float r, float g, float b, const char *fmt, ...)
 //   * dependency hiding: a row with a non-null "dep" pointer is shown only while
 //     that parent cvar is on (e.g. Shoot/Aimthru/FOV hide unless Aimbot is on),
 //     and the cursor navigates only over visible rows.
-enum { IT_TOGGLE, IT_INT, IT_FLOAT, IT_OFFSET, IT_TARGET };
+enum { IT_TOGGLE, IT_INT, IT_FLOAT, IT_OFFSET, IT_TARGET, IT_MOVE, IT_ACTION };
 typedef struct {
 	const char *label;
 	int   type;
@@ -613,9 +807,9 @@ void UpdateMenuAnim()
 	if(dt<0) dt=0; if(dt>0.1f) dt=0.1f;
 	g_menu_dt=dt;
 
-	float aTarget = menu.active?1.0f:0.0f;
-	float ka = dt*10.0f; if(ka>1.0f) ka=1.0f;
-	menu_alpha += (aTarget-menu_alpha)*ka;			// ~0.1s fade, both directions
+	float ka = dt*18.0f; if(ka>1.0f) ka=1.0f;		// snappy ~0.05s fade, both directions
+	menu_alpha  += ((menu.active?1.0f:0.0f) - menu_alpha )*ka;	// hack menu
+	check_alpha += ((checktext  ?1.0f:0.0f) - check_alpha)*ka;	// F11 check screen
 }
 
 void DrawMenu(int x, int y)
@@ -640,6 +834,7 @@ void DrawMenu(int x, int y)
 		{"Box",         IT_TOGGLE, &cvar.esp_box,    0,0,0,       0, &cvar.esp_engine, 1},
 		{"Box padding", IT_INT,    &cvar.esp_box_pad,   -10,40,2, 0, &cvar.esp_engine, 1},
 		{"Box radius",  IT_INT,    &cvar.esp_box_radius, 0,20,2,  0, &cvar.esp_engine, 1},
+		{"Box width",   IT_INT,    &cvar.esp_box_width,  1,8,1,   0, &cvar.esp_engine, 1},
 		{"Distance",    IT_TOGGLE, &cvar.esp_dist,   0,0,0,       0, &cvar.esp_engine, 1},
 		{"Show team",   IT_INT,    &cvar.esp_team,    0,2,1,      1, &cvar.esp_engine, 1},
 		{"HUD HP/Ammo", IT_TOGGLE, &cvar.esp_hud,    0,0,0,       0, 0,                0},
@@ -650,9 +845,12 @@ void DrawMenu(int x, int y)
 		{"Chams",       IT_TOGGLE, &cvar.chams,      0,0,0,       0, 0,                0},
 		{"Chams Wire",  IT_TOGGLE, &cvar.chams_wire, 0,0,0,       0, &cvar.chams,      1},
 		{"Radar",       IT_TOGGLE, &cvar.radar,      0,0,0,       0, 0,                0},
-		{"Position",    IT_INT,    &cvar.radar_pos,  0,7,1,       1, &cvar.radar,      1},
+		{"Move radar",  IT_MOVE,   0,               3,0,0,       0, &cvar.radar,      1},
 		{"Dot shape",   IT_INT,    &cvar.radar_shape,0,1,1,       1, &cvar.radar,      1},
 		{"Crosshair",   IT_TOGGLE, &cvar.cross,      0,0,0,       0, 0,                0},
+		{"Move hack menu", IT_MOVE,  0,             1,0,0,       0, 0,                0},
+		{"Move F11 panel", IT_MOVE,  0,             2,0,0,       0, 0,                0},
+		{"Reset positions",IT_ACTION,0,             0,0,0,       0, 0,                0},
 	};
 	const int N = sizeof(items)/sizeof(items[0]);
 
@@ -663,7 +861,7 @@ void DrawMenu(int x, int y)
 	float dt=g_menu_dt;
 
 	// visible rows only (skip those whose parent cvar is off)
-	int vis[32], nvis=0;
+	int vis[48], nvis=0;
 	for(int i=0;i<N;i++)
 		if(items[i].dep==0 || *(items[i].dep)!=0) vis[nvis++]=i;
 	if(nvis==0) return;
@@ -703,7 +901,19 @@ void DrawMenu(int x, int y)
 			if(curoffset>offsetcount-1){ curoffset=0; SetOffset(curoffset); }
 			else if(curoffset<0){ curoffset=offsetcount-1; SetOffset(curoffset); }
 			break;
+		case IT_MOVE:
+			menu_move_mode=(int)it->mn;			// enter move mode (arrows now move the panel)
+			if(menu_move_mode==2) checktext=true;	// reveal F11 so you can position it
+			if(menu_move_mode==3) cvar.radar=1;		// reveal radar so you can position it
+			break;
+		case IT_ACTION:							// "Reset positions"
+			cvar.menu_x=MENU_DEF_X;   cvar.menu_y=MENU_DEF_Y;
+			cvar.check_x=CHECK_DEF_X; cvar.check_y=CHECK_DEF_Y;
+			cvar.radar_x=RADAR_DEF_X; cvar.radar_y=RADAR_DEF_Y;
+			menu_move_mode=0;
+			break;
 		}
+		SaveSettings();		// persist the change so it survives the next game launch
 	}
 
 	// layout (everything scaled to the resolution via ui_scale)
@@ -715,27 +925,23 @@ void DrawMenu(int x, int y)
 
 	// dark translucent panel behind the menu for readability (fades with the menu)
 	{
-		float bl=mx-8*sc, bt=my-24*sc, br=mx+168*sc, bb=y0+nvis*line-2*sc;
+		float bl=mx-8*sc, bt=my-33*sc, br=mx+182*sc;
+		float bb=y0+nvis*line-2*sc + (menu_move_mode? 12.0f*sc : 0.0f);	// room for the move hint
+		float rad=8.0f*sc;										// soft rounded corners
 		(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
 		(*orig_glDisable)(GL_TEXTURE_2D);
 		(*orig_glEnable)(GL_BLEND);
 		(*orig_glBlendFunc)(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
-		(*orig_glColor4f)(0.0f,0.0f,0.0f,0.55f*menu_alpha);
-		(*orig_glBegin)(GL_QUADS);
-		(*orig_glVertex2f)(bl,bt);(*orig_glVertex2f)(br,bt);
-		(*orig_glVertex2f)(br,bb);(*orig_glVertex2f)(bl,bb);
-		(*orig_glEnd)();
-		(*orig_glColor4f)(0.1f,0.6f,1.0f,0.45f*menu_alpha);		// subtle accent border
-		(*orig_glLineWidth)(1.0f);
-		(*orig_glBegin)(GL_LINE_LOOP);
-		(*orig_glVertex2f)(bl,bt);(*orig_glVertex2f)(br,bt);
-		(*orig_glVertex2f)(br,bb);(*orig_glVertex2f)(bl,bb);
-		(*orig_glEnd)();
+		(*orig_glColor4f)(0.0f,0.0f,0.0f,0.55f*menu_alpha);		// translucent fill
+		FillRoundRect2D(bl,bt,br,bb,rad);
+		(*orig_glColor4f)(0.1f,0.6f,1.0f,menu_alpha);			// bold accent border (opaque, fades w/ menu)
+		(*orig_glLineWidth)(2.0f*sc);
+		DrawBox2D(bl,bt,br,bb,rad);
 		(*orig_glPopAttrib)();
 	}
 
-	DrawText(mx, my-17*sc, 0.85f,0.9f,1.0f, "mtd1410");
-	DrawText(mx, my-6 *sc, 0.55f,0.55f,0.75f, "----------------------");
+	DrawText(mx, my-20*sc, 0.85f,0.9f,1.0f, "Mod by maitrungduc1410");
+	DrawText(mx, my-8 *sc, 0.55f,0.55f,0.75f, "----------------------");
 
 	// sliding highlight bar behind the selected row
 	{
@@ -764,14 +970,7 @@ void DrawMenu(int x, int y)
 		{
 		case IT_TOGGLE: sprintf(buf,"%s%s: %s", pre,it->label,(*(int*)it->p)?"On":"Off"); break;
 		case IT_INT:
-			if(it->p==&cvar.radar_pos)
-			{
-				static const char *rp[8]={"Top-Left","Top-Center","Top-Right","Mid-Left",
-				                          "Mid-Right","Bot-Left","Bot-Center","Bot-Right"};
-				int v=*(int*)it->p; if(v<0)v=0; if(v>7)v=7;
-				sprintf(buf,"%s%s: %s", pre,it->label,rp[v]);
-			}
-			else if(it->p==&cvar.radar_shape)
+			if(it->p==&cvar.radar_shape)
 			{
 				static const char *rs[2]={"Circle","Square"};
 				int v=*(int*)it->p; if(v<0)v=0; if(v>1)v=1;
@@ -789,11 +988,19 @@ void DrawMenu(int x, int y)
 		case IT_TARGET: sprintf(buf,"%s: %s", it->label,(*(int*)it->p)?team[1].name:team[0].name); break;
 		case IT_OFFSET: if(!customoffset) sprintf(buf,"%s: %s",it->label,offsetname);
 		                else              sprintf(buf,"%s: <custom>",it->label);          break;
+		case IT_MOVE:
+			if(menu_move_mode==(int)it->mn) sprintf(buf,"%s%s: [moving]", pre,it->label);
+			else                            sprintf(buf,"%s%s", pre,it->label);
+			break;
+		case IT_ACTION: sprintf(buf,"%s%s", pre,it->label); break;
 		default: buf[0]=0; break;
 		}
 		if(r==menu.count) DrawText(ix,ry, 1.0f,1.0f,1.0f, "%s", buf);
 		else              DrawText(ix,ry, 0.7f,0.7f,1.0f, "%s", buf);
 	}
+
+	if(menu_move_mode)		// footer hint shown only while repositioning a panel
+		DrawText(mx, y0+nvis*line+1.0f*sc, 1.0f,0.9f,0.4f, "arrows move, Insert=done");
 
 	gTextAlpha=1.0f;
 }
@@ -804,7 +1011,7 @@ void DrawMenu(int x, int y)
 void DrawMenu_legacy(int x, int y)
 {
 	DrawText(x,y-28,0.7f,0.7f,1.0f,"--------------------------");
-	DrawText(x,y-17,0.85f,0.9f,1.0f,"-          mtd1410          -");
+	DrawText(x,y-17,0.85f,0.9f,1.0f,"- Mod by maitrungduc1410 -");
 	DrawText(x,y+2 ,0.7f,0.7f,1.0f,"--------------------------");
 
 	if(menu.count==0)
@@ -1211,30 +1418,26 @@ void DrawCheckText(int x,int y) // bad way of doing this
 {
 	static float check_h=300.0f;	// panel height (px), measured on the previous frame
 	int startY=y;
+	gTextAlpha=check_alpha;			// whole check screen fades in/out with check_alpha
 
 	// dark translucent panel behind the F11 check screen for readability
 	{
-		float pad=8.0f*ui_scale;
-		float pl=(float)x-pad, pt=(float)y-pad, pr=(float)x+540.0f*ui_scale, pb=(float)y+check_h+pad;
+		float padL=10.0f*ui_scale, padT=14.0f*ui_scale;	// more top room so text isn't flush
+		float pl=(float)x-padL, pt=(float)y-padT, pr=(float)x+540.0f*ui_scale, pb=(float)y+check_h+padL;
+		float rad=8.0f*ui_scale;						// soft rounded corners
 		(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
 		(*orig_glDisable)(GL_TEXTURE_2D);
 		(*orig_glEnable)(GL_BLEND);
 		(*orig_glBlendFunc)(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
-		(*orig_glColor4f)(0.0f,0.0f,0.0f,0.6f);
-		(*orig_glBegin)(GL_QUADS);
-		(*orig_glVertex2f)(pl,pt);(*orig_glVertex2f)(pr,pt);
-		(*orig_glVertex2f)(pr,pb);(*orig_glVertex2f)(pl,pb);
-		(*orig_glEnd)();
-		(*orig_glColor4f)(0.1f,0.6f,1.0f,0.45f);
-		(*orig_glLineWidth)(1.0f);
-		(*orig_glBegin)(GL_LINE_LOOP);
-		(*orig_glVertex2f)(pl,pt);(*orig_glVertex2f)(pr,pt);
-		(*orig_glVertex2f)(pr,pb);(*orig_glVertex2f)(pl,pb);
-		(*orig_glEnd)();
+		(*orig_glColor4f)(0.0f,0.0f,0.0f,0.6f*check_alpha);	// translucent fill
+		FillRoundRect2D(pl,pt,pr,pb,rad);
+		(*orig_glColor4f)(0.1f,0.6f,1.0f,check_alpha);		// bold accent border (opaque, fades w/ F11)
+		(*orig_glLineWidth)(2.0f*ui_scale);
+		DrawBox2D(pl,pt,pr,pb,rad);
 		(*orig_glPopAttrib)();
 	}
 
-	DrawText(x,y,0.7f,0.7f,1.0f,"mtd1410 - Check");
+	DrawText(x,y,0.7f,0.7f,1.0f,"Mod by maitrungduc1410 - Check");
 	y=y+(int)(13*ui_scale);
 	DrawText(x,y,1.0f,1.0f,1.0f,"> Hack file: %s",dllpath);
 	y=y+(int)(13*ui_scale);
@@ -1242,6 +1445,11 @@ void DrawCheckText(int x,int y) // bad way of doing this
 		DrawText(x,y,1.0f,0.5f,0.5f,"> Could not load config file: <%s> !!!",configpath);
 	else
 		DrawText(x,y,1.0f,1.0f,1.0f,"> Config file: %s",configpath);
+	y=y+(int)(13*ui_scale);
+	if(saveloaded)
+		DrawText(x,y,0.5f,1.0f,0.5f,"> Saved settings: %s",savepath);
+	else
+		DrawText(x,y,1.0f,0.85f,0.4f,"> Saved settings: none yet (using defaults) <%s>",savepath);
 	y=y+(int)(13*ui_scale);
 	if(mdlfail)
 		DrawText(x,y,1.0f,0.5f,0.5f,"> Could not load model file: <%s> !!!",modelpath);
@@ -1389,6 +1597,7 @@ void DrawCheckText(int x,int y) // bad way of doing this
 	DrawText(x,y,1.0f,1.0f,1.0f,"> highest vertex count %i",player_vertex_max-5);
 
 	check_h=(float)(y-startY)+13.0f*ui_scale;	// size next frame's panel to fit the text
+	gTextAlpha=1.0f;							// restore for anything drawn after us
 }
 
 void DrawKeyInfo() // just drawn if 'aimkeychanged' is true
@@ -1956,6 +2165,30 @@ void DrawBox2D(float x0,float y0,float x1,float y1,float rad)
 	(*orig_glEnd)();
 }
 
+// Filled rounded rectangle (rad in px, 0 = plain quad). Same corner layout as DrawBox2D.
+void FillRoundRect2D(float x0,float y0,float x1,float y1,float rad)
+{
+	if(rad<0.5f)
+	{
+		(*orig_glBegin)(GL_QUADS);
+		(*orig_glVertex2f)(x0,y0);(*orig_glVertex2f)(x1,y0);
+		(*orig_glVertex2f)(x1,y1);(*orig_glVertex2f)(x0,y1);
+		(*orig_glEnd)();
+		return;
+	}
+	float w=x1-x0, h=y1-y0, m=(w<h?w:h)*0.5f; if(rad>m) rad=m;
+	const float PI=3.14159265f; const int SEG=5;
+	float cxm=(x0+x1)*0.5f, cym=(y0+y1)*0.5f;
+	(*orig_glBegin)(GL_TRIANGLE_FAN);
+	(*orig_glVertex2f)(cxm,cym);
+	for(int i=0;i<=SEG;i++){ float a=PI      +(PI*0.5f)*i/SEG; (*orig_glVertex2f)(x0+rad+cosf(a)*rad, y0+rad+sinf(a)*rad); }	// TL
+	for(int i=0;i<=SEG;i++){ float a=1.5f*PI +(PI*0.5f)*i/SEG; (*orig_glVertex2f)(x1-rad+cosf(a)*rad, y0+rad+sinf(a)*rad); }	// TR
+	for(int i=0;i<=SEG;i++){ float a=        (PI*0.5f)*i/SEG;  (*orig_glVertex2f)(x1-rad+cosf(a)*rad, y1-rad+sinf(a)*rad); }	// BR
+	for(int i=0;i<=SEG;i++){ float a=0.5f*PI +(PI*0.5f)*i/SEG; (*orig_glVertex2f)(x0+rad+cosf(a)*rad, y1-rad+sinf(a)*rad); }	// BL
+	(*orig_glVertex2f)(x0+rad+cosf(PI)*rad, y0+rad+sinf(PI)*rad);	// close back to first corner pt
+	(*orig_glEnd)();
+}
+
 // Draw ESP for every player in the engine entity list. Called each frame from
 // the wglSwapBuffers hook, in its own 2D pixel-space pass.
 void DrawEngineEsp()
@@ -2029,18 +2262,13 @@ void DrawEngineEsp()
 		eng_local_team=EngTeam(eng_local_idx);
 	}
 
-	// ---- 2D radar frame. Position is one of 8 screen anchors. Dots are added below. ----
+	// ---- 2D radar frame. Center is freely positioned (radar_x/radar_y, move mode 3). ----
 	float rcx=0,rcy=0,rrad=0; float rcos=1.0f,rsin=0.0f; bool radar_on=false;
 	if(cvar.radar)
 	{
 		rrad=70.0f*ui_scale;
-		float marg=14.0f*ui_scale+rrad;
-		float cxs[3]={marg, sw*0.5f, sw-marg};		// left / center / right
-		float cys[3]={marg, sh*0.5f, sh-marg};		// top  / middle / bottom
-		static const int rcol[8]={0,1,2, 0,2, 0,1,2};	// TL TC TR ML MR BL BC BR
-		static const int rrow[8]={0,0,0, 1,1, 2,2,2};
-		int rp=cvar.radar_pos; if(rp<0)rp=0; if(rp>7)rp=7;
-		rcx=cxs[rcol[rp]]; rcy=cys[rrow[rp]];
+		rcx=(float)cvar.radar_x*ui_scale;			// pre-scale center -> pixels
+		rcy=(float)cvar.radar_y*ui_scale;
 		float va[3]={0,0,0};
 		DWORD fnVA=EngFn(ENG_SLOT_GETVIEWANGLES);
 		if(fnVA>=0x10000) ((eng_GetViewAngles_t)fnVA)(va);
@@ -2156,7 +2384,8 @@ void DrawEngineEsp()
 
 		if(cvar.esp_box)
 		{
-			(*orig_glLineWidth)(1.5f);
+			float bw=(float)cvar.esp_box_width*ui_scale; if(bw<1.0f) bw=1.0f;	// user-tunable thickness
+			(*orig_glLineWidth)(bw);
 			(*orig_glColor3f)(r,g,b);
 			DrawBox2D(x0,y0,x1,y1,(float)cvar.esp_box_radius*ui_scale);
 		}
@@ -2830,7 +3059,7 @@ void DrawOverlayUI()
 	UpdateMenuAnim();	// tick the fade every frame (even while hidden) -> smooth in/out
 
 	bool showMenu  = (menu.active || menu_alpha>0.002f);
-	bool showCheck = checktext;
+	bool showCheck = (checktext  || check_alpha>0.002f);
 	if(!showMenu && !showCheck) return;
 
 	GLint vpe[4];
@@ -2847,15 +3076,18 @@ void DrawOverlayUI()
 	(*orig_glOrtho)(0,sw,sh,0,-1,1);
 	(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPushMatrix)(); (*orig_glLoadIdentity)();
 
-	if(menu_open_seq >= check_open_seq)		// menu opened last -> on top
+	// later-opened panel draws on top; but while repositioning, keep the hack menu
+	// (and its move hint) on top so it's always readable.
+	bool menuTop = (menu_open_seq>=check_open_seq) || (menu_move_mode>0);
+	if(menuTop)
 	{
-		if(showCheck) DrawCheckText(40,40);
+		if(showCheck) DrawCheckText(cvar.check_x,cvar.check_y);
 		if(showMenu)  DrawMenu(cvar.menu_x,cvar.menu_y);
 	}
-	else									// F11 check opened last -> on top
+	else
 	{
 		if(showMenu)  DrawMenu(cvar.menu_x,cvar.menu_y);
-		if(showCheck) DrawCheckText(40,40);
+		if(showCheck) DrawCheckText(cvar.check_x,cvar.check_y);
 	}
 
 	(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPopMatrix)();
