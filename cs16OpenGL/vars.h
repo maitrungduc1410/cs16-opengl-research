@@ -58,8 +58,13 @@ typedef struct { // cvars (of course ;P)
 	int hud_pad;	// HUD sub-option: extra arc padding around the crosshair (units)
 	int	aimthru;
 	int	aim;
-	int	aim_mode;	// 0=legacy (vertex-based + gluProject), 1=engine entity-list (W2S)
 	int	aim_smooth;	// 0=snap, 1..10 = smoothing strength (higher = smoother/slower)
+	int	trigger;	// triggerbot: auto-fire when crosshair is over an enemy (engine list)
+	int	trigger_delay;	// reaction delay in ms before the triggerbot fires (humanize)
+	int	autofire;	// auto-pistol / auto-knife: spam clicks while mouse1 is held
+	int	autofire_rate;	// ms between auto-fire clicks (lower = faster)
+	int	notify;		// toast notifications when a feature is toggled in the menu
+	int	esp_log;	// detection logging: on-screen per-frame enemy/PVS counters
 	int	fov;
 	int lambert;
 	int	recoil;
@@ -129,7 +134,6 @@ static GLint	vp[4];			// viewport info (2 and 3 holds screen resolution)
 static GLdouble mm[16],pm[16];	// infos about different positions e.g. mouse
 static HMODULE hOriginalDll = 0;
 
-int	aimat=-1;			// turned -1, 0 and 1 to check if player is target
 int	recoilnum=0;		// compares how much mouse is moved down by cvar.recoil
 int oldtarget;			// hold the target selected when hack is turned off
 int viewportcount=0;	// counts viewport calls
@@ -139,8 +143,6 @@ int curoffset=0;
 int player_height_min=0;
 int player_vertex_min=0;
 int player_vertex_max=0;
-
-float roffset;	// active offset
 
 bool t_get=false;	// timer
 bool bFlash=false;	// flags . . . 
@@ -218,7 +220,7 @@ int		menu_open_seq	=0;		// ui_open_seq stamp when the menu was last opened
 int		check_open_seq	=0;		// ui_open_seq stamp when the F11 check was last opened
 int		menu_move_mode	=0;		// 0=off, 1=moving hack menu, 2=moving F11 panel
 
-// ---- engine-based aimbot state (cvar.aim_mode==1) --------------------------
+// ---- engine-based aimbot state --------------------------------------------
 // Computed once per frame inside DrawEngineEsp (which has the entity list +
 // WorldToScreen available), then consumed by sys_glViewport which actually
 // nudges the OS mouse. Decoupling avoids re-reading the engine table twice.
@@ -226,3 +228,20 @@ bool	eng_aim_have	=false;	// did we pick a target this frame?
 float	eng_aim_sx		=0.0f;	// target screen x (px, 0..vp[2])
 float	eng_aim_sy		=0.0f;	// target screen y (px, 0..vp[3])
 bool	eng_aim_visible	=true;	// false if blocked by a wall (depth-buffer test)
+
+// ---- triggerbot state (cvar.trigger) --------------------------------------
+// eng_trig_active is refreshed each frame by DrawEngineEsp (true while the
+// crosshair sits on an enemy box and the target is visible). sys_glViewport
+// then fires once trigger_delay ms have elapsed since acquisition.
+bool	eng_trig_active	=false;	// crosshair currently on a valid enemy
+DWORD	eng_trig_acq	=0;		// GetTickCount() when the crosshair first landed on it
+DWORD	eng_trig_fire	=0;		// last triggerbot shot tick (refractory period)
+
+// ---- toast notifications (cvar.notify) ------------------------------------
+char	toast_msg[64]	="";	// current toast text ("" = none)
+DWORD	toast_until		=0;		// GetTickCount() when the toast disappears (0 = none)
+
+// ---- detection logging / PVS counters (cvar.esp_log) ----------------------
+int		det_cur			=0;		// enemy players received from the server this frame
+int		det_peak		=0;		// highest enemy count seen this session
+float	det_avg			=0.0f;	// exponential moving average of det_cur

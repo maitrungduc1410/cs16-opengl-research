@@ -61,6 +61,7 @@ float curcolor[4];
 // rounded-rectangle helpers (defined lower, used by the menu / F11 panels above them)
 void DrawBox2D(float x0,float y0,float x1,float y1,float rad);			// rounded outline
 void FillRoundRect2D(float x0,float y0,float x1,float y1,float rad);		// rounded fill
+void SetToast(const char *fmt, ...);									// toast notification (defined lower)
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -95,8 +96,13 @@ void LoadFile(char *thefile,int ftype)
 				{
 					//cvar scan
 					sscanf(str, "aim %i;"		,&cvar.aim);
-					sscanf(str, "aim_mode %i;"	,&cvar.aim_mode);
 					sscanf(str, "aim_smooth %i;",&cvar.aim_smooth);
+					sscanf(str, "trigger %i;"	,&cvar.trigger);
+					sscanf(str, "trigger_delay %i;",&cvar.trigger_delay);
+					sscanf(str, "autofire %i;"	,&cvar.autofire);
+					sscanf(str, "autofire_rate %i;",&cvar.autofire_rate);
+					sscanf(str, "notify %i;"	,&cvar.notify);
+					sscanf(str, "esp_log %i;"	,&cvar.esp_log);
 					sscanf(str, "aimthru %i;"	,&cvar.aimthru);
 					sscanf(str, "target %i;"	,&cvar.target);
 					sscanf(str, "recoil %i;"	,&cvar.recoil);
@@ -233,8 +239,13 @@ void SaveSettings()
 	if(!f) return;
 	fprintf(f,"// auto-saved settings (mtd) - edited from the in-game menu\n");
 	fprintf(f,"aim %i\n",cvar.aim);
-	fprintf(f,"aim_mode %i\n",cvar.aim_mode);
 	fprintf(f,"aim_smooth %i\n",cvar.aim_smooth);
+	fprintf(f,"trigger %i\n",cvar.trigger);
+	fprintf(f,"trigger_delay %i\n",cvar.trigger_delay);
+	fprintf(f,"autofire %i\n",cvar.autofire);
+	fprintf(f,"autofire_rate %i\n",cvar.autofire_rate);
+	fprintf(f,"notify %i\n",cvar.notify);
+	fprintf(f,"esp_log %i\n",cvar.esp_log);
 	fprintf(f,"aimthru %i\n",cvar.aimthru);
 	fprintf(f,"target %i\n",cvar.target);
 	fprintf(f,"shoot %i\n",cvar.shoot);
@@ -303,8 +314,13 @@ void LoadSettings()
 		if(!fgets(str,256,f)) break;
 		if(strstr(str,"//")) continue;
 		sscanf(str,"aim %i"			,&cvar.aim);
-		sscanf(str,"aim_mode %i"	,&cvar.aim_mode);
 		sscanf(str,"aim_smooth %i"	,&cvar.aim_smooth);
+		sscanf(str,"trigger %i"		,&cvar.trigger);
+		sscanf(str,"trigger_delay %i",&cvar.trigger_delay);
+		sscanf(str,"autofire %i"	,&cvar.autofire);
+		sscanf(str,"autofire_rate %i",&cvar.autofire_rate);
+		sscanf(str,"notify %i"		,&cvar.notify);
+		sscanf(str,"esp_log %i"		,&cvar.esp_log);
 		sscanf(str,"aimthru %i"		,&cvar.aimthru);
 		sscanf(str,"target %i"		,&cvar.target);
 		sscanf(str,"shoot %i"		,&cvar.shoot);
@@ -391,12 +407,18 @@ void HookInit(bool activate)
 			player_height_min=40;	// if no pronefix set min. player height to be recognized as "not dead"
 		player_vertex_min=GetVertexMin();	// set lowest vert count
 		player_vertex_max=GetVertexMax();	// set highest vert count
+		SetToast("Hack: ON");				// greet (respects cvar.notify)
 	}
 	else if(!activate) // hack turned off, set all things to 0 (not activated)
 	{
 		cvar.aim=0;
-		cvar.aim_mode=0;
 		cvar.aim_smooth=0;
+		cvar.trigger=0;
+		cvar.trigger_delay=0;
+		cvar.autofire=0;
+		cvar.autofire_rate=0;
+		cvar.notify=0;
+		cvar.esp_log=0;
 		cvar.aimthru=0;
 		cvar.esp=0;
 		cvar.esp_line=0;
@@ -827,6 +849,18 @@ void DrawText(float x, float y,float r, float g, float b, const char *fmt, ...)
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
+// Queue a short on-screen toast (e.g. "Wallhack: On"). Respects cvar.notify so
+// it can be disabled. The actual drawing/fade happens in DrawToast() each frame.
+void SetToast(const char *fmt, ...)
+{
+	if(!cvar.notify) return;
+	va_list ap; va_start(ap,fmt);
+	vsprintf(toast_msg,fmt,ap);
+	va_end(ap);
+	toast_until=GetTickCount()+2000;	// visible for 2 seconds
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
 // Data-driven, animated menu:
 //   * fade in/out (menu_alpha) and a highlight bar that smoothly slides to the
 //     selected row (both time-based, so they look the same at 60 or 240 fps)
@@ -867,12 +901,15 @@ void DrawMenu(int x, int y)
 		{"Stand_h",     IT_FLOAT,  &cvar.stand_h,    10,26,0.25f, 1, 0,          0},
 		{"Duck_h",      IT_FLOAT,  &cvar.duck_h,     10,28,0.25f, 1, 0,          0},
 		{"Aimbot",      IT_TOGGLE, &cvar.aim,        0,0,0,       0, 0,          0},
-		{"Aim mode",    IT_INT,    &cvar.aim_mode,   0,1,1,       1, &cvar.aim,  1},
 		{"Aim smooth",  IT_INT,    &cvar.aim_smooth, 0,10,1,      0, &cvar.aim,  1},
 		{"Target",      IT_TARGET, &cvar.target,     0,0,0,       0, &cvar.aim,  1},
 		{"Shoot",       IT_TOGGLE, &cvar.shoot,      0,0,0,       0, &cvar.aim,  1},
 		{"Aimthru",     IT_TOGGLE, &cvar.aimthru,    0,0,0,       0, &cvar.aim,  1},
 		{"FOV",         IT_INT,    &cvar.fov,        0,1000,10,   1, &cvar.aim,  1},
+		{"Triggerbot",  IT_TOGGLE, &cvar.trigger,    0,0,0,       0, 0,          0},
+		{"Trigger delay",IT_INT,   &cvar.trigger_delay,0,500,10,  0, &cvar.trigger,1},
+		{"Auto-fire",   IT_TOGGLE, &cvar.autofire,   0,0,0,       0, 0,          0},
+		{"Auto-fire rate",IT_INT,  &cvar.autofire_rate,20,300,10, 0, &cvar.autofire,1},
 		{"Recoil",      IT_INT,    &cvar.recoil,     0,5,1,       1, 0,          0},
 		{"Wallhack",    IT_INT,    &cvar.wall,       0,3,1,       1, 0,          0},
 		{"No Sky",      IT_TOGGLE, &cvar.sky,        0,0,0,       0, 0,          0},
@@ -908,6 +945,8 @@ void DrawMenu(int x, int y)
 		{"Names",       IT_TOGGLE, &cvar.radar_names, 0,0,0,      0, &cvar.radar,      1},
 		{"Range rings", IT_TOGGLE, &cvar.radar_rings, 0,0,0,      0, &cvar.radar,      1},
 		{"Crosshair",   IT_TOGGLE, &cvar.cross,      0,0,0,       0, 0,                0},
+		{"Notifications",IT_TOGGLE,&cvar.notify,     0,0,0,       0, 0,                0},
+		{"Detect log",  IT_TOGGLE, &cvar.esp_log,    0,0,0,       0, 0,                0},
 		{"Move hack menu", IT_MOVE,  0,             1,0,0,       0, 0,                0},
 		{"Move F11 panel", IT_MOVE,  0,             2,0,0,       0, 0,                0},
 		{"Reset positions",IT_ACTION,0,             0,0,0,       0, 0,                0},
@@ -973,6 +1012,11 @@ void DrawMenu(int x, int y)
 			menu_move_mode=0;
 			break;
 		}
+		// toast the change (skipped automatically if cvar.notify is off)
+		if(it->type==IT_TOGGLE)      SetToast("%s: %s", it->label, (*(int*)it->p)?"On":"Off");
+		else if(it->type==IT_INT)    SetToast("%s: %i", it->label, *(int*)it->p);
+		else if(it->type==IT_TARGET) SetToast("Target: %s", (*(int*)it->p)?team[1].name:team[0].name);
+		else if(it->type==IT_FLOAT)  SetToast("%s: %.2f", it->label, *(float*)it->p);
 		SaveSettings();		// persist the change so it survives the next game launch
 	}
 
@@ -1041,12 +1085,6 @@ void DrawMenu(int x, int y)
 				static const char *et[3]={"Both","CT","T"};
 				int v=*(int*)it->p; if(v<0)v=0; if(v>2)v=2;
 				sprintf(buf,"%s%s: %s", pre,it->label,et[v]);
-			}
-			else if(it->p==&cvar.aim_mode)
-			{
-				static const char *am[2]={"Legacy","Engine"};
-				int v=*(int*)it->p; if(v<0)v=0; if(v>1)v=1;
-				sprintf(buf,"%s%s: %s", pre,it->label,am[v]);
 			}
 			else if(it->p==&cvar.esp_snap)
 			{
@@ -1691,27 +1729,6 @@ void DrawKeyInfo() // just drawn if 'aimkeychanged' is true
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
-int IsPointVisible(GLdouble x, GLdouble y, GLdouble z) // if aimthru is off, check for walls
-{	
-	GLdouble	winX, winY, winZ;
-	GLfloat		pix;
-
-	(*orig_glGetDoublev)(GL_MODELVIEW_MATRIX,mm);
-	(*orig_glGetDoublev)(GL_PROJECTION_MATRIX ,pm);
-
-	if (gluProject (x, y, z, mm, pm, vp, &winX, &winY, &winZ) == GL_TRUE)
-	{
-		(*orig_glReadPixels)((int)winX,(int)winY,1,1,GL_DEPTH_COMPONENT ,GL_FLOAT,&pix);
-		if (pix>winZ) 
-			return 1;
-		else 
-			return 0;
-	}
-	else
-		return 0;
-}
-
-//////////////////////////////////////////////////////////////////////////////////////////////////
 bool IsVertTeam(long vertcount,int t)	// helper: does vertcount belong to team t?
 {
 	return (
@@ -2283,9 +2300,9 @@ void DrawArrow2D(float cx,float cy,float dx,float dy,float size)
 }
 
 // Depth-buffer visibility test for a 3D world point. Returns true if the point
-// is NOT occluded (i.e. visible from the current camera). MUST be called from
-// the 3D pass while the engine's MVP matrix is still active - that's why we
-// snapshot mm/pm BEFORE switching to the 2D ortho pass in DrawEngineEsp.
+// is NOT occluded (i.e. visible from the current camera). The caller passes the
+// camera modelview/projection it snapshotted (mm_w/pm_w) BEFORE switching to the
+// 2D ortho pass in DrawEngineEsp, so the projection still matches the 3D scene.
 bool IsWorldVisible(float x,float y,float z,GLdouble *mm_in,GLdouble *pm_in,GLint *vp_in)
 {
 	GLdouble wx,wy,wz; GLfloat pix;
@@ -2302,10 +2319,12 @@ void DrawEngineEsp()
 {
 	eng_players=0;
 	eng_aim_have=false;								// reset per-frame aim pick
-	// We must enter the loop ALSO when engine aimbot is on (even if ESP/radar/HUD are off),
-	// otherwise we never compute a target screen position to feed the viewport hook.
-	bool need_aim = (cvar.aim && cvar.aim_mode==1);
-	if(!cvar.esp_engine && !cvar.esp_hud && !cvar.radar && !need_aim) return;
+	// We must enter the loop ALSO when engine aimbot / triggerbot / detection
+	// logging are on (even if ESP/radar/HUD are off), since they all rely on the
+	// per-frame entity walk below.
+	bool need_aim  = (cvar.aim!=0);
+	bool need_scan = need_aim || cvar.trigger || cvar.esp_log;
+	if(!cvar.esp_engine && !cvar.esp_hud && !cvar.radar && !need_scan) return;
 	eng_frame++;
 
 	GLint vpe[4];
@@ -2366,7 +2385,7 @@ void DrawEngineEsp()
 		return;
 	}
 
-	if(cvar.esp_engine || cvar.radar || need_aim)
+	if(cvar.esp_engine || cvar.radar || need_scan)
 	{
 
 	float lo[3]={0,0,0};
@@ -2433,7 +2452,9 @@ void DrawEngineEsp()
 	bool  aim_best_vis = true;
 	bool  aim_found = false;
 	float aim_cx = sw*0.5f, aim_cy = sh*0.5f;		// screen center is the crosshair
-	int aim_target_team = cvar.target;				// 0 or 1, same convention as legacy aim
+	int want_team = (cvar.target==0)?1:2;			// engine team# of the targeted side (1=T,2=CT)
+	int  det_seen = 0;								// enemy players received this frame (PVS counter)
+	bool trig_hit = false;							// crosshair on an enemy this frame (triggerbot)
 
 	for(int idx=1; idx<=32; idx++)
 	{
@@ -2484,6 +2505,9 @@ void DrawEngineEsp()
 		float ddx3=lo[0]-o[0], ddy3=lo[1]-o[1], ddz3=lo[2]-o[2];
 		float distM=(float)sqrt(ddx3*ddx3+ddy3*ddy3+ddz3*ddz3)/39.37f;
 
+		// PVS / detection counter: this enemy is alive and was received from the server
+		if(team==want_team) det_seen++;
+
 		if(radar_on)								// plot this player on the radar
 		{
 			float ddx=o[0]-lo[0], ddy=o[1]-lo[1];
@@ -2506,43 +2530,58 @@ void DrawEngineEsp()
 			}
 		}
 
-		// engine-aim candidate check (independent of ESP being on). cvar.target
-		// here uses the legacy meaning: 0 = team[0] (T), 1 = team[1] (CT). Map to
-		// the engine team numbers (1=T, 2=CT) to compare safely.
-		if(need_aim)
+		// engine-aim + triggerbot candidate checks (independent of ESP being on).
+		// Both target the side selected by cvar.target (mapped to engine team#).
+		if((need_aim || cvar.trigger) && team==want_team)
 		{
-			int want = (aim_target_team==0)?1:2;
-			if(team==want)
+			int usehullA=ReadInt(ent+ENT_CURSTATE+ES_USEHULL);
+			float halfhA=(usehullA==1)?18.0f:36.0f;
+			float zoffA =(usehullA==1)?6.0f :0.0f;
+			float headA[3]={o[0],o[1],o[2]+halfhA+zoffA-2.0f};	// just below head top
+			float feetA[3]={o[0],o[1],o[2]-halfhA+zoffA};
+			float sHe[3], sFe[3];
+			bool okHe=EngWorldToScreen(headA,sHe);
+			bool okFe=EngWorldToScreen(feetA,sFe);
+
+			// --- aimbot: nearest head to the crosshair within FOV ---
+			if(need_aim && okHe)
 			{
-				int usehullA=ReadInt(ent+ENT_CURSTATE+ES_USEHULL);
-				float halfhA=(usehullA==1)?18.0f:36.0f;
-				float zoffA =(usehullA==1)?6.0f :0.0f;
-				float headA[3]={o[0],o[1],o[2]+halfhA+zoffA-2.0f};	// just below head top
-				float sA[3];
-				if(EngWorldToScreen(headA,sA))
+				float ax=(sHe[0]*0.5f+0.5f)*sw, ay=sh-(sHe[1]*0.5f+0.5f)*sh;
+				if(ax>=0 && ay>=0 && ax<sw && ay<sh)
 				{
-					float ax=(sA[0]*0.5f+0.5f)*sw, ay=sh-(sA[1]*0.5f+0.5f)*sh;
-					if(ax>=0 && ay>=0 && ax<sw && ay<sh)
+					float ddx=ax-aim_cx, ddy=ay-aim_cy;
+					float d2=ddx*ddx+ddy*ddy;
+					float fovr=(float)cvar.fov*0.5f;	// FOV used as a px radius
+					if(fovr<1.0f || d2<=fovr*fovr)
 					{
-						float ddx=ax-aim_cx, ddy=ay-aim_cy;
-						float d2=ddx*ddx+ddy*ddy;
-						// FOV is a radius in px (same field used by the legacy aimbot)
-						float fovr=(float)cvar.fov*0.5f;
-						if(fovr<1.0f || d2<=fovr*fovr)
+						bool v=true;
+						if(!cvar.aimthru)
+							v=IsWorldVisible(o[0],o[1],o[2]+10.0f,mm_w,pm_w,vp);
+						if((cvar.aimthru || v) && d2<aim_best_d2)
 						{
-							bool v=true;
-							if(!cvar.aimthru)
-								v=IsWorldVisible(o[0],o[1],o[2]+10.0f,mm_w,pm_w,vp);
-							if(cvar.aimthru || v)
-							{
-								if(d2<aim_best_d2)
-								{
-									aim_best_d2=d2; aim_best_sx=ax; aim_best_sy=ay;
-									aim_best_vis=v; aim_found=true;
-								}
-							}
+							aim_best_d2=d2; aim_best_sx=ax; aim_best_sy=ay;
+							aim_best_vis=v; aim_found=true;
 						}
 					}
+				}
+			}
+
+			// --- triggerbot: is the crosshair inside this enemy's 2D box? ---
+			if(cvar.trigger && okHe && okFe)
+			{
+				float fxx=(sFe[0]*0.5f+0.5f)*sw, fyy=sh-(sFe[1]*0.5f+0.5f)*sh;
+				float hxx=(sHe[0]*0.5f+0.5f)*sw, hyy=sh-(sHe[1]*0.5f+0.5f)*sh;
+				float ty0=(hyy<fyy)?hyy:fyy, ty1=(hyy<fyy)?fyy:hyy;
+				float tbh=ty1-ty0; if(tbh<4.0f) tbh=4.0f;
+				float tbw=tbh*0.45f;
+				float tcx=(fxx+hxx)*0.5f;
+				float tx0=tcx-tbw*0.5f, tx1=tcx+tbw*0.5f;
+				if(aim_cx>=tx0 && aim_cx<=tx1 && aim_cy>=ty0 && aim_cy<=ty1)
+				{
+					bool v=true;
+					if(!cvar.aimthru)
+						v=IsWorldVisible(o[0],o[1],o[2]+10.0f,mm_w,pm_w,vp);
+					if(cvar.aimthru || v) trig_hit=true;
 				}
 			}
 		}
@@ -2697,9 +2736,25 @@ void DrawEngineEsp()
 		eng_aim_visible=aim_best_vis;
 	}
 
+	// triggerbot: track acquisition time so sys_glViewport can honor trigger_delay
+	if(trig_hit)
+	{
+		if(!eng_trig_active){ eng_trig_active=true; eng_trig_acq=GetTickCount(); }
+	}
+	else eng_trig_active=false;
+
+	// detection logging: update PVS counters (current / peak / EMA average)
+	det_cur=det_seen;
+	if(det_cur>det_peak) det_peak=det_cur;
+	det_avg += ((float)det_cur - det_avg)*0.05f;	// exponential moving average
+
 	if(cvar.esp_engine)
 		DrawText(8.0f,16.0f,0.2f,1.0f,0.4f,"ENGINE ESP: %i players  team=%s",
 			eng_players, eng_have_extra?"extra":"model");
+
+	if(cvar.esp_log)
+		DrawText(8.0f,30.0f,0.6f,0.9f,1.0f,"PVS/detect: cur=%i  peak=%i  avg=%.1f",
+			det_cur, det_peak, det_avg);
 
 	}	// end if(cvar.esp_engine || cvar.radar || need_aim)
 
@@ -3030,150 +3085,23 @@ void sys_glShadeModel (GLenum mode)
 {
 	(*orig_glShadeModel) (mode);
 
-	GLdouble wx,wy,wz;
-	GLdouble wx2,wy2,wz2;
-	GLfloat     color[4];
+	GLfloat color[4];
 	(*orig_glGetFloatv)(GL_CURRENT_COLOR, color);
-	
-	(*orig_glGetDoublev)(GL_MODELVIEW_MATRIX,mm);
-	(*orig_glGetDoublev)(GL_PROJECTION_MATRIX ,pm);
-	(*orig_glDisable)(GL_TEXTURE_2D);	
-	
-	//HL model drawing begins here
+	(*orig_glDisable)(GL_TEXTURE_2D);
+
+	// A player model starts drawing on its first GL_SMOOTH. We only use this to
+	// drive chams now - the legacy vertex-count aimbot was removed in favor of
+	// the engine entity-list aimbot (see DrawEngineEsp / sys_glViewport).
 	if ((mode==GL_SMOOTH) && !(player.get))
 	{
-		player.get=true; 
-		player.highest_z=-99999;
-		player.lowest_z=-99999;
-		player.vertices=0;
+		player.get=true;
 		if (cvar.chams && cvar.chams_wire)		// wireframe ("spider") chams; restored in glPopMatrix
 		{
 			(*orig_glPolygonMode)(GL_FRONT_AND_BACK, GL_LINE);
 			(*orig_glLineWidth)(1.0f);
 		}
 	}
-	else
-	{
-		if (player.get 	&& (player.vertices>player_vertex_min) && (player.height<80)) 
-		{
-			if ((player.height>player_height_min)	&& (player.height<55))  // player ducked?
-				roffset=(26.0f-cvar.duck_h)*(-1.0f);						// if so use duck offset
-			else 
-				roffset=(24.0f-cvar.stand_h)*(-1.0f);
-			
-			gluProject(player.highest_x,player.highest_y,player.highest_z+roffset,mm,pm,vp,&wx ,&wy ,&wz );
-			gluProject(player.lowest_x ,player.lowest_y ,player.lowest_z         ,mm,pm,vp,&wx2,&wy2,&wz2);
-			
-			GLfloat rasdist[1];
-			
-			(*orig_glRasterPos3f)( player.highest_x,player.highest_y,player.highest_z+roffset);
-			
-			(*orig_glGetFloatv)(GL_CURRENT_RASTER_DISTANCE,rasdist);
-			player.distance=fabs(rasdist[0]);
 
-			if ( 
-				(player.vertices==team[1].vert01) || // check if its one of the vert counts
-				(player.vertices==team[1].vert02) || // so we know its a player model
-				(player.vertices==team[1].vert03) ||
-				(player.vertices==team[1].vert04) ||
-				(player.vertices==team[1].vert05) ||
-				(player.vertices==team[1].vert06) ||
-				(player.vertices==team[1].vert07) ||
-				(player.vertices==team[1].vert08) ||
-				(player.vertices==team[1].vert09) ||
-				(player.vertices==team[1].vert10) ||
-				(player.vertices==team[1].vert11) ||
-				(player.vertices==team[1].vert12) ||
-				(player.vertices==team[0].vert01) ||
-				(player.vertices==team[0].vert02) ||
-				(player.vertices==team[0].vert03) ||
-				(player.vertices==team[0].vert04) ||
-				(player.vertices==team[0].vert05) ||
-				(player.vertices==team[0].vert06) ||
-				(player.vertices==team[0].vert07) ||
-				(player.vertices==team[0].vert08) ||
-				(player.vertices==team[0].vert09) ||
-				(player.vertices==team[0].vert10) ||
-				(player.vertices==team[0].vert11) ||
-				(player.vertices==team[0].vert12)  )
-			{
-				if ((player.height<player_height_min)) // when pronefix is 1, its always false
-					player.iscorpse=true;
-				else
-				{
-					player.iscorpse=false;	// tier1 ESP removed; ESP Engine handles all on-screen drawing now.
-				}											// (vertex detection above is kept because the aimbot needs it)
-			}
-
-			float delx = ((float)((vp[2]/2)-(wx)));
-			float dely = ((float)((vp[3]/2)-(vp[3]-wy)));
-			float lastx2 = ((vp[2]/2)-((player.vector_x*vp[2])/65535));
-			float lasty2 = ((vp[3]/2)-(((player.vector_y*vp[3])/65535)+vp[3]));
-
-			if (aimat==-1 && player.height>player_height_min)
-			{
-				if ((player.vertices < player_vertex_max) && (player.vertices > player_vertex_min) && (wx>=vp[2]/2-cvar.fov/2) //dont display own model
-					&& (wx<=vp[2]/2+cvar.fov/2) && (wy>=vp[3]/2-cvar.fov/2) && (wy<=vp[3]/2+cvar.fov/2))
-				{	// if player is in scan area/field of view (fov) we check for his team
-					if	((
-						(player.vertices==team[0].vert01) ||
-						(player.vertices==team[0].vert02) ||
-						(player.vertices==team[0].vert03) ||
-						(player.vertices==team[0].vert04) ||
-						(player.vertices==team[0].vert05) ||
-						(player.vertices==team[0].vert06) ||
-						(player.vertices==team[0].vert07) ||
-						(player.vertices==team[0].vert08) ||
-						(player.vertices==team[0].vert09) ||
-						(player.vertices==team[0].vert10) ||
-						(player.vertices==team[0].vert11) ||
-						(player.vertices==team[0].vert12)) &&
-						(cvar.target==0)) // if its a player of team 0
-					{
-						if ((( delx+dely ) < ( lastx2+lasty2 )) || (player.vector_x + player.vector_y)==0)
-						{
-							//set and calculate dimensions for mouse_event
-							player.vector_x=(float)((wx*65535)/vp[2]);
-							player.vector_y=(float)(((vp[3]-wy)*65535)/vp[3]);
-						}
-						// targetpos for visibility pixels
-						player.origin_x=player.highest_x;
-						player.origin_y=player.highest_y;
-						player.origin_z=player.highest_z+roffset;
-						aimat=0; // current model/player is team 0
-						
-					}
-					else if	(( // other way, if its a player of team 1
-						(player.vertices==team[1].vert01) ||
-						(player.vertices==team[1].vert02) ||
-						(player.vertices==team[1].vert03) ||
-						(player.vertices==team[1].vert04) ||
-						(player.vertices==team[1].vert05) ||
-						(player.vertices==team[1].vert06) ||
-						(player.vertices==team[1].vert07) ||
-						(player.vertices==team[1].vert08) ||
-						(player.vertices==team[1].vert09) ||
-						(player.vertices==team[1].vert10) ||
-						(player.vertices==team[1].vert11) ||
-						(player.vertices==team[1].vert12)) &&
-						(cvar.target==1))
-					{
-						if ((( delx+dely ) < ( lastx2+lasty2 )) || (player.vector_x + player.vector_y)==0) 
-						{
-							//set and calculate dimensions for mouse_event
-							player.vector_x=(float)((wx*65535)/vp[2]);
-							player.vector_y=(float)(((vp[3]-wy)*65535)/vp[3]);
-						}
-						// targetpos for visibility pixels
-						player.origin_x=player.highest_x;
-						player.origin_y=player.highest_y;
-						player.origin_z=player.highest_z+roffset;
-						aimat=1; // yes its a model of team 1
-					}
-				}
-			}
-		}
-	}
 	(*orig_glEnable)(GL_TEXTURE_2D);
 	(*orig_glColor4f)(color[0],color[1],color[2],color[3]);
 }
@@ -3226,25 +3154,8 @@ void sys_glVertex2f (GLfloat x,  GLfloat y)
 
 void sys_glVertex3f (GLfloat x,  GLfloat y,  GLfloat z)
 {
-	if (player.get)
+	if (player.get)								// inside a player model (set by sys_glShadeModel)
 	{
-		player.vertices++; // count all vertices
-		//get highest point of entity
-		if ( (z>player.highest_z) || (player.highest_z==-99999))
-		{
-			player.highest_x=x;
-			player.highest_y=y;
-			player.highest_z=z;
-		}
-		//get lowest point of entity
-		if ( (z<player.lowest_z) || (player.lowest_z==-99999)) {
-			player.lowest_x=x;
-			player.lowest_y=y;
-			player.lowest_z=z;
-		}
-
-		player.height=player.highest_z-player.lowest_z;
-
 		if (cvar.chams)							// flat silhouette / colored wireframe model
 		{
 			(*orig_glDisable)(GL_TEXTURE_2D);
@@ -3285,13 +3196,13 @@ void sys_glViewport (GLint x,  GLint y,  GLsizei width,  GLsizei height)
 	if(viewportcount >= 5)
 		enabledraw=true;	// enable drawing of text when viewport is called 5th time
 
-	// ---- engine-based aimbot (cvar.aim_mode==1) ----
-	// Independent of the vertex-aim path below; consumes the screen target
-	// computed by DrawEngineEsp's player loop on the PREVIOUS frame (DrawEngineEsp
-	// runs at the end of each frame in wglSwapBuffers, this viewport hook runs
-	// during the next frame). We clear eng_aim_have to ensure exactly one mouse
-	// nudge per frame even though sys_glViewport is called many times.
-	if(cvar.aim && cvar.aim_mode==1 && eng_aim_have && hookactive && enabledraw)
+	// ---- engine-based aimbot ----
+	// Consumes the screen target computed by DrawEngineEsp's player loop on the
+	// PREVIOUS frame (DrawEngineEsp runs at the end of each frame in
+	// wglSwapBuffers, this viewport hook runs during the next frame). We clear
+	// eng_aim_have to ensure exactly one mouse nudge per frame even though
+	// sys_glViewport is called many times.
+	if(cvar.aim && eng_aim_have && hookactive && enabledraw)
 	{
 		eng_aim_have=false;			// consume the per-frame pick
 		bool keyok = (cvar.aimkey==0)
@@ -3323,44 +3234,39 @@ void sys_glViewport (GLint x,  GLint y,  GLsizei width,  GLsizei height)
 		}
 	}
 
-	if (modelviewport)
-	{					// if the player is in target team and one of the selected aim method is chosen ...
-		if ((aimat==cvar.target) && (cvar.aim) && (cvar.aim_mode==0) && ((cvar.aimkey==0) || ((cvar.aimkey==1) && (GetAsyncKeyState(VK_LBUTTON))) || ((cvar.aimkey==2) && (GetAsyncKeyState(VK_RBUTTON))) || ((cvar.aimkey==3) && (GetAsyncKeyState(VK_MBUTTON)))))
+	// ---- triggerbot (cvar.trigger) ----
+	// eng_trig_active/eng_trig_acq are refreshed by DrawEngineEsp. Fire once the
+	// crosshair has rested on the enemy for trigger_delay ms, with a short
+	// refractory gap so it behaves like fast taps rather than a held button.
+	if(cvar.trigger && hookactive && enabledraw && eng_trig_active)
+	{
+		DWORD now=GetTickCount();
+		DWORD delay=(DWORD)((cvar.trigger_delay<0)?0:cvar.trigger_delay);
+		if((now-eng_trig_acq)>=delay && (now-eng_trig_fire)>=120)
 		{
-			if (!cvar.aimthru)	// ...and aimthru is off
-			{					// we check if player is behind a wall
-				if (IsPointVisible(player.origin_x+0,player.origin_y+0,player.origin_z+5) || IsPointVisible(player.origin_x+10,player.origin_y+10,player.origin_z+5) ||	IsPointVisible(player.origin_x+10,player.origin_y-10,player.origin_z+5) || IsPointVisible(player.origin_x-10,player.origin_y-10,player.origin_z-30) || IsPointVisible(player.origin_x+10,player.origin_y-10,player.origin_z-30) || IsPointVisible(player.origin_x+10,player.origin_y+10,player.origin_z-55) || IsPointVisible(player.origin_x-10,player.origin_y+10,player.origin_z-55))
-				{	// move the mouse to the aim point
-					mouse_event(MOUSEEVENTF_MOVE|MOUSEEVENTF_ABSOLUTE,player.vector_x,player.vector_y,0,0);
-					HandleKey(VK_LBUTTON); // prevent recoil
-
-					if (cvar.shoot)
-					{
-						mouse_event(MOUSEEVENTF_LEFTDOWN,0,0,0,0);	// press mouse1 key if autoshoot is on
-						mouse_event(MOUSEEVENTF_LEFTUP,0,0,0,0);	// and release key if autoshoot is on
-					}
-				}
-			}
-			else // same here without checking for wall (aimthru is enabled)
-			{
-				mouse_event(MOUSEEVENTF_MOVE|MOUSEEVENTF_ABSOLUTE,player.vector_x,player.vector_y,0,0);
-				HandleKey(VK_LBUTTON);
-
-				if (cvar.shoot)
-				{
-					mouse_event(MOUSEEVENTF_LEFTDOWN,0,0,0,0);
-					mouse_event(MOUSEEVENTF_LEFTUP,0,0,0,0);
-				}
-			}
+			mouse_event(MOUSEEVENTF_LEFTDOWN,0,0,0,0);
+			mouse_event(MOUSEEVENTF_LEFTUP,0,0,0,0);
+			HandleKey(VK_LBUTTON);		// keep recoil compensation in sync
+			eng_trig_fire=now;
 		}
-		// reset to start again next frame
-		player.highest_z=-99999;
-		player.lowest_z=-99999;
-		aimat = -1;
-		player.vector_x=0;
-		player.vector_y=0;
 	}
-	
+
+	// ---- auto-pistol / auto-knife (cvar.autofire) ----
+	// While mouse1 is physically held, spam clicks at autofire_rate ms intervals.
+	// Turns semi-auto pistols and the knife into rapid fire via mouse_event.
+	if(cvar.autofire && hookactive && enabledraw && (GetAsyncKeyState(VK_LBUTTON)&0x8000))
+	{
+		static DWORD af_last=0;
+		DWORD now=GetTickCount();
+		int rate=cvar.autofire_rate; if(rate<20) rate=20;	// clamp to a sane max rate
+		if((now-af_last)>=(DWORD)rate)
+		{
+			mouse_event(MOUSEEVENTF_LEFTDOWN,0,0,0,0);
+			mouse_event(MOUSEEVENTF_LEFTUP,0,0,0,0);
+			af_last=now;
+		}
+	}
+
 	modelviewport=false;
 	ch=false;
 
@@ -3427,11 +3333,51 @@ void DrawOverlayUI()
 	(*orig_glPopAttrib)();
 }
 
+// Centered toast near the bottom of the screen. Drawn in its own 2D pass so it
+// shows regardless of whether the ESP/menu passes ran. Fades out over the last
+// 400 ms of its lifetime.
+void DrawToast()
+{
+	if(toast_until==0 || toast_msg[0]==0) return;
+	DWORD now=GetTickCount();
+	if(now>=toast_until){ toast_until=0; return; }
+
+	float a=(float)(toast_until-now)/400.0f; if(a>1.0f) a=1.0f;	// fade last 400ms
+
+	GLint vpe[4]; (*orig_glGetIntegerv)(GL_VIEWPORT,vpe);
+	float sw=(float)vpe[2], sh=(float)vpe[3];
+	if(sw<=0||sh<=0) return;
+
+	(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
+	(*orig_glDisable)(GL_DEPTH_TEST);
+	(*orig_glDisable)(GL_TEXTURE_2D);
+	(*orig_glEnable)(GL_BLEND);
+	(*orig_glBlendFunc)(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+	(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPushMatrix)(); (*orig_glLoadIdentity)();
+	(*orig_glOrtho)(0,sw,sh,0,-1,1);
+	(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPushMatrix)(); (*orig_glLoadIdentity)();
+
+	int len=(int)strlen(toast_msg);
+	float tw=len*7.0f*ui_scale, th=16.0f*ui_scale;
+	float cx=sw*0.5f, ty=sh*0.80f;
+	(*orig_glColor4f)(0.0f,0.0f,0.0f,0.55f*a);				// translucent pill behind the text
+	FillRoundRect2D(cx-tw*0.5f-8.0f*ui_scale, ty-3.0f*ui_scale,
+	                cx+tw*0.5f+8.0f*ui_scale, ty+th, 6.0f*ui_scale);
+	float ta=gTextAlpha; gTextAlpha=a;
+	DrawText(cx-tw*0.5f, ty+11.0f*ui_scale, 1.0f,0.9f,0.4f, "%s", toast_msg);
+	gTextAlpha=ta;
+
+	(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPopMatrix)();
+	(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPopMatrix)();
+	(*orig_glPopAttrib)();
+}
+
 void sys_wglSwapBuffers(HDC hDC)
 {
 	if(hookactive)
 	{
 		DrawEngineEsp();	// radar + engine ESP + own HUD (bottom overlay layer)
+		DrawToast();		// feature toggle notifications (middle layer)
 		DrawOverlayUI();	// hack menu + F11 check (top overlay layer)
 	}
 	viewportcount=0;		// reset viewport count, cuz this is the last function called every frame
