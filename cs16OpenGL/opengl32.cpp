@@ -1045,6 +1045,18 @@ void DrawCheckText(int x,int y) // bad way of doing this
 	y=y+(int)(13*ui_scale);
 	DrawText(x,y,0.7f,0.7f,1.0f,"Teams: %s vs %s",team[0].name,team[1].name);
 	y=y+(int)(13*ui_scale);
+	// ---- No-recoil diagnostics (so we can see WHY it does / doesn't work) ----
+	y=y+(int)(13*ui_scale);
+	if(!cvar.norecoil)
+		DrawText(x,y,0.7f,0.7f,1.0f,"No recoil: OFF");
+	else if(eng_punch==0)
+		DrawText(x,y,1.0f,0.5f,0.5f,"No recoil: ON but punchangle NOT located (looking for it...)");
+	else
+		DrawText(x,y,0.5f,1.0f,0.5f,"No recoil: ON  punchangle @ 0x%08X",eng_punch);
+	y=y+(int)(13*ui_scale);
+	DrawText(x,y,1.0f,1.0f,1.0f,"> peak punch seen: %0.3f   last: %0.2f %0.2f %0.2f",
+		norec_peak,norec_last[0],norec_last[1],norec_last[2]);
+	y=y+(int)(13*ui_scale);
 
 	check_h=(float)(y-startY)+13.0f*ui_scale;	// size next frame's panel to fit the text
 	gTextAlpha=1.0f;							// restore for anything drawn after us
@@ -1341,6 +1353,9 @@ void ApplyNoRecoil()
 	if(eng_punch==0) return;
 	if(!IsWritable(eng_punch,12)) { eng_punch=0; return; }	// stale -> drop and re-locate next frame
 	float *pa=(float*)eng_punch;
+	norec_last[0]=pa[0]; norec_last[1]=pa[1]; norec_last[2]=pa[2];	// debug: what was here before we wiped it
+	float m=fabsf(pa[0])+fabsf(pa[1])+fabsf(pa[2]);
+	if(m>norec_peak) norec_peak=m;					// debug: peak punch seen (proves +0x0C is the punch vec)
 	pa[0]=0.0f; pa[1]=0.0f; pa[2]=0.0f;				// kill the cosmetic camera kick
 }
 
