@@ -241,8 +241,8 @@ Success looks like:
 ## 8. Install & run
 
 1. The DLL is at `<project>\Release\opengl32.dll`.
-2. Copy it into your Counter-Strike 1.6 folder, together with `oglconf.cfg` and
-   `models_cs16.cfg` (see [README.md → How to use](./README.md#how-to-use)).
+2. Copy it into your Counter-Strike 1.6 folder, together with `oglconf.cfg`
+   (see [README.md → How to use](./README.md#how-to-use)).
 3. In-game: `F12` to enable, `Insert` to open the menu.
 
 > [!IMPORTANT]

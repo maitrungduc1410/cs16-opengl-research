@@ -45,11 +45,10 @@ tweaks.
 > builds broke this proxy-DLL technique (and added VAC protections).
 
 1. Open the [`things-you-need-to-get-hack-works`](./things-you-need-to-get-hack-works) folder.
-2. Copy **all three files** into your Counter-Strike 1.6 main directory
+2. Copy **both files** into your Counter-Strike 1.6 main directory
    (the folder that contains `hl.exe` / `cstrike`):
    - `opengl32.dll` — the prebuilt hack
-   - `oglconf.cfg` — settings (cvars, aim offsets, model file name)
-   - `models_cs16.cfg` — player-model vertex counts used for detection
+   - `oglconf.cfg` — settings (cvars, aim offsets)
 3. Make sure the game is running in **OpenGL** video mode.
 4. Launch the game and use the controls below.
 
@@ -61,7 +60,7 @@ tweaks.
 | `Insert` | Open / close the **hack menu** (only visible while the hack is on) |
 | `Up` / `Down` | Move the menu selection |
 | `Left` / `Right` | Change the selected option's value / toggle it |
-| `F11` | Show the **debug screen** (config status, resolution, offsets, vertex counts) |
+| `F11` | Show the **debug screen** (config status, resolution, offsets, teams) |
 | `F10` | Cycle the aimbot activation key (Autoaim / Mouse1 / Mouse2 / Mouse3) |
 
 **Quick start:** press `F12` once to enable the hack. Because `oglconf.cfg` ships
@@ -74,9 +73,9 @@ and tweak options live.
 > `Fn + Enter`.
 
 > [!NOTE]
-> If `F11` shows **"Could not load config file"** in red, the `.cfg` files are not
-> in the game's working directory. Copy `oglconf.cfg` **and** `models_cs16.cfg`
-> next to `opengl32.dll`, and make sure their extensions are not hidden
+> If `F11` shows **"Could not load config file"** in red, the `.cfg` file is not
+> in the game's working directory. Copy `oglconf.cfg`
+> next to `opengl32.dll`, and make sure its extension is not hidden
 > (e.g. not `oglconf.cfg.txt`).
 
 ---
@@ -144,10 +143,10 @@ flowchart TD
 
 - **Wallhack** = turn off the depth test for player models, so they paint on top
   of walls instead of being hidden behind them.
-- **Player detection** = match the model's **vertex count** against known counts
-  in `models_cs16.cfg` — no game-memory reading at all.
-- **ESP / Aimbot** = project model coordinates to screen space with `gluProject`,
-  and read the depth buffer (`glReadPixels`) for line-of-sight checks.
+- **Player detection** = read the GoldSrc engine's entity list (`cl_enginefunc_t`)
+  for real player names, team and world origins.
+- **ESP / Aimbot** = project entity coordinates to screen space (`WorldToScreen` /
+  `gluProject`), and read the depth buffer (`glReadPixels`) for line-of-sight checks.
 
 ---
 

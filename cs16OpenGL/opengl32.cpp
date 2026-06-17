@@ -37,16 +37,13 @@ cvar_s		cvar;		// cvars
 menu_s		menu;		// menu bools
 key_s		keyp;		// key handler bools
 offset_s	offset[10];	// custom offset stuff
-team_s		team[2];	// containing all vertcounts and team defs
+team_s		team[2]={ {"Terrorists"}, {"Counters"} };	// hardcoded team display names (team[0]=T side, team[1]=CT side)
 
 GLuint base; // for bitmap font
 HDC hDC;
 void CountOffset();		// get the number of added offsets
 void SetOffset(int x);	// set offset for aiming
 void SetOffsetNames();	// sets offsets names (cuz they consist of 5 parts/words)
-void UnvalidVertex();	// turn all vert counts invalid
-int GetVertexMin();		// get lowest vert count
-int GetVertexMax();		// get highest vert count
 float curcolor[4];
 
 // default on-screen panel positions + move-mode step (used by HookInit / menu / HandleKey)
@@ -150,7 +147,6 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "check_y %i;"	,&cvar.check_y);
 					sscanf(str, "stand_h %f;"	,&cvar.stand_h);
 					sscanf(str, "duck_h %f;"	,&cvar.duck_h);
-					sscanf(str, "pronefix %f;"	,&cvar.pronefix);
 					sscanf(str, "aimkey %i;"	,&cvar.aimkey);
 					//offset scan
 					sscanf(str, "offset0 s %f d %f %s %s %s %s %s;",&offset[0].s,&offset[0].d,&offset[0].npart1,&offset[0].npart2,&offset[0].npart3,&offset[0].npart4,&offset[0].npart5);
@@ -163,67 +159,17 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "offset7 s %f d %f %s %s %s %s %s;",&offset[7].s,&offset[7].d,&offset[7].npart1,&offset[7].npart2,&offset[7].npart3,&offset[7].npart4,&offset[7].npart5);
 					sscanf(str, "offset8 s %f d %f %s %s %s %s %s;",&offset[8].s,&offset[8].d,&offset[8].npart1,&offset[8].npart2,&offset[8].npart3,&offset[8].npart4,&offset[8].npart5);
 					sscanf(str, "offset9 s %f d %f %s %s %s %s %s;",&offset[9].s,&offset[9].d,&offset[9].npart1,&offset[9].npart2,&offset[9].npart3,&offset[9].npart4,&offset[9].npart5);
-					//scan for model file
-					sscanf(str, "modelfile %s;"	,&modelfile);
 				}
 			}
 			fclose(file);
 
-		}
-	}
-	else if(ftype==1)	// a model vert count file
-	{
-		if(!file)	// if file doesnt exist
-		{
-			mdlfail=true;	// turn bool true (later you can say whats wrong)
-			return;			// and leave the function
-		}
-		else
-		{
-			strcpy(modelpath,filename);	// copy path to use it later error checking (F11)
-			while(!feof(file))
-			{
-				fgets(str, 256, file);
-				if(!strstr(str,"//"))
-				{
-					//team 0
-					sscanf(str, "team 0 name %s;",&team[0].name);		// get team 0 name
-					sscanf(str, "team 0 add 01 %i;",&team[0].vert01);	// and vertex counts
-					sscanf(str, "team 0 add 02 %i;",&team[0].vert02);
-					sscanf(str, "team 0 add 03 %i;",&team[0].vert03);
-					sscanf(str, "team 0 add 04 %i;",&team[0].vert04);
-					sscanf(str, "team 0 add 05 %i;",&team[0].vert05);
-					sscanf(str, "team 0 add 06 %i;",&team[0].vert06);
-					sscanf(str, "team 0 add 07 %i;",&team[0].vert07);
-					sscanf(str, "team 0 add 08 %i;",&team[0].vert08);
-					sscanf(str, "team 0 add 09 %i;",&team[0].vert09);
-					sscanf(str, "team 0 add 10 %i;",&team[0].vert10);
-					sscanf(str, "team 0 add 11 %i;",&team[0].vert11);
-					sscanf(str, "team 0 add 12 %i;",&team[0].vert12);
-					// team 1
-					sscanf(str, "team 1 name %s;",&team[1].name);		// get team 1 name
-					sscanf(str, "team 1 add 01 %i;",&team[1].vert01);	// and vertex counts
-					sscanf(str, "team 1 add 02 %i;",&team[1].vert02);
-					sscanf(str, "team 1 add 03 %i;",&team[1].vert03);
-					sscanf(str, "team 1 add 04 %i;",&team[1].vert04);
-					sscanf(str, "team 1 add 05 %i;",&team[1].vert05);
-					sscanf(str, "team 1 add 06 %i;",&team[1].vert06);
-					sscanf(str, "team 1 add 07 %i;",&team[1].vert07);
-					sscanf(str, "team 1 add 08 %i;",&team[1].vert08);
-					sscanf(str, "team 1 add 09 %i;",&team[1].vert09);
-					sscanf(str, "team 1 add 10 %i;",&team[1].vert10);
-					sscanf(str, "team 1 add 11 %i;",&team[1].vert11);
-					sscanf(str, "team 1 add 12 %i;",&team[1].vert12);
-				}
-			}
-			fclose(file);
 		}
 	}
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 // Persistent user settings.
-//   * oglconf.cfg stays the shipped DEFAULTS (+ offsets / modelfile).
+//   * oglconf.cfg stays the shipped DEFAULTS (+ aim offsets).
 //   * oglsave.cfg holds whatever the user last tuned in the menu and is rewritten
 //     on every change. On load, a missing file or a missing line just keeps the
 //     default value of that option, so we always degrade gracefully.
@@ -386,13 +332,11 @@ void HookInit(bool activate)
 {
 	if(activate)					// if hack is activated once:
 	{
-		UnvalidVertex();			// turn all vert counts invalid
 		menu_move_mode=0;
 		cvar.menu_x=MENU_DEF_X;   cvar.menu_y=MENU_DEF_Y;	// position defaults (oglconf/save override)
 		cvar.check_x=CHECK_DEF_X; cvar.check_y=CHECK_DEF_Y;
 		cvar.radar_x=RADAR_DEF_X; cvar.radar_y=RADAR_DEF_Y;
-		LoadFile("oglconf.cfg",0);	// read DEFAULT cvar settings and modelfile
-		LoadFile(modelfile,1);		// read modelfile, store all verts and team name
+		LoadFile("oglconf.cfg",0);	// read DEFAULT cvar settings + offsets
 		CountOffset();				// count number of custom offsets
 		SetOffsetNames();			// set the names
 		LoadSettings();				// override defaults with the user's saved settings (if any)
@@ -407,12 +351,6 @@ void HookInit(bool activate)
 		cvar.scope=0;				// cvar which i didnt add into menu, removes sniper crosshair
 		hookactive=true;			// turn bool true, e.g. to allow menu etc.
 		message=true;				// turn true to get status text (F11)
-		if(cvar.pronefix)
-			player_height_min=0;	// fix ducked player check for mods like DoD
-		else if(!cvar.pronefix)
-			player_height_min=40;	// if no pronefix set min. player height to be recognized as "not dead"
-		player_vertex_min=GetVertexMin();	// set lowest vert count
-		player_vertex_max=GetVertexMax();	// set highest vert count
 		SetToast("Hack: ON");				// greet (respects cvar.notify)
 	}
 	else if(!activate) // hack turned off, set all things to 0 (not activated)
@@ -426,8 +364,6 @@ void HookInit(bool activate)
 		cvar.notify=0;
 		cvar.esp_log=0;
 		cvar.aimthru=0;
-		cvar.esp=0;
-		cvar.esp_line=0;
 		cvar.esp_engine=0;
 		cvar.esp_name=0;
 		cvar.esp_box=0;
@@ -507,95 +443,6 @@ void SetOffset(int x) // called on hack load and whenever a custom offset is cho
 	cvar.stand_h= offset[x].s;
 	cvar.duck_h=  offset[x].d;
 }
-
-//////////////////////////////////////////////////////////////////////////////////////////////////
-void UnvalidVertex() // called before vertices read from modelfile
-{
-	for(int vx=0;vx<2;vx++)
-	{
-		team[vx].vert01=-1;
-		team[vx].vert02=-1;
-		team[vx].vert03=-1;
-		team[vx].vert04=-1;
-		team[vx].vert05=-1;
-		team[vx].vert06=-1;
-		team[vx].vert07=-1;
-		team[vx].vert08=-1;
-		team[vx].vert09=-1;
-		team[vx].vert10=-1;
-		team[vx].vert11=-1;
-		team[vx].vert12=-1;
-	}
-}
-
-//////////////////////////////////////////////////////////////////////////////////////////////////
-int GetVertexMin()
-{
-	int min=26666;
-	for (int gx=0;gx<2;gx++)
-	{
-		if((team[gx].vert01>0) && (team[gx].vert01<min)) { min=team[gx].vert01; }
-		if((team[gx].vert02>0) && (team[gx].vert02<min)) { min=team[gx].vert02; }
-		if((team[gx].vert03>0) && (team[gx].vert03<min)) { min=team[gx].vert03; }
-		if((team[gx].vert04>0) && (team[gx].vert04<min)) { min=team[gx].vert04; }
-		if((team[gx].vert05>0) && (team[gx].vert05<min)) { min=team[gx].vert05; }
-		if((team[gx].vert06>0) && (team[gx].vert06<min)) { min=team[gx].vert06; }
-		if((team[gx].vert07>0) && (team[gx].vert07<min)) { min=team[gx].vert07; }
-		if((team[gx].vert08>0) && (team[gx].vert08<min)) { min=team[gx].vert08; }
-		if((team[gx].vert09>0) && (team[gx].vert09<min)) { min=team[gx].vert09; }
-		if((team[gx].vert10>0) && (team[gx].vert10<min)) { min=team[gx].vert10; }
-		if((team[gx].vert11>0) && (team[gx].vert11<min)) { min=team[gx].vert11; }
-		if((team[gx].vert12>0) && (team[gx].vert12<min)) { min=team[gx].vert12; }
-	}
-	min=min-5;
-	return min;
-}
-
-//////////////////////////////////////////////////////////////////////////////////////////////////
-int GetVertexMax()
-{
-	int max=0;
-	for (int fx=0;fx<2;fx++)
-	{
-		if(team[fx].vert01>max) { max=team[fx].vert01; }
-		if(team[fx].vert02>max) { max=team[fx].vert02; }
-		if(team[fx].vert03>max) { max=team[fx].vert03; }
-		if(team[fx].vert04>max) { max=team[fx].vert04; }
-		if(team[fx].vert05>max) { max=team[fx].vert05; }
-		if(team[fx].vert06>max) { max=team[fx].vert06; }
-		if(team[fx].vert07>max) { max=team[fx].vert07; }
-		if(team[fx].vert08>max) { max=team[fx].vert08; }
-		if(team[fx].vert09>max) { max=team[fx].vert09; }
-		if(team[fx].vert10>max) { max=team[fx].vert10; }
-		if(team[fx].vert11>max) { max=team[fx].vert11; }
-		if(team[fx].vert12>max) { max=team[fx].vert12; }
-	}
-	max=max+5;
-	return max;
-}
-
-//////////////////////////////////////////////////////////////////////////////////////////////////
-/*
-bool PlayerIsTeam(int team,int vert)
-{
-	if(
-	   (vert==team[team].vert01) ||
-	   (vert==team[team].vert02) ||
-	   (vert==team[team].vert03) ||
-	   (vert==team[team].vert04) ||
-	   (vert==team[team].vert05) ||
-	   (vert==team[team].vert06) ||
-	   (vert==team[team].vert07) ||
-	   (vert==team[team].vert08) ||
-	   (vert==team[team].vert09) ||
-	   (vert==team[team].vert10) ||
-	   (vert==team[team].vert11) ||
-	   (vert==team[team].vert12)
-	  )
-		return true;
-	else
-		return false;
-}*/
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 /*
@@ -1144,414 +991,6 @@ void DrawMenu(int x, int y)
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
-// LEGACY menu below - unused, replaced by the data-driven DrawMenu above.
-// Kept for reference; safe to delete.
-void DrawMenu_legacy(int x, int y)
-{
-	DrawText(x,y-28,0.7f,0.7f,1.0f,"--------------------------");
-	DrawText(x,y-17,0.85f,0.9f,1.0f,"- Mod by maitrungduc1410 -");
-	DrawText(x,y+2 ,0.7f,0.7f,1.0f,"--------------------------");
-
-	if(menu.count==0)
-	{
-		if(menu.select)
-		{
-			menu.select=false;
-			if(menu.select_r)
-			{
-				curoffset++;
-				SetOffset(curoffset);
-				customoffset=false;
-				menu.select_r=false;
-			}
-			else if(menu.select_l)
-			{
-				curoffset--;
-				SetOffset(curoffset);
-				customoffset=false;
-				menu.select_l=false;
-			}
-			if(curoffset>offsetcount-1) { curoffset=0; SetOffset(curoffset); }
-			else if(curoffset<0) { curoffset=offsetcount-1; SetOffset(curoffset); }
-		}
-		if(!customoffset)
-			DrawText(x,y+7,1.0f,1.0f,1.0f,"Offset: %s",offsetname);
-		else if(customoffset)
-			DrawText(x,y+7,1.0f,1.0f,1.0f,"Offset: <custom>");
-
-	}
-	else if(menu.count!=0)
-	{
-		if(!customoffset)
-			DrawText(x,y+7,0.7f,0.7f,1.0f,"Offset: %s",offsetname);
-		else if(customoffset)
-			DrawText(x,y+7,0.7f,0.7f,1.0f,"Offset: <custom>");
-
-	}
-
-	if(menu.count==1)
-	{
-		if(menu.select)
-		{
-			menu.select=false;
-			if(menu.select_r)
-			{
-				cvar.stand_h+=0.25f;
-				customoffset=true;
-				menu.select_r=false;
-			}
-			else if(menu.select_l)
-			{
-				cvar.stand_h-=0.25f;
-				customoffset=true;
-				menu.select_l=false;
-			}
-			if(cvar.stand_h>26) { cvar.stand_h=10; }
-			else if(cvar.stand_h<10) { cvar.stand_h=26; }
-		}
-		DrawText(x,y+20,1.0f,1.0f,1.0f,"Stand_h: %.2f",cvar.stand_h);
-	}
-	else if(menu.count!=1)
-		DrawText(x,y+20,0.7f,0.7f,1.0f,"Stand_h: %.2f",cvar.stand_h);
-
-	if(menu.count==2)
-	{
-		if(menu.select)
-		{
-			menu.select=false;
-			if(menu.select_r)
-			{
-				cvar.duck_h+=0.25f;
-				customoffset=true;
-				menu.select_r=false;
-			}
-			else if(menu.select_l)
-			{
-				cvar.duck_h-=0.25f;
-				customoffset=true;
-				menu.select_l=false;
-			}
-			if(cvar.duck_h>28) { cvar.duck_h=10; }
-			else if(cvar.duck_h<10) { cvar.duck_h=28; }
-		}
-		DrawText(x,y+33,1.0f,1.0f,1.0f,"Duck_h: %.2f",cvar.duck_h);
-	}
-	else if(menu.count!=2)
-		DrawText(x,y+33,0.7f,0.7f,1.0f,"Duck_h: %.2f",cvar.duck_h);
-
-	if(menu.count==3)
-	{
-		if(menu.select)
-		{
-			menu.select=false;
-			cvar.target=change(cvar.target);
-		}
-		if(cvar.target) { DrawText(x,y+46,1.0f,1.0f,1.0f,"Target: %s",team[1].name); }
-		else if(!cvar.target) { DrawText(x,y+46,1.0f,1.0f,1.0f,"Target: %s",team[0].name); }
-	}
-	else if(menu.count!=3)
-	{
-		if(cvar.target) { DrawText(x,y+46,0.7f,0.7f,1.0f,"Target: %s",team[1].name); }
-		else if(!cvar.target) { DrawText(x,y+46,0.7f,0.7f,1.0f,"Target: %s",team[0].name); }
-	}
-
-	if(menu.count==4)
-	{
-		if(menu.select)
-		{
-			menu.select=false;
-			cvar.aim=change(cvar.aim);
-		}
-		if(cvar.aim) { DrawText(x,y+59,1.0f,1.0f,1.0f,"Aimbot: On"); }
-		else if(!cvar.aim) { DrawText(x,y+59,1.0f,1.0f,1.0f,"Aimbot: Off"); }
-	}
-	else if(menu.count!=4)
-	{
-		if(cvar.aim) { DrawText(x,y+59,0.7f,0.7f,1.0f,"Aimbot: On"); }
-		else if(!cvar.aim) { DrawText(x,y+59,0.7f,0.7f,1.0f,"Aimbot: Off"); }
-	}
-
-	if(menu.count==5)
-	{
-		if(menu.select)
-		{
-			menu.select=false;
-			cvar.shoot=change(cvar.shoot);
-		}
-		if(cvar.shoot) { DrawText(x,y+72,1.0f,1.0f,1.0f,"Shoot: On"); }
-		else if(!cvar.shoot) { DrawText(x,y+72,1.0f,1.0f,1.0f,"Shoot: Off"); }
-	}
-	else if(menu.count!=5)
-	{
-		if(cvar.shoot) { DrawText(x,y+72,0.7f,0.7f,1.0f,"Shoot: On"); }
-		else if(!cvar.shoot) { DrawText(x,y+72,0.7f,0.7f,1.0f,"Shoot: Off"); }
-	}
-
-	if(menu.count==6)
-	{
-		if(menu.select)
-		{
-			menu.select=false;
-			cvar.aimthru=change(cvar.aimthru);
-		}
-		if(cvar.aimthru) { DrawText(x,y+85,1.0f,1.0f,1.0f,"Aimthru: On"); }
-		else if(!cvar.aimthru) { DrawText(x,y+85,1.0f,1.0f,1.0f,"Aimthru: Off"); }
-	}
-	else if(menu.count!=6)
-	{
-		if(cvar.aimthru) { DrawText(x,y+85,0.7f,0.7f,1.0f,"Aimthru: On"); }
-		else if(!cvar.aimthru) { DrawText(x,y+85,0.7f,0.7f,1.0f,"Aimthru: Off"); }
-	}
-
-	if(menu.count==7)
-	{
-		if(menu.select)
-		{
-			menu.select=false;
-			if(menu.select_r)
-			{
-				cvar.fov+=50;
-				menu.select_r=false;
-			}
-			else if(menu.select_l)
-			{
-				cvar.fov-=50;
-				menu.select_l=false;
-			}
-			if(cvar.fov>1000) { cvar.fov=0; }
-		}
-		DrawText(x,y+98,1.0f,1.0f,1.0f,"FOV: %i",cvar.fov);
-	}
-	else if(menu.count!=7)
-		DrawText(x,y+98,0.7f,0.7f,1.0f,"FOV: %i",cvar.fov);
-
-	if(menu.count==8)
-	{
-		if(menu.select)
-		{
-			menu.select=false;
-			if(menu.select_r)
-			{
-				cvar.recoil+=1;
-				menu.select_r=false;
-			}
-			else if(menu.select_l)
-			{
-				cvar.recoil-=1;
-				menu.select_l=false;
-			}
-			if(cvar.recoil>5) { cvar.recoil=0; }
-			else if(cvar.recoil<0) { cvar.recoil=5; }
-		}
-		DrawText(x,y+111,1.0f,1.0f,1.0f,"Recoil: %i",cvar.recoil);
-	}
-	else if(menu.count!=8)
-		DrawText(x,y+111,0.7f,0.7f,1.0f,"Recoil: %i",cvar.recoil);
-
-	if(menu.count==9)
-	{
-		if(menu.select)
-		{
-			menu.select=false;
-			if(menu.select_r)
-			{
-				cvar.wall+=1;
-				menu.select_r=false;
-			}
-			else if(menu.select_l)
-			{
-				cvar.wall-=1;
-				menu.select_l=false;
-			}
-			if(cvar.wall>3) { cvar.wall=0; }
-			else if(cvar.wall<0) { cvar.wall=3; }
-		}
-		DrawText(x,y+124,1.0f,1.0f,1.0f,"Wallhack: %i",cvar.wall);
-	}
-	else if(menu.count!=9)
-	DrawText(x,y+124,0.7f,0.7f,1.0f,"Wallhack: %i",cvar.wall);
-
-	if(menu.count==10)
-	{
-		if(menu.select)
-		{
-			menu.select=false;
-			cvar.sky=change(cvar.sky);
-		}
-		if(cvar.sky) { DrawText(x,y+137,1.0f,1.0f,1.0f,"No Sky: On"); }
-		else if(!cvar.sky) { DrawText(x,y+137,1.0f,1.0f,1.0f,"NoSky: Off"); }
-	}
-	else if(menu.count!=10)
-	{
-		if(cvar.sky) { DrawText(x,y+137,0.7f,0.7f,1.0f,"No Sky: On"); }
-		else if(!cvar.sky) { DrawText(x,y+137,0.7f,0.7f,1.0f,"NoSky: Off"); }
-	}
-
-	if(menu.count==11)
-	{
-		if(menu.select)
-		{
-			menu.select=false;
-			cvar.flash=change(cvar.flash);
-		}
-		if(cvar.flash) { DrawText(x,y+150,1.0f,1.0f,1.0f,"No Flash: On"); }
-		else if(!cvar.flash) { DrawText(x,y+150,1.0f,1.0f,1.0f,"No Flash: Off"); }
-	}
-	else if(menu.count!=11)
-	{
-		if(cvar.flash) { DrawText(x,y+150,0.7f,0.7f,1.0f,"No Flash: On"); }
-		else if(!cvar.flash) { DrawText(x,y+150,0.7f,0.7f,1.0f,"No Flash: Off"); }
-	}
-
-	if(menu.count==12)
-	{
-		if(menu.select)
-		{
-			menu.select=false;
-			cvar.smoke=change(cvar.smoke);
-		}
-		if(cvar.smoke) { DrawText(x,y+163,1.0f,1.0f,1.0f,"No Smoke: On"); }
-		else if(!cvar.smoke) { DrawText(x,y+163,1.0f,1.0f,1.0f,"No Smoke: Off"); }
-	}
-	else if(menu.count!=12)
-	{
-		if(cvar.smoke) { DrawText(x,y+163,0.7f,0.7f,1.0f,"No Smoke: On"); }
-		else if(!cvar.smoke) { DrawText(x,y+163,0.7f,0.7f,1.0f,"No Smoke: Off"); }
-	}
-
-	if(menu.count==13)
-	{
-		if(menu.select)
-		{
-			menu.select=false;
-			cvar.lambert=change(cvar.lambert);
-		}
-		if(cvar.lambert) { DrawText(x,y+176,1.0f,1.0f,1.0f,"Lambert: On"); }
-		else if(!cvar.lambert) { DrawText(x,y+176,1.0f,1.0f,1.0f,"Lambert: Off"); }
-	}
-	else if(menu.count!=13)
-	{
-		if(cvar.lambert) { DrawText(x,y+176,0.7f,0.7f,1.0f,"Lambert: On"); }
-		else if(!cvar.lambert) { DrawText(x,y+176,0.7f,0.7f,1.0f,"Lambert: Off"); }
-	}
-
-	if(menu.count==14)
-	{
-		if(menu.select)
-		{
-			menu.select=false;
-			cvar.esp=change(cvar.esp);
-		}
-		if(cvar.esp) { DrawText(x,y+189,1.0f,1.0f,1.0f,"ESP: On"); }
-		else if(!cvar.esp) { DrawText(x,y+189,1.0f,1.0f,1.0f,"ESP: Off"); }
-	}
-	else if(menu.count!=14)
-	{
-		if(cvar.esp) { DrawText(x,y+189,0.7f,0.7f,1.0f,"ESP: On"); }
-		else if(!cvar.esp) { DrawText(x,y+189,0.7f,0.7f,1.0f,"ESP: Off"); }
-	}
-
-	if(menu.count==15)
-	{
-		if(menu.select)
-		{
-			menu.select=false;
-			cvar.cross=change(cvar.cross);
-		}
-		if(cvar.cross) { DrawText(x,y+202,1.0f,1.0f,1.0f,"Crosshair: On"); }
-		else if(!cvar.cross) { DrawText(x,y+202,1.0f,1.0f,1.0f,"Crosshair: Off"); }
-	}
-	else if(menu.count!=15)
-	{
-		if(cvar.cross) { DrawText(x,y+202,0.7f,0.7f,1.0f,"Crosshair: On"); }
-		else if(!cvar.cross) { DrawText(x,y+202,0.7f,0.7f,1.0f,"Crosshair: Off"); }
-	}
-
-	if(menu.count==16)
-	{
-		if(menu.select)
-		{
-			menu.select=false;
-			cvar.esp_box=change(cvar.esp_box);
-		}
-		if(cvar.esp_box) { DrawText(x,y+215,1.0f,1.0f,1.0f,"ESP Box: On"); }
-		else { DrawText(x,y+215,1.0f,1.0f,1.0f,"ESP Box: Off"); }
-	}
-	else if(menu.count!=16)
-	{
-		if(cvar.esp_box) { DrawText(x,y+215,0.7f,0.7f,1.0f,"ESP Box: On"); }
-		else { DrawText(x,y+215,0.7f,0.7f,1.0f,"ESP Box: Off"); }
-	}
-
-	if(menu.count==17)
-	{
-		if(menu.select)
-		{
-			menu.select=false;
-			cvar.esp_dist=change(cvar.esp_dist);
-		}
-		if(cvar.esp_dist) { DrawText(x,y+228,1.0f,1.0f,1.0f,"ESP Dist: On"); }
-		else { DrawText(x,y+228,1.0f,1.0f,1.0f,"ESP Dist: Off"); }
-	}
-	else if(menu.count!=17)
-	{
-		if(cvar.esp_dist) { DrawText(x,y+228,0.7f,0.7f,1.0f,"ESP Dist: On"); }
-		else { DrawText(x,y+228,0.7f,0.7f,1.0f,"ESP Dist: Off"); }
-	}
-
-	if(menu.count==18)
-	{
-		if(menu.select)
-		{
-			menu.select=false;
-			cvar.esp_line=change(cvar.esp_line);
-		}
-		if(cvar.esp_line) { DrawText(x,y+241,1.0f,1.0f,1.0f,"ESP Line: On"); }
-		else { DrawText(x,y+241,1.0f,1.0f,1.0f,"ESP Line: Off"); }
-	}
-	else if(menu.count!=18)
-	{
-		if(cvar.esp_line) { DrawText(x,y+241,0.7f,0.7f,1.0f,"ESP Line: On"); }
-		else { DrawText(x,y+241,0.7f,0.7f,1.0f,"ESP Line: Off"); }
-	}
-
-	if(menu.count==19)
-	{
-		if(menu.select)
-		{
-			menu.select=false;
-			cvar.esp_engine=change(cvar.esp_engine);
-		}
-		if(cvar.esp_engine) { DrawText(x,y+254,1.0f,1.0f,1.0f,"ESP Engine: On"); }
-		else { DrawText(x,y+254,1.0f,1.0f,1.0f,"ESP Engine: Off"); }
-	}
-	else if(menu.count!=19)
-	{
-		if(cvar.esp_engine) { DrawText(x,y+254,0.7f,0.7f,1.0f,"ESP Engine: On"); }
-		else { DrawText(x,y+254,0.7f,0.7f,1.0f,"ESP Engine: Off"); }
-	}
-
-	if(menu.count==20)
-	{
-		if(menu.select)
-		{
-			menu.select=false;
-			cvar.esp_hud=change(cvar.esp_hud);
-		}
-		if(cvar.esp_hud) { DrawText(x,y+267,1.0f,1.0f,1.0f,"HUD HP/Ammo: On"); }
-		else { DrawText(x,y+267,1.0f,1.0f,1.0f,"HUD HP/Ammo: Off"); }
-	}
-	else if(menu.count!=20)
-	{
-		if(cvar.esp_hud) { DrawText(x,y+267,0.7f,0.7f,1.0f,"HUD HP/Ammo: On"); }
-		else { DrawText(x,y+267,0.7f,0.7f,1.0f,"HUD HP/Ammo: Off"); }
-	}
-
-	if(menu.count>20) { menu.count=0; }
-	else if(menu.count<0) { menu.count=20; }
-}
-
-//////////////////////////////////////////////////////////////////////////////////////////////////
 void DrawCheckText(int x,int y) // bad way of doing this
 {
 	static float check_h=300.0f;	// panel height (px), measured on the previous frame
@@ -1589,11 +1028,6 @@ void DrawCheckText(int x,int y) // bad way of doing this
 	else
 		DrawText(x,y,1.0f,0.85f,0.4f,"> Saved settings: none yet (using defaults) <%s>",savepath);
 	y=y+(int)(13*ui_scale);
-	if(mdlfail)
-		DrawText(x,y,1.0f,0.5f,0.5f,"> Could not load model file: <%s> !!!",modelpath);
-	else
-		DrawText(x,y,1.0f,1.0f,1.0f,"> Model file: %s",modelpath);
-	y=y+(int)(13*ui_scale);
 	DrawText(x,y,0.5f,1.0f,0.5f,"> Your screen resolution is: %ix%i",vp[2],vp[3]);
 	y=y+(int)(26*ui_scale);
 	DrawText(x,y,0.7f,0.7f,1.0f,"%i valid offsets found:",offsetcount);
@@ -1604,135 +1038,8 @@ void DrawCheckText(int x,int y) // bad way of doing this
 		y=y+(int)(13*ui_scale);
 	}
 	y=y+(int)(13*ui_scale);
-	DrawText(x,y,0.7f,0.7f,1.0f,"Team 0: %s",team[0].name);
+	DrawText(x,y,0.7f,0.7f,1.0f,"Teams: %s vs %s",team[0].name,team[1].name);
 	y=y+(int)(13*ui_scale);
-	if(team[0].vert01!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert01);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[0].vert02!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert02);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[0].vert03!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert03);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[0].vert04!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert04);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[0].vert05!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert05);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[0].vert06!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert06);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[0].vert07!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert07);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[0].vert08!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert08);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[0].vert09!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert09);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[0].vert10!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert10);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[0].vert11!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert11);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[0].vert12!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[0].vert12);
-		y=y+(int)(13*ui_scale);
-	}
-	//
-	DrawText(x,y,0.7f,0.7f,1.0f,"Team 1: %s",team[1].name);
-	y=y+(int)(13*ui_scale);
-	if(team[1].vert01!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert01);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[1].vert02!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert02);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[1].vert03!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert03);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[1].vert04!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert04);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[1].vert05!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert05);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[1].vert06!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert06);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[1].vert07!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert07);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[1].vert08!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert08);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[1].vert09!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert09);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[1].vert10!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert10);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[1].vert11!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert11);
-		y=y+(int)(13*ui_scale);
-	}
-	if(team[1].vert12!=-1)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> vertice %i",team[1].vert12);
-		y=y+(int)(13*ui_scale);
-	}
-	y=y+(int)(13*ui_scale);
-	DrawText(x,y,1.0f,1.0f,1.0f,"> lowest vertex count: %i",player_vertex_min+5);
-	y=y+(int)(13*ui_scale);
-	DrawText(x,y,1.0f,1.0f,1.0f,"> highest vertex count %i",player_vertex_max-5);
 
 	check_h=(float)(y-startY)+13.0f*ui_scale;	// size next frame's panel to fit the text
 	gTextAlpha=1.0f;							// restore for anything drawn after us
@@ -1748,18 +1055,6 @@ void DrawKeyInfo() // just drawn if 'aimkeychanged' is true
 		DrawText((vp[2]/2)-120,(vp[3]/2)-30,0.9f,0.9f,1.0f,"Aim changed to <Mouse2>");
 	else if(cvar.aimkey==3)
 		DrawText((vp[2]/2)-120,(vp[3]/2)-30,0.9f,0.9f,1.0f,"Aim changed to <Mouse3>");
-}
-
-//////////////////////////////////////////////////////////////////////////////////////////////////
-bool IsVertTeam(long vertcount,int t)	// helper: does vertcount belong to team t?
-{
-	return (
-		(vertcount==team[t].vert01) || (vertcount==team[t].vert02) ||
-		(vertcount==team[t].vert03) || (vertcount==team[t].vert04) ||
-		(vertcount==team[t].vert05) || (vertcount==team[t].vert06) ||
-		(vertcount==team[t].vert07) || (vertcount==team[t].vert08) ||
-		(vertcount==team[t].vert09) || (vertcount==team[t].vert10) ||
-		(vertcount==team[t].vert11) || (vertcount==team[t].vert12) );
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////

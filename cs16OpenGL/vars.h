@@ -24,8 +24,6 @@ typedef struct {		//player struct
 
 typedef struct { // cvars (of course ;P)
 	int cross;
-	int esp;		// (legacy tier1 master; only referenced by the unused DrawMenu_legacy)
-	int esp_line;	// (legacy tier1 snapline; only referenced by DrawMenu_legacy)
 	int esp_engine;	// engine entity-list ESP master (real names/team/origin)
 	int esp_name;	// ESP Engine sub-option: player name
 	int esp_box;	// ESP Engine sub-option: 2D box
@@ -81,7 +79,6 @@ typedef struct { // cvars (of course ;P)
 	int menu_y;
 	int check_x;	// F11 check-screen panel position (x)
 	int check_y;	// F11 check-screen panel position (y)
-	int pronefix;
 	int aimkey;
 	float stand_h;
 	float duck_h;
@@ -116,20 +113,8 @@ typedef struct {	// storing custom offset infos
 	char name[256];
 }offset_s;
 
-typedef struct {	// custom vertex infos go here
+typedef struct {	// team display name (used by the "Target" option + F11)
 	char name[52];
-	int vert01;		// this should have been done in an array i know ;)
-	int vert02;		// but i made it like this when i tested the shit...
-	int vert03;
-	int vert04;
-	int vert05;
-	int vert06;
-	int vert07;
-	int vert08;
-	int vert09;
-	int vert10;
-	int vert11;	
-	int vert12;
 } team_s;
 
 static GLint	vp[4];			// viewport info (2 and 3 holds screen resolution)
@@ -142,9 +127,6 @@ int viewportcount=0;	// counts viewport calls
 int t_count=0;			// for timer
 int offsetcount=0;
 int curoffset=0;
-int player_height_min=0;
-int player_vertex_min=0;
-int player_vertex_max=0;
 
 bool t_get=false;	// timer
 bool bFlash=false;	// flags . . . 
@@ -166,16 +148,12 @@ bool customoffset=false;	// for menu
 bool checktext=false;		// F11, check text
 bool gotflashed=false;
 bool cfgfail=false;			// true if config couldnt be find
-bool mdlfail=false;			// true if model file couldnt be find
 bool saveloaded=false;		// true if oglsave.cfg (user settings) was loaded this session
 
 char filename[256]="";
 char dllpath[256]="";
 char dllfile[14]="\\opengl32.dll";
 char offsetname[256]="";
-char modelfile[52]="";
-
-char modelpath[256]="";
 char configpath[256]="";
 char savepath[256]="";		// full path to oglsave.cfg (for the F11 check screen)
 
