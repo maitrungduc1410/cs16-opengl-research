@@ -103,6 +103,7 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "aimthru %i;"	,&cvar.aimthru);
 					sscanf(str, "target %i;"	,&cvar.target);
 					sscanf(str, "recoil %i;"	,&cvar.recoil);
+					sscanf(str, "norecoil %i;"	,&cvar.norecoil);
 					sscanf(str, "esp_engine %i;",&cvar.esp_engine);
 					sscanf(str, "esp_name %i;"	,&cvar.esp_name);
 					sscanf(str, "esp_box %i;"	,&cvar.esp_box);
@@ -199,6 +200,7 @@ void SaveSettings()
 	fprintf(f,"shoot %i\n",cvar.shoot);
 	fprintf(f,"fov %i\n",cvar.fov);
 	fprintf(f,"recoil %i\n",cvar.recoil);
+	fprintf(f,"norecoil %i\n",cvar.norecoil);
 	fprintf(f,"wall %i\n",cvar.wall);
 	fprintf(f,"nosky %i\n",cvar.sky);
 	fprintf(f,"noflash %i\n",cvar.flash);
@@ -276,6 +278,7 @@ void LoadSettings()
 		sscanf(str,"shoot %i"		,&cvar.shoot);
 		sscanf(str,"fov %i"			,&cvar.fov);
 		sscanf(str,"recoil %i"		,&cvar.recoil);
+		sscanf(str,"norecoil %i"	,&cvar.norecoil);
 		sscanf(str,"wall %i"		,&cvar.wall);
 		sscanf(str,"nosky %i"		,&cvar.sky);
 		sscanf(str,"noflash %i"		,&cvar.flash);
@@ -401,6 +404,7 @@ void HookInit(bool activate)
 		cvar.scope=0;
 		cvar.sky=0;
 		cvar.recoil=0;
+		cvar.norecoil=0;
 		oldtarget=cvar.target; // save last chosen target team
 		cvar.target=0;
 		menu_move_mode=0;
@@ -782,6 +786,7 @@ void DrawMenu(int x, int y)
 		{"Auto-fire",   IT_TOGGLE, &cvar.autofire,   0,0,0,       0, 0,          0},
 		{"Auto-fire rate",IT_INT,  &cvar.autofire_rate,20,300,10, 0, &cvar.autofire,1},
 		{"Recoil",      IT_INT,    &cvar.recoil,     0,5,1,       1, 0,          0},
+		{"No recoil",   IT_TOGGLE, &cvar.norecoil,   0,0,0,       0, 0,          0},
 		{"Wallhack",    IT_INT,    &cvar.wall,       0,3,1,       1, 0,          0},
 		{"No Sky",      IT_TOGGLE, &cvar.sky,        0,0,0,       0, 0,          0},
 		{"No Flash",    IT_TOGGLE, &cvar.flash,      0,0,0,       0, 0,          0},
@@ -1263,6 +1268,80 @@ int EngTeam(int idx)
 {
 	if(!eng_have_extra || idx<0 || idx>32) return 0;
 	return ReadShort(eng_extrainfo+idx*EXTRA_STRIDE+EXTRA_TEAMNUMBER);
+}
+
+// ---------------------------------------------------------------------------
+//  No (visual) recoil.
+//  In GoldSrc the *client-side* punchangle is purely COSMETIC: it kicks the
+//  camera but does NOT change the bullet direction (that is computed on the
+//  server). So zeroing it gives a stable screen and nothing more - exactly the
+//  client-side limit we discussed. We avoid hardcoded offsets: the engine's
+//  pfnGetViewAngles (table slot 34) reads cl.viewangles, and inside
+//  client_state_t punchangle sits immediately AFTER viewangles (+0x0C, build
+//  4554 layout). We read the first bytes of GetViewAngles to grab the absolute
+//  &cl.viewangles operand, then SELF-VALIDATE it by comparing the floats there
+//  with what the function actually returns. No match -> we never write, so a
+//  wrong build just yields "no effect" instead of a crash.
+// ---------------------------------------------------------------------------
+bool IsWritable(DWORD addr,DWORD len)
+{
+	if(addr==0||len==0) return false;
+	MEMORY_BASIC_INFORMATION mbi;
+	if(!VirtualQuery((LPCVOID)addr,&mbi,sizeof(mbi))) return false;
+	if(mbi.State!=MEM_COMMIT) return false;
+	if(mbi.Protect & PAGE_GUARD) return false;
+	DWORD p=mbi.Protect & 0xFF;
+	if(!(p==PAGE_READWRITE||p==PAGE_WRITECOPY||p==PAGE_EXECUTE_READWRITE||p==PAGE_EXECUTE_WRITECOPY))
+		return false;
+	return (addr+len) <= ((DWORD)mbi.BaseAddress + mbi.RegionSize);
+}
+
+DWORD FindPunchAngle()	// returns &cl.punchangle, or 0 if not located yet
+{
+	DWORD fn=EngFn(ENG_SLOT_GETVIEWANGLES);
+	if(fn<0x10000 || !IsReadable(fn,8)) return 0;
+
+	float va[3]={0,0,0};
+	((eng_GetViewAngles_t)fn)(va);				// what the engine currently reports
+	if(fabsf(va[0])+fabsf(va[1])+fabsf(va[2]) < 0.05f)
+		return 0;								// angles ~0 (menu / just spawned) -> retry later, avoids a false match
+
+	DWORD scan=fn;								// follow a jmp-thunk to the real function body
+	if(*(BYTE*)scan==0xE9) scan = scan+5+*(int*)(scan+1);
+	if(!IsReadable(scan,80)) return 0;
+
+	DWORD hw_base,hw_end;
+	if(!ModuleRange("hw.dll",hw_base,hw_end)) return 0;
+
+	for(DWORD p=scan; p<scan+76; p++)			// scan the prologue for an absolute [imm32] operand
+	{
+		BYTE b0=*(BYTE*)p, b1=*(BYTE*)(p+1);
+		DWORD imm=0; bool got=false;
+		if(b0==0xA1)                       { imm=*(DWORD*)(p+1); got=true; }	// mov eax,[imm32]
+		else if(b0==0x8B && (b1==0x05||b1==0x0D||b1==0x15||b1==0x1D||b1==0x25||b1==0x35||b1==0x3D))
+			                               { imm=*(DWORD*)(p+2); got=true; }	// mov reg,[imm32]
+		else if(b0==0xD9 && b1==0x05)      { imm=*(DWORD*)(p+2); got=true; }	// fld dword [imm32]
+		else if(b0==0xF3 && b1==0x0F && *(BYTE*)(p+2)==0x10 && *(BYTE*)(p+3)==0x05)
+			                               { imm=*(DWORD*)(p+4); got=true; }	// movss xmm0,[imm32]
+		if(!got) continue;
+		if(imm<hw_base || imm>=hw_end) continue;	// must point into hw.dll's data
+		if(!IsReadable(imm,12)) continue;
+		float c0=*(float*)imm, c1=*(float*)(imm+4), c2=*(float*)(imm+8);
+		if(fabsf(c0-va[0])<0.5f && fabsf(c1-va[1])<0.5f && fabsf(c2-va[2])<0.5f)
+			return imm+0x0C;					// punchangle = the vec3 right after viewangles
+	}
+	return 0;
+}
+
+void ApplyNoRecoil()
+{
+	if(!cvar.norecoil) return;
+	if(!EngineResolve()) return;
+	if(eng_punch==0) eng_punch=FindPunchAngle();	// locate once, then cache (cl is a static global)
+	if(eng_punch==0) return;
+	if(!IsWritable(eng_punch,12)) { eng_punch=0; return; }	// stale -> drop and re-locate next frame
+	float *pa=(float*)eng_punch;
+	pa[0]=0.0f; pa[1]=0.0f; pa[2]=0.0f;				// kill the cosmetic camera kick
 }
 
 bool EngDead(int idx)
@@ -2786,6 +2865,7 @@ void sys_wglSwapBuffers(HDC hDC)
 	if(hookactive)
 	{
 		UpdateAutofire();	// once-per-frame auto-pistol/auto-knife
+		ApplyNoRecoil();	// zero the cosmetic view punch (no visual recoil)
 		DrawEngineEsp();	// radar + engine ESP + own HUD (bottom overlay layer)
 		DrawToast();		// feature toggle notifications (middle layer)
 		DrawOverlayUI();	// hack menu + F11 check (top overlay layer)

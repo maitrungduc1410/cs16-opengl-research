@@ -68,6 +68,7 @@ typedef struct { // cvars (of course ;P)
 	int	fov;
 	int lambert;
 	int	recoil;
+	int	norecoil;	// zero the client-side (cosmetic) view punch -> stable screen
 	int target;
 	int shoot;
 	int wall;
@@ -160,6 +161,7 @@ char savepath[256]="";		// full path to oglsave.cfg (for the F11 check screen)
 // ---- tier2: engine entity-list ESP ----------------------------------------
 // Cached pointers/addresses we discover at runtime (0 = not found yet).
 DWORD	eng_table		=0;	// address of cl_enginefunc_t table (in client.dll data)
+DWORD	eng_punch		=0;	// address of cl.punchangle (vec3) for no-recoil; 0 = not located
 DWORD	eng_extrainfo	=0;	// address of g_PlayerExtraInfo array (in client.dll)
 int		eng_local_idx	=0;	// entity index of the local player
 int		eng_local_team	=0;	// team number of the local player (0=unknown,1/2)
