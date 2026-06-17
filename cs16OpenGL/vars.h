@@ -161,9 +161,10 @@ char savepath[256]="";		// full path to oglsave.cfg (for the F11 check screen)
 // ---- tier2: engine entity-list ESP ----------------------------------------
 // Cached pointers/addresses we discover at runtime (0 = not found yet).
 DWORD	eng_table		=0;	// address of cl_enginefunc_t table (in client.dll data)
-DWORD	eng_punch		=0;	// address of cl.punchangle (vec3) for no-recoil; 0 = not located
-float	norec_peak		=0;	// debug: largest |punch| seen before we zeroed it (F11)
-float	norec_last[3]	={0,0,0};	// debug: last punch values read before zeroing (F11)
+DWORD	norec_fn		=0;	// address of client.dll!V_CalcRefdef (0 = not located yet)
+bool	norec_hooked	=false;	// is our V_CalcRefdef detour currently installed?
+float	norec_peak		=0;	// debug: largest |punch| the engine tried to apply (F11)
+float	norec_last[3]	={0,0,0};	// debug: last punch values seen before we cleared them (F11)
 DWORD	eng_extrainfo	=0;	// address of g_PlayerExtraInfo array (in client.dll)
 int		eng_local_idx	=0;	// entity index of the local player
 int		eng_local_team	=0;	// team number of the local player (0=unknown,1/2)

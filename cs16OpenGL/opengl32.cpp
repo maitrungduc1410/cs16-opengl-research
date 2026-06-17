@@ -1049,10 +1049,10 @@ void DrawCheckText(int x,int y) // bad way of doing this
 	y=y+(int)(13*ui_scale);
 	if(!cvar.norecoil)
 		DrawText(x,y,0.7f,0.7f,1.0f,"No recoil: OFF");
-	else if(eng_punch==0)
-		DrawText(x,y,1.0f,0.5f,0.5f,"No recoil: ON but punchangle NOT located (looking for it...)");
+	else if(!norec_hooked)
+		DrawText(x,y,1.0f,0.5f,0.5f,"No recoil: ON but V_CalcRefdef NOT hooked yet (waiting for client.dll)");
 	else
-		DrawText(x,y,0.5f,1.0f,0.5f,"No recoil: ON  punchangle @ 0x%08X",eng_punch);
+		DrawText(x,y,0.5f,1.0f,0.5f,"No recoil: ON  hooked V_CalcRefdef @ 0x%08X",norec_fn);
 	y=y+(int)(13*ui_scale);
 	DrawText(x,y,1.0f,1.0f,1.0f,"> peak punch seen: %0.3f   last: %0.2f %0.2f %0.2f",
 		norec_peak,norec_last[0],norec_last[1],norec_last[2]);
@@ -1283,80 +1283,78 @@ int EngTeam(int idx)
 }
 
 // ---------------------------------------------------------------------------
-//  No (visual) recoil.
-//  In GoldSrc the *client-side* punchangle is purely COSMETIC: it kicks the
-//  camera but does NOT change the bullet direction (that is computed on the
-//  server). So zeroing it gives a stable screen and nothing more - exactly the
-//  client-side limit we discussed. We avoid hardcoded offsets: the engine's
-//  pfnGetViewAngles (table slot 34) reads cl.viewangles, and inside
-//  client_state_t punchangle sits immediately AFTER viewangles (+0x0C, build
-//  4554 layout). We read the first bytes of GetViewAngles to grab the absolute
-//  &cl.viewangles operand, then SELF-VALIDATE it by comparing the floats there
-//  with what the function actually returns. No match -> we never write, so a
-//  wrong build just yields "no effect" instead of a crash.
+//  No (visual) recoil  -  via a client.dll!V_CalcRefdef detour.
+//
+//  We first tried zeroing cl.punchangle from our wglSwapBuffers hook, but that
+//  runs AFTER the engine already baked the punch into the view for the frame,
+//  and client-side weapon prediction re-fills punch every frame - so it had no
+//  visible effect (the F11 readout confirmed punch kept spiking, peak 5.75).
+//
+//  The correctly-timed place is the client's V_CalcRefdef(ref_params_s*), which
+//  is where punch is ADDED to the view angles. We install a tiny inline detour
+//  on it (client.dll exports the symbol by name) and clear pparams->punchangle
+//  BEFORE the original runs. ref_params_s is a public, build-stable SDK ABI, so
+//  punchangle always sits at +0xA0.  The detour uses unhook/call/re-hook (the
+//  render runs on a single thread, so there is no race) to avoid needing a
+//  length-disassembled trampoline.
 // ---------------------------------------------------------------------------
-bool IsWritable(DWORD addr,DWORD len)
+#define REFP_PUNCHANGLE 0xA0			// ref_params_s::punchangle byte offset (SDK ABI, build-stable)
+typedef void (__cdecl *VCalc_t)(void *pparams);
+static BYTE g_vcalc_orig[5];			// original first 5 bytes of V_CalcRefdef (for unhook)
+
+void __cdecl Hooked_VCalc(void *pparams)
 {
-	if(addr==0||len==0) return false;
-	MEMORY_BASIC_INFORMATION mbi;
-	if(!VirtualQuery((LPCVOID)addr,&mbi,sizeof(mbi))) return false;
-	if(mbi.State!=MEM_COMMIT) return false;
-	if(mbi.Protect & PAGE_GUARD) return false;
-	DWORD p=mbi.Protect & 0xFF;
-	if(!(p==PAGE_READWRITE||p==PAGE_WRITECOPY||p==PAGE_EXECUTE_READWRITE||p==PAGE_EXECUTE_WRITECOPY))
-		return false;
-	return (addr+len) <= ((DWORD)mbi.BaseAddress + mbi.RegionSize);
-}
-
-DWORD FindPunchAngle()	// returns &cl.punchangle, or 0 if not located yet
-{
-	DWORD fn=EngFn(ENG_SLOT_GETVIEWANGLES);
-	if(fn<0x10000 || !IsReadable(fn,8)) return 0;
-
-	float va[3]={0,0,0};
-	((eng_GetViewAngles_t)fn)(va);				// what the engine currently reports
-	if(fabsf(va[0])+fabsf(va[1])+fabsf(va[2]) < 0.05f)
-		return 0;								// angles ~0 (menu / just spawned) -> retry later, avoids a false match
-
-	DWORD scan=fn;								// follow a jmp-thunk to the real function body
-	if(*(BYTE*)scan==0xE9) scan = scan+5+*(int*)(scan+1);
-	if(!IsReadable(scan,80)) return 0;
-
-	DWORD hw_base,hw_end;
-	if(!ModuleRange("hw.dll",hw_base,hw_end)) return 0;
-
-	for(DWORD p=scan; p<scan+76; p++)			// scan the prologue for an absolute [imm32] operand
+	if(cvar.norecoil && pparams)
 	{
-		BYTE b0=*(BYTE*)p, b1=*(BYTE*)(p+1);
-		DWORD imm=0; bool got=false;
-		if(b0==0xA1)                       { imm=*(DWORD*)(p+1); got=true; }	// mov eax,[imm32]
-		else if(b0==0x8B && (b1==0x05||b1==0x0D||b1==0x15||b1==0x1D||b1==0x25||b1==0x35||b1==0x3D))
-			                               { imm=*(DWORD*)(p+2); got=true; }	// mov reg,[imm32]
-		else if(b0==0xD9 && b1==0x05)      { imm=*(DWORD*)(p+2); got=true; }	// fld dword [imm32]
-		else if(b0==0xF3 && b1==0x0F && *(BYTE*)(p+2)==0x10 && *(BYTE*)(p+3)==0x05)
-			                               { imm=*(DWORD*)(p+4); got=true; }	// movss xmm0,[imm32]
-		if(!got) continue;
-		if(imm<hw_base || imm>=hw_end) continue;	// must point into hw.dll's data
-		if(!IsReadable(imm,12)) continue;
-		float c0=*(float*)imm, c1=*(float*)(imm+4), c2=*(float*)(imm+8);
-		if(fabsf(c0-va[0])<0.5f && fabsf(c1-va[1])<0.5f && fabsf(c2-va[2])<0.5f)
-			return imm+0x0C;					// punchangle = the vec3 right after viewangles
+		float *pa=(float*)((BYTE*)pparams+REFP_PUNCHANGLE);
+		norec_last[0]=pa[0]; norec_last[1]=pa[1]; norec_last[2]=pa[2];	// debug snapshot
+		float m=fabsf(pa[0])+fabsf(pa[1])+fabsf(pa[2]);
+		if(m>norec_peak) norec_peak=m;
+		pa[0]=0.0f; pa[1]=0.0f; pa[2]=0.0f;			// kill the kick BEFORE the view uses it
 	}
-	return 0;
+	// run the real V_CalcRefdef: restore its bytes, call, then re-arm our jmp
+	DWORD old;
+	VirtualProtect((void*)norec_fn,5,PAGE_EXECUTE_READWRITE,&old);
+	memcpy((void*)norec_fn,g_vcalc_orig,5);
+	((VCalc_t)norec_fn)(pparams);
+	BYTE jb[5]; jb[0]=0xE9; *(DWORD*)(jb+1)=(DWORD)&Hooked_VCalc-((DWORD)norec_fn+5);
+	memcpy((void*)norec_fn,jb,5);
+	VirtualProtect((void*)norec_fn,5,old,&old);
 }
 
-void ApplyNoRecoil()
+void EnsureNoRecoilHook()	// install / remove the detour so it matches cvar.norecoil
 {
-	if(!cvar.norecoil) return;
-	if(!EngineResolve()) return;
-	if(eng_punch==0) eng_punch=FindPunchAngle();	// locate once, then cache (cl is a static global)
-	if(eng_punch==0) return;
-	if(!IsWritable(eng_punch,12)) { eng_punch=0; return; }	// stale -> drop and re-locate next frame
-	float *pa=(float*)eng_punch;
-	norec_last[0]=pa[0]; norec_last[1]=pa[1]; norec_last[2]=pa[2];	// debug: what was here before we wiped it
-	float m=fabsf(pa[0])+fabsf(pa[1])+fabsf(pa[2]);
-	if(m>norec_peak) norec_peak=m;					// debug: peak punch seen (proves +0x0C is the punch vec)
-	pa[0]=0.0f; pa[1]=0.0f; pa[2]=0.0f;				// kill the cosmetic camera kick
+	bool want=(cvar.norecoil!=0);
+	if(want && !norec_hooked)
+	{
+		if(norec_fn==0)
+		{
+			HMODULE cl=GetModuleHandleA("client.dll");
+			if(!cl) return;								// not loaded yet -> retry next frame
+			FARPROC f=GetProcAddress(cl,"V_CalcRefdef");
+			if(!f) return;								// symbol missing -> can't hook this build
+			norec_fn=(DWORD)f;
+			memcpy(g_vcalc_orig,(void*)norec_fn,5);		// stash original prologue once
+		}
+		DWORD old;
+		if(VirtualProtect((void*)norec_fn,5,PAGE_EXECUTE_READWRITE,&old))
+		{
+			BYTE jb[5]; jb[0]=0xE9; *(DWORD*)(jb+1)=(DWORD)&Hooked_VCalc-((DWORD)norec_fn+5);
+			memcpy((void*)norec_fn,jb,5);
+			VirtualProtect((void*)norec_fn,5,old,&old);
+			norec_hooked=true;
+		}
+	}
+	else if(!want && norec_hooked)
+	{
+		DWORD old;
+		if(VirtualProtect((void*)norec_fn,5,PAGE_EXECUTE_READWRITE,&old))
+		{
+			memcpy((void*)norec_fn,g_vcalc_orig,5);		// restore original -> detour gone
+			VirtualProtect((void*)norec_fn,5,old,&old);
+		}
+		norec_hooked=false;
+	}
 }
 
 bool EngDead(int idx)
@@ -2880,7 +2878,7 @@ void sys_wglSwapBuffers(HDC hDC)
 	if(hookactive)
 	{
 		UpdateAutofire();	// once-per-frame auto-pistol/auto-knife
-		ApplyNoRecoil();	// zero the cosmetic view punch (no visual recoil)
+		EnsureNoRecoilHook();	// (un)install the V_CalcRefdef detour for no visual recoil
 		DrawEngineEsp();	// radar + engine ESP + own HUD (bottom overlay layer)
 		DrawToast();		// feature toggle notifications (middle layer)
 		DrawOverlayUI();	// hack menu + F11 check (top overlay layer)
@@ -2899,6 +2897,16 @@ BOOL __stdcall DllMain (HINSTANCE hinstDll, DWORD fdwReason, LPVOID lpvReserved)
 			return Init();
 
 		case DLL_PROCESS_DETACH:
+			if ( norec_hooked && norec_fn )		// restore V_CalcRefdef so a stale jmp can't crash
+			{
+				DWORD old;
+				if(VirtualProtect((void*)norec_fn,5,PAGE_EXECUTE_READWRITE,&old))
+				{
+					memcpy((void*)norec_fn,g_vcalc_orig,5);
+					VirtualProtect((void*)norec_fn,5,old,&old);
+				}
+				norec_hooked=false;
+			}
 			if ( g_ll_hook != NULL )			// remove the physical-button hook
 			{
 				UnhookWindowsHookEx(g_ll_hook);
