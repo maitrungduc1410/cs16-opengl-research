@@ -7,7 +7,7 @@ intercepts OpenGL draw calls to implement wallhack, ESP, aimbot and a few visual
 tweaks.
 
 <div align="center">
-  <img src="./demo.png" />
+  <img src="./demo.jpg" />
 </div>
 
 > [!NOTE]
