@@ -205,6 +205,8 @@ int		ui_open_seq		=0;		// monotonic counter: who (menu/F11) was opened last
 int		menu_open_seq	=0;		// ui_open_seq stamp when the menu was last opened
 int		check_open_seq	=0;		// ui_open_seq stamp when the F11 check was last opened
 int		menu_move_mode	=0;		// 0=off, 1=moving hack menu, 2=moving F11 panel
+DWORD	menu_rep_t		=0;		// GetTickCount() when a held up/down may step next (auto-repeat)
+int		menu_scroll		=0;		// index of the first visible row (scroll window top)
 
 // ---- engine-based aimbot state --------------------------------------------
 // Computed once per frame inside DrawEngineEsp (which has the entity list +

@@ -55,6 +55,13 @@ float curcolor[4];
 #define RADAR_DEF_Y  84
 #define MOVE_STEP    2		// px per polled frame while in move mode (held = continuous)
 
+// hack-menu scrolling: keep the panel a fixed height (MENU_VIS_ROWS rows) and
+// scroll the list when there are more entries; arrows pick the row, the view
+// follows. Holding up/down auto-repeats after REP_DELAY, then every REP_RATE ms.
+#define MENU_VIS_ROWS   10		// rows shown at once before the list scrolls
+#define MENU_REP_DELAY  350		// ms a key must be held before it starts repeating
+#define MENU_REP_RATE   70		// ms between auto-repeat steps while held
+
 // rounded-rectangle helpers (defined lower, used by the menu / F11 panels above them)
 void DrawBox2D(float x0,float y0,float x1,float y1,float rad);			// rounded outline
 void FillRoundRect2D(float x0,float y0,float x1,float y1,float rad);		// rounded fill
@@ -548,18 +555,20 @@ void HandleKey(int key) // keyhandler
 			break;
 		case VK_UP:
 			if(menu_move_mode) MoveActivePanel(0,-MOVE_STEP);	// continuous while held
-			else if(menu.active && !keyp.up)
+			else if(menu.active)
 			{
-				keyp.up=true;
-				menu.count-=1;
+				DWORD now=GetTickCount();
+				if(!keyp.up) { keyp.up=true; menu.count-=1; menu_rep_t=now+MENU_REP_DELAY; }	// first press
+				else if(now>=menu_rep_t) { menu.count-=1; menu_rep_t=now+MENU_REP_RATE; }		// auto-repeat while held
 			}
 			break;
 		case VK_DOWN:
 			if(menu_move_mode) MoveActivePanel(0,MOVE_STEP);
-			else if(menu.active && !keyp.down)
+			else if(menu.active)
 			{
-				keyp.down=true;
-				menu.count+=1;
+				DWORD now=GetTickCount();
+				if(!keyp.down) { keyp.down=true; menu.count+=1; menu_rep_t=now+MENU_REP_DELAY; }
+				else if(now>=menu_rep_t) { menu.count+=1; menu_rep_t=now+MENU_REP_RATE; }
 			}
 			break;
 		case VK_RIGHT:
@@ -842,8 +851,15 @@ void DrawMenu(int x, int y)
 	for(int i=0;i<N;i++)
 		if(items[i].dep==0 || *(items[i].dep)!=0) vis[nvis++]=i;
 	if(nvis==0) return;
-	if(menu.count>=nvis) menu.count=0;				// wrap the cursor
-	if(menu.count<0)     menu.count=nvis-1;
+	if(menu.count>=nvis) menu.count=nvis-1;			// clamp the cursor (no wrap-around now that we scroll)
+	if(menu.count<0)     menu.count=0;
+
+	// scroll window: keep a fixed height and slide so the cursor stays visible
+	int visRows = (nvis<MENU_VIS_ROWS)?nvis:MENU_VIS_ROWS;
+	if(menu.count < menu_scroll)            menu_scroll = menu.count;				// scrolled above the view
+	if(menu.count >= menu_scroll+visRows)   menu_scroll = menu.count-visRows+1;	// scrolled below the view
+	if(menu_scroll > nvis-visRows)          menu_scroll = nvis-visRows;			// don't show empty space past the end
+	if(menu_scroll < 0)                     menu_scroll = 0;
 
 	// apply a left/right press to the current row
 	if(menu.select)
@@ -908,7 +924,7 @@ void DrawMenu(int x, int y)
 	// dark translucent panel behind the menu for readability (fades with the menu)
 	{
 		float bl=mx-8*sc, bt=my-33*sc, br=mx+182*sc;
-		float bb=y0+nvis*line-2*sc + (menu_move_mode? 12.0f*sc : 0.0f);	// room for the move hint
+		float bb=y0+visRows*line-2*sc + (menu_move_mode? 12.0f*sc : 0.0f);	// fixed height (scrolls); room for the move hint
 		float rad=8.0f*sc;										// soft rounded corners
 		(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
 		(*orig_glDisable)(GL_TEXTURE_2D);
@@ -925,9 +941,13 @@ void DrawMenu(int x, int y)
 	DrawText(mx, my-20*sc, 0.85f,0.9f,1.0f, "Mod by maitrungduc1410");
 	DrawText(mx, my-8 *sc, 0.55f,0.55f,0.75f, "----------------------");
 
-	// sliding highlight bar behind the selected row (rounded corners)
+	// sliding highlight bar behind the selected row (rounded corners).
+	// menu_sel_anim is in absolute-row space; shift by the scroll and clamp to
+	// the window so it parks at the edge instead of sliding off while scrolling.
 	{
-		float hy=y0+menu_sel_anim*line;
+		float selDisp=menu_sel_anim-(float)menu_scroll;
+		if(selDisp<0) selDisp=0; if(selDisp>(float)(visRows-1)) selDisp=(float)(visRows-1);
+		float hy=y0+selDisp*line;
 		float hrad=4.0f*sc;									// soft corners on the highlight
 		(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
 		(*orig_glDisable)(GL_TEXTURE_2D);
@@ -939,10 +959,10 @@ void DrawMenu(int x, int y)
 	}
 
 	char buf[96];
-	for(int r=0;r<nvis;r++)
+	for(int r=menu_scroll;r<menu_scroll+visRows && r<nvis;r++)
 	{
 		mitem_t *it=&items[vis[r]];
-		float ry=y0+r*line, ix=mx+(it->child?10.0f*sc:0.0f);
+		float ry=y0+(r-menu_scroll)*line, ix=mx+(it->child?10.0f*sc:0.0f);
 		const char *pre=it->child?"- ":"";
 		switch(it->type)
 		{
@@ -989,8 +1009,28 @@ void DrawMenu(int x, int y)
 		else              DrawText(ix,ry, 0.7f,0.7f,1.0f, "%s", buf);
 	}
 
+	// scrollbar: a dim track + accent thumb on the right, only when the list overflows
+	if(nvis>visRows)
+	{
+		float trackTop=y0-line+4.0f*sc, trackH=(float)visRows*line;
+		float sbx=mx+168.0f*sc, sbw=3.0f*sc;
+		float frac=(float)visRows/(float)nvis;					// portion of the list on screen
+		float thumbH=trackH*frac; if(thumbH<8.0f*sc) thumbH=8.0f*sc;
+		float sf=(float)menu_scroll/(float)(nvis-visRows);		// 0..1 scroll position
+		float thumbTop=trackTop+(trackH-thumbH)*sf;
+		(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
+		(*orig_glDisable)(GL_TEXTURE_2D);
+		(*orig_glEnable)(GL_BLEND);
+		(*orig_glBlendFunc)(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+		(*orig_glColor4f)(1.0f,1.0f,1.0f,0.12f*menu_alpha);		// track
+		FillRoundRect2D(sbx,trackTop,sbx+sbw,trackTop+trackH,sbw*0.5f);
+		(*orig_glColor4f)(0.1f,0.6f,1.0f,0.85f*menu_alpha);		// thumb (accent)
+		FillRoundRect2D(sbx,thumbTop,sbx+sbw,thumbTop+thumbH,sbw*0.5f);
+		(*orig_glPopAttrib)();
+	}
+
 	if(menu_move_mode)		// footer hint shown only while repositioning a panel
-		DrawText(mx, y0+nvis*line+1.0f*sc, 1.0f,0.9f,0.4f, "arrows move, Insert=done");
+		DrawText(mx, y0+visRows*line+1.0f*sc, 1.0f,0.9f,0.4f, "arrows move, Insert=done");
 
 	gTextAlpha=1.0f;
 }
