@@ -191,7 +191,7 @@ The ESP reads the engine's own entity list for real player names, origins, and t
 
 | Original panzerGL 2.2 | This version |
 |:---------------------:|:------------:|
-| *(screenshot coming soon)* | *(screenshot coming soon)* |
+| <img width="600" src="./demo_old.png" /> | <img width="800" src="./demo.jpg" /> |
 
 ---
 
