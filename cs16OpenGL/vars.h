@@ -69,6 +69,7 @@ typedef struct { // cvars (of course ;P)
 	int lambert;
 	int	recoil;
 	int	norecoil;	// zero the client-side (cosmetic) view punch -> stable screen
+	int	speed;		// speedhack: engine time scale as a percent (100 = normal, 200 = 2x)
 	int target;
 	int shoot;
 	int wall;
@@ -240,3 +241,17 @@ HHOOK			g_ll_hook		=NULL;	// WH_MOUSE_LL handle (0 until installed)
 volatile bool	g_phys_lb		=false;	// true while the physical left button is down
 HINSTANCE		g_self_inst		=NULL;	// this proxy DLL's own module handle (for the hook)
 bool			g_hook_started	=false;	// did we already spin up the dedicated hook thread?
+
+// ---- speedhack (cvar.speed) ------------------------------------------------
+// We IAT-hook hw.dll's imports of the OS clock APIs the engine uses to compute
+// host_frametime, and feed them a virtual clock that advances faster than real
+// time. All movement/physics/animation are velocity*frametime, so scaling the
+// clock scales the whole game. See EnsureSpeedHook() / Hooked_* in opengl32.cpp.
+volatile double	g_speed_scale	=1.0;	// = cvar.speed/100 (1.0 = normal, updated each frame)
+DWORD (WINAPI *orig_timeGetTime)(void)			=0;	// real winmm!timeGetTime (0 = not hooked)
+BOOL  (WINAPI *orig_QPC)(LARGE_INTEGER*)		=0;	// real kernel32!QueryPerformanceCounter
+bool	speed_installed	=false;	// did we manage to install at least one clock hook?
+bool	speed_tgt_ok	=false;	// timeGetTime IAT slot found + swapped
+bool	speed_qpc_ok	=false;	// QueryPerformanceCounter IAT slot found + swapped
+FARPROC	*speed_tgt_slot	=0;		// address of hw.dll's timeGetTime IAT slot (for restore)
+FARPROC	*speed_qpc_slot	=0;		// address of hw.dll's QueryPerformanceCounter IAT slot
