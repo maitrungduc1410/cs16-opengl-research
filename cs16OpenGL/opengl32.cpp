@@ -111,7 +111,6 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "target %i;"	,&cvar.target);
 					sscanf(str, "recoil %i;"	,&cvar.recoil);
 					sscanf(str, "norecoil %i;"	,&cvar.norecoil);
-					sscanf(str, "speed %i;"		,&cvar.speed);
 					sscanf(str, "esp_engine %i;",&cvar.esp_engine);
 					sscanf(str, "esp_name %i;"	,&cvar.esp_name);
 					sscanf(str, "esp_box %i;"	,&cvar.esp_box);
@@ -209,7 +208,6 @@ void SaveSettings()
 	fprintf(f,"fov %i\n",cvar.fov);
 	fprintf(f,"recoil %i\n",cvar.recoil);
 	fprintf(f,"norecoil %i\n",cvar.norecoil);
-	fprintf(f,"speed %i\n",cvar.speed);
 	fprintf(f,"wall %i\n",cvar.wall);
 	fprintf(f,"nosky %i\n",cvar.sky);
 	fprintf(f,"noflash %i\n",cvar.flash);
@@ -288,7 +286,6 @@ void LoadSettings()
 		sscanf(str,"fov %i"			,&cvar.fov);
 		sscanf(str,"recoil %i"		,&cvar.recoil);
 		sscanf(str,"norecoil %i"	,&cvar.norecoil);
-		sscanf(str,"speed %i"		,&cvar.speed);
 		sscanf(str,"wall %i"		,&cvar.wall);
 		sscanf(str,"nosky %i"		,&cvar.sky);
 		sscanf(str,"noflash %i"		,&cvar.flash);
@@ -350,15 +347,12 @@ void HookInit(bool activate)
 		cvar.check_x=CHECK_DEF_X; cvar.check_y=CHECK_DEF_Y;
 		cvar.radar_x=RADAR_DEF_X; cvar.radar_y=RADAR_DEF_Y;
 		cvar.menu_vis_rows=MENU_VIS_ROWS;	// default, overridden by oglconf.cfg then oglsave.cfg
-		cvar.speed=100;				// default 1x (no speedhack) unless oglconf/save raise it
 		LoadFile("oglconf.cfg",0);	// read DEFAULT cvar settings + offsets
 		CountOffset();				// count number of custom offsets
 		SetOffsetNames();			// set the names
 		LoadSettings();				// override defaults with the user's saved settings (if any)
 		if(cvar.menu_vis_rows<4)  cvar.menu_vis_rows=4;
 		if(cvar.menu_vis_rows>55) cvar.menu_vis_rows=55;
-		if(cvar.speed<100) cvar.speed=100;	// clamp to the menu range (100..400)
-		if(cvar.speed>400) cvar.speed=400;
 		if(curoffset<0||curoffset>9) curoffset=0;	// hard bound (offset[] has 10 slots)
 		if(offsetcount>0 && curoffset>offsetcount-1) curoffset=offsetcount-1;
 		if(customoffset)			// keep the custom stand/duck heights restored by LoadSettings
@@ -421,8 +415,6 @@ void HookInit(bool activate)
 		cvar.sky=0;
 		cvar.recoil=0;
 		cvar.norecoil=0;
-		cvar.speed=100;			// back to 1x; the clock IAT hook stays installed but pass-through
-		g_speed_scale=1.0;		// EnsureSpeedHook won't run while off, so reset the scale here
 		oldtarget=cvar.target; // save last chosen target team
 		cvar.target=0;
 		menu_move_mode=0;
@@ -845,7 +837,6 @@ void DrawMenu(int x, int y)
 		{"Auto-fire rate",IT_INT,  &cvar.autofire_rate,20,300,10, 0, &cvar.autofire,1},
 		{"Recoil",      IT_INT,    &cvar.recoil,     0,5,1,       1, 0,          0},
 		{"No recoil",   IT_TOGGLE, &cvar.norecoil,   0,0,0,       0, 0,          0},
-		{"Speedhack %", IT_INT,    &cvar.speed,      100,400,25,  0, 0,          0},
 		{"Wallhack",    IT_INT,    &cvar.wall,       0,3,1,       1, 0,          0},
 		{"No Sky",      IT_TOGGLE, &cvar.sky,        0,0,0,       0, 0,          0},
 		{"No Flash",    IT_TOGGLE, &cvar.flash,      0,0,0,       0, 0,          0},
@@ -1148,16 +1139,6 @@ void DrawCheckText(int x,int y) // bad way of doing this
 	DrawText(x,y,1.0f,1.0f,1.0f,"> peak punch seen: %0.3f   last: %0.2f %0.2f %0.2f",
 		norec_peak,norec_last[0],norec_last[1],norec_last[2]);
 	y=y+(int)(13*ui_scale);
-	// ---- Speedhack diagnostics (which engine clock(s) we actually scaled) ----
-	y=y+(int)(13*ui_scale);
-	if(cvar.speed<=100)
-		DrawText(x,y,0.7f,0.7f,1.0f,"Speedhack: OFF (1.00x)");
-	else if(!speed_installed)
-		DrawText(x,y,1.0f,0.5f,0.5f,"Speedhack: %0.2fx but NO clock hooked yet (waiting for hw.dll)",g_speed_scale);
-	else
-		DrawText(x,y,0.5f,1.0f,0.5f,"Speedhack: %0.2fx  (timeGetTime: %s | QPC: %s)",
-			g_speed_scale, speed_tgt_ok?"OK":"--", speed_qpc_ok?"OK":"--");
-	y=y+(int)(13*ui_scale);
 
 	check_h=(float)(y-startY)+13.0f*ui_scale;	// size next frame's panel to fit the text
 	gTextAlpha=1.0f;							// restore for anything drawn after us
@@ -1444,114 +1425,6 @@ void EnsureNoRecoilHook()	// install / remove the detour so it matches cvar.nore
 		}
 		norec_hooked=false;
 	}
-}
-
-// ---------------------------------------------------------------------------
-//  Speedhack  -  scale the engine's clock via IAT hooks on hw.dll.
-//
-//  The engine computes each frame's host_frametime from an OS clock. On modern
-//  hardware that's QueryPerformanceCounter (kernel32); some paths use the older
-//  timeGetTime (winmm). We don't byte-patch those APIs (other threads such as
-//  sound call them, so an unhook/call/rehook would race) - instead we swap the
-//  single pointer in hw.dll's Import Address Table that resolves each function.
-//  That is one atomic write, only affects the engine's own calls, and needs no
-//  prologue-length disassembly.
-//
-//  Each replacement returns a VIRTUAL clock: we accumulate the real delta times
-//  g_speed_scale. Accumulating deltas (instead of multiplying the raw counter)
-//  keeps the clock monotonic and smooth when the multiplier changes - and when
-//  scale==1.0 it tracks real time, so leaving the hook installed at 1x is a
-//  harmless pass-through (we install once and only vary the scale).
-// ---------------------------------------------------------------------------
-
-// Locate the IAT slot in module `modName` that imports `impDll!funcName`.
-// Returns the slot address (0 = not statically imported here) so the caller can
-// both read the original pointer and later restore it.
-static FARPROC *FindIATSlot(const char *modName,const char *impDll,const char *funcName)
-{
-	DWORD base,end;
-	if(!ModuleRange(modName,base,end)) return 0;
-	IMAGE_DOS_HEADER *dos=(IMAGE_DOS_HEADER*)base;
-	IMAGE_NT_HEADERS *nt =(IMAGE_NT_HEADERS*)(base+dos->e_lfanew);
-	DWORD rva=nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;
-	if(!rva) return 0;
-	HMODULE impMod=GetModuleHandleA(impDll);
-	if(!impMod) return 0;
-	FARPROC target=GetProcAddress(impMod,funcName);	// the address the IAT slot currently holds
-	if(!target) return 0;
-	for(IMAGE_IMPORT_DESCRIPTOR *imp=(IMAGE_IMPORT_DESCRIPTOR*)(base+rva); imp->Name; imp++)
-	{
-		const char *dll=(const char*)(base+imp->Name);
-		if(_stricmp(dll,impDll)!=0) continue;
-		for(IMAGE_THUNK_DATA *t=(IMAGE_THUNK_DATA*)(base+imp->FirstThunk); t->u1.Function; t++)
-		{
-			FARPROC *slot=(FARPROC*)&t->u1.Function;
-			if(*slot==target) return slot;				// found the resolved import
-		}
-	}
-	return 0;	// winmm/kernel32 not statically imported by this module -> retry / leave unhooked
-}
-
-// Overwrite one IAT slot (a single atomic pointer write). Returns the value it held.
-static FARPROC WriteIATSlot(FARPROC *slot,FARPROC newFn)
-{
-	DWORD old;
-	if(!VirtualProtect(slot,sizeof(FARPROC),PAGE_READWRITE,&old)) return 0;
-	FARPROC prev=*slot; *slot=newFn;
-	VirtualProtect(slot,sizeof(FARPROC),old,&old);
-	return prev;
-}
-
-// virtual-clock replacement for winmm!timeGetTime (milliseconds, DWORD wraps cleanly)
-DWORD WINAPI Hooked_timeGetTime(void)
-{
-	static bool init=false; static DWORD last=0; static double virt=0.0;
-	DWORD now=orig_timeGetTime?orig_timeGetTime():0;
-	if(!init){ last=now; virt=(double)now; init=true; }
-	virt += (double)(now-last)*g_speed_scale;	// DWORD subtraction handles 49.7-day wrap
-	last  = now;
-	return (DWORD)virt;
-}
-
-// virtual-clock replacement for kernel32!QueryPerformanceCounter (high-res counts)
-BOOL WINAPI Hooked_QPC(LARGE_INTEGER *p)
-{
-	static bool init=false; static LONGLONG last=0; static double virt=0.0;
-	LARGE_INTEGER now; now.QuadPart=0;
-	BOOL r=orig_QPC?orig_QPC(&now):FALSE;
-	if(!r||!p) return r;
-	if(!init){ last=now.QuadPart; virt=(double)now.QuadPart; init=true; }
-	virt += (double)(now.QuadPart-last)*g_speed_scale;
-	last  = now.QuadPart;
-	p->QuadPart=(LONGLONG)virt;
-	return TRUE;
-}
-
-// Keep the engine clock scaled to cvar.speed. Install the IAT hooks once (hw.dll
-// may not be loaded on the very first frames, so we retry until at least one
-// binds), then from then on only the multiplier changes.
-void EnsureSpeedHook()
-{
-	g_speed_scale = (cvar.speed>0 ? cvar.speed : 100) / 100.0;	// guard 0 -> never freeze time
-	if(speed_installed) return;
-	speed_tgt_slot=FindIATSlot("hw.dll","winmm.dll","timeGetTime");
-	if(speed_tgt_slot){ orig_timeGetTime=(DWORD(WINAPI*)(void))*speed_tgt_slot;
-		WriteIATSlot(speed_tgt_slot,(FARPROC)Hooked_timeGetTime); speed_tgt_ok=true; }
-	speed_qpc_slot=FindIATSlot("hw.dll","kernel32.dll","QueryPerformanceCounter");
-	if(speed_qpc_slot){ orig_QPC=(BOOL(WINAPI*)(LARGE_INTEGER*))*speed_qpc_slot;
-		WriteIATSlot(speed_qpc_slot,(FARPROC)Hooked_QPC); speed_qpc_ok=true; }
-	if(speed_tgt_ok||speed_qpc_ok) speed_installed=true;	// done; otherwise retry next frame
-}
-
-// Restore hw.dll's IAT slots (called on DLL detach so a stale hook can't fire).
-void RemoveSpeedHook()
-{
-	if(!speed_installed) return;
-	if(speed_tgt_ok && speed_tgt_slot && orig_timeGetTime)
-		WriteIATSlot(speed_tgt_slot,(FARPROC)orig_timeGetTime);
-	if(speed_qpc_ok && speed_qpc_slot && orig_QPC)
-		WriteIATSlot(speed_qpc_slot,(FARPROC)orig_QPC);
-	speed_installed=speed_tgt_ok=speed_qpc_ok=false;
 }
 
 bool EngDead(int idx)
@@ -3064,7 +2937,6 @@ void sys_wglSwapBuffers(HDC hDC)
 	{
 		UpdateAutofire();	// once-per-frame auto-pistol/auto-knife
 		EnsureNoRecoilHook();	// (un)install the V_CalcRefdef detour for no visual recoil
-		EnsureSpeedHook();	// install/refresh the hw.dll clock hooks for the speedhack
 		DrawEngineEsp();	// radar + engine ESP + own HUD (bottom overlay layer)
 		DrawToast();		// feature toggle notifications (middle layer)
 		DrawOverlayUI();	// hack menu + F11 check (top overlay layer)
@@ -3093,7 +2965,6 @@ BOOL __stdcall DllMain (HINSTANCE hinstDll, DWORD fdwReason, LPVOID lpvReserved)
 				}
 				norec_hooked=false;
 			}
-			RemoveSpeedHook();					// restore hw.dll's clock IAT slots
 			if ( g_ll_hook != NULL )			// remove the physical-button hook
 			{
 				UnhookWindowsHookEx(g_ll_hook);
