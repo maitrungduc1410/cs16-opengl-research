@@ -10,6 +10,8 @@ draw calls to implement wallhack, ESP, aimbot, radar, and a set of visual tweaks
   <img src="./demo.jpg" />
 </div>
 
+<video src="https://github.com/user-attachments/assets/13b489dc-080a-48f3-9f50-91764662208b" controls loop muted></video>
+
 > [!NOTE]
 > **This repository is for technical research and educational purposes only.**
 > The goal is to understand how render-layer game hacks work (DLL proxying,
