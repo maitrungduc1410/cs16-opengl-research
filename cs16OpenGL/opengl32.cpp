@@ -39,7 +39,10 @@ key_s		keyp;		// key handler bools
 offset_s	offset[10];	// custom offset stuff
 team_s		team[2]={ {"Terrorists"}, {"Counters"} };	// hardcoded team display names (team[0]=T side, team[1]=CT side)
 
-GLuint base; // for bitmap font
+#define FONT_SIZES  4
+GLuint g_font_base[FONT_SIZES];		// font display list bases (sizes 1-4: 7/10/13/16px at 1080p)
+int    g_fontw_sz[FONT_SIZES][96];	// per-char widths per font size
+GLuint base; // for bitmap font (= g_font_base[1], the default size)
 HDC hDC;
 void CountOffset();		// get the number of added offsets
 void SetOffset(int x);	// set offset for aiming
@@ -114,9 +117,11 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "esp_engine %i;",&cvar.esp_engine);
 					sscanf(str, "esp_name %i;"	,&cvar.esp_name);
 					sscanf(str, "esp_name_pad %i;",&cvar.esp_name_pad);
+					sscanf(str, "esp_name_size %i;",&cvar.esp_name_size);
 					sscanf(str, "esp_box %i;"	,&cvar.esp_box);
 					sscanf(str, "esp_dist %i;"	,&cvar.esp_dist);
 					sscanf(str, "esp_dist_pad %i;",&cvar.esp_dist_pad);
+					sscanf(str, "esp_dist_size %i;",&cvar.esp_dist_size);
 					sscanf(str, "esp_hud %i;"	,&cvar.esp_hud);
 					sscanf(str, "hud_hp %i;"	,&cvar.hud_hp);
 					sscanf(str, "hud_ammo %i;"	,&cvar.hud_ammo);
@@ -219,12 +224,14 @@ void SaveSettings()
 	fprintf(f,"esp_engine %i\n",cvar.esp_engine);
 	fprintf(f,"esp_name %i\n",cvar.esp_name);
 	fprintf(f,"esp_name_pad %i\n",cvar.esp_name_pad);
+	fprintf(f,"esp_name_size %i\n",cvar.esp_name_size);
 	fprintf(f,"esp_box %i\n",cvar.esp_box);
 	fprintf(f,"esp_box_pad %i\n",cvar.esp_box_pad);
 	fprintf(f,"esp_box_radius %i\n",cvar.esp_box_radius);
 	fprintf(f,"esp_box_width %i\n",cvar.esp_box_width);
 	fprintf(f,"esp_dist %i\n",cvar.esp_dist);
 	fprintf(f,"esp_dist_pad %i\n",cvar.esp_dist_pad);
+	fprintf(f,"esp_dist_size %i\n",cvar.esp_dist_size);
 	fprintf(f,"esp_head %i\n",cvar.esp_head);
 	fprintf(f,"esp_snap %i\n",cvar.esp_snap);
 	fprintf(f,"esp_vischeck %i\n",cvar.esp_vischeck);
@@ -299,12 +306,14 @@ void LoadSettings()
 		sscanf(str,"esp_engine %i"	,&cvar.esp_engine);
 		sscanf(str,"esp_name %i"	,&cvar.esp_name);
 		sscanf(str,"esp_name_pad %i",&cvar.esp_name_pad);
+		sscanf(str,"esp_name_size %i",&cvar.esp_name_size);
 		sscanf(str,"esp_box %i"		,&cvar.esp_box);
 		sscanf(str,"esp_box_pad %i"	,&cvar.esp_box_pad);
 		sscanf(str,"esp_box_radius %i",&cvar.esp_box_radius);
 		sscanf(str,"esp_box_width %i",&cvar.esp_box_width);
 		sscanf(str,"esp_dist %i"	,&cvar.esp_dist);
 		sscanf(str,"esp_dist_pad %i",&cvar.esp_dist_pad);
+		sscanf(str,"esp_dist_size %i",&cvar.esp_dist_size);
 		sscanf(str,"esp_head %i"	,&cvar.esp_head);
 		sscanf(str,"esp_snap %i"	,&cvar.esp_snap);
 		sscanf(str,"esp_vischeck %i",&cvar.esp_vischeck);
@@ -520,9 +529,9 @@ void ResetConfig()
 	// 1) zero all gameplay cvars so stale save values can't bleed through
 	cvar.aim=0; cvar.aim_smooth=0; cvar.trigger=0; cvar.trigger_delay=0;
 	cvar.autofire=0; cvar.autofire_rate=0; cvar.notify=0; cvar.esp_log=0;
-	cvar.aimthru=0; cvar.esp_engine=0; cvar.esp_name=0; cvar.esp_name_pad=0; cvar.esp_box=0;
+	cvar.aimthru=0; cvar.esp_engine=0; cvar.esp_name=0; cvar.esp_name_pad=0; cvar.esp_name_size=2; cvar.esp_box=0;
 	cvar.esp_box_pad=0; cvar.esp_box_radius=0; cvar.esp_box_width=0;
-	cvar.esp_dist=0; cvar.esp_dist_pad=0; cvar.esp_head=0; cvar.esp_snap=0; cvar.esp_vischeck=0;
+	cvar.esp_dist=0; cvar.esp_dist_pad=0; cvar.esp_dist_size=2; cvar.esp_head=0; cvar.esp_snap=0; cvar.esp_vischeck=0;
 	cvar.esp_arrow=0; cvar.esp_maxdist=0; cvar.esp_fade=0; cvar.esp_team=0;
 	cvar.esp_dbg=0; cvar.esp_hud=0; cvar.hud_hp=0; cvar.hud_ammo=0;
 	cvar.hud_die=0; cvar.hud_pad=0; cvar.chams=0; cvar.chams_wire=0;
@@ -691,8 +700,6 @@ bool pTimer(int sec)	// a timer function
 GLvoid BuildFont(GLvoid) // loads the opengl font into memory
 {
 	hDC=wglGetCurrentDC();
-	HFONT	font;										
-	HFONT	oldfont;									
 
 	// scale the bitmap font to the screen so text isn't tiny on 4K. Baseline is
 	// 1080p; clamp so it never gets smaller than the original or absurdly big.
@@ -700,16 +707,22 @@ GLvoid BuildFont(GLvoid) // loads the opengl font into memory
 	ui_scale = (vpf[3]>0) ? (float)vpf[3]/1080.0f : 1.0f;
 	if(ui_scale<1.0f) ui_scale=1.0f;
 	if(ui_scale>2.5f) ui_scale=2.5f;
-	int fh = (int)(10.0f*ui_scale + 0.5f);	// font height in px (10 at 1080p)
 
-	base = (*orig_glGenLists)(96);								
-	font = CreateFont(-fh,0,0,0,FW_BOLD,FALSE,FALSE,FALSE,ANSI_CHARSET,OUT_TT_PRECIS,CLIP_DEFAULT_PRECIS,ANTIALIASED_QUALITY,FF_DONTCARE|DEFAULT_PITCH,
-	"Verdana");
-	oldfont = (HFONT)SelectObject(hDC, font);           
-	wglUseFontBitmaps(hDC, 32, 96, base);				
-	GetCharWidth32(hDC, 32, 127, g_fontw);	// record per-char widths for accurate text centering
-	SelectObject(hDC, oldfont);							
-	DeleteObject(font);									
+	// Build 4 font sizes: 7/10/13/16 px at 1080p (all scaled by ui_scale)
+	static const float sz_px[FONT_SIZES]={7.0f,10.0f,13.0f,16.0f};
+	for(int si=0;si<FONT_SIZES;si++)
+	{
+		int fh=(int)(sz_px[si]*ui_scale+0.5f);
+		g_font_base[si]=(*orig_glGenLists)(96);
+		HFONT font=CreateFont(-fh,0,0,0,FW_BOLD,FALSE,FALSE,FALSE,ANSI_CHARSET,OUT_TT_PRECIS,CLIP_DEFAULT_PRECIS,ANTIALIASED_QUALITY,FF_DONTCARE|DEFAULT_PITCH,"Verdana");
+		HFONT oldfont=(HFONT)SelectObject(hDC,font);
+		wglUseFontBitmaps(hDC,32,96,g_font_base[si]);
+		GetCharWidth32(hDC,32,127,g_fontw_sz[si]);
+		SelectObject(hDC,oldfont);
+		DeleteObject(font);
+	}
+	base=g_font_base[1];				// size 2 (10px) = default for all DrawText calls
+	memcpy(g_fontw,g_fontw_sz[1],sizeof(g_fontw));	// sync g_fontw to the default size
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -730,7 +743,8 @@ float TextWidthPx(const char *s)
 //////////////////////////////////////////////////////////////////////////////////////////////////
 GLvoid KillFont(GLvoid)									
 {
-	(*orig_glDeleteLists)(base, 96);
+	for(int si=0;si<FONT_SIZES;si++)
+		(*orig_glDeleteLists)(g_font_base[si], 96);
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -777,6 +791,58 @@ void DrawText(float x, float y,float r, float g, float b, const char *fmt, ...)
     (*orig_glPopAttrib)();
     (*orig_glColor4fv)(curcolor);
     (*orig_glRasterPos2f)(position[0],position[1]);
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+// Pixel width of a string using a specific font size (1-4).
+float TextWidthPxSz(const char *s, int sz)
+{
+	if(!s) return 0.0f;
+	if(sz<1) sz=1; if(sz>FONT_SIZES) sz=FONT_SIZES;
+	float w=0.0f;
+	for(; *s; s++)
+	{
+		unsigned char c=(unsigned char)*s;
+		if(c>=32 && c<128) w+=(float)g_fontw_sz[sz-1][c-32];
+	}
+	return w;
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+// DrawText variant that renders at a specific font size (1=small .. 4=x-large).
+void DrawTextSz(float x, float y, float r, float g, float b, int sz, const char *fmt, ...)
+{
+	char		text[256];
+	va_list		ap;
+	if(fmt==NULL) return;
+	va_start(ap,fmt); vsprintf(text,fmt,ap); va_end(ap);
+	if(sz<1) sz=1; if(sz>FONT_SIZES) sz=FONT_SIZES;
+	GLuint fsz=g_font_base[sz-1]; if(fsz==0) fsz=base;	// fallback to default if not built
+
+	GLfloat  curcolor[4], position[4];
+	(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
+	(*orig_glGetFloatv)(GL_CURRENT_COLOR, curcolor);
+	(*orig_glGetFloatv)(GL_CURRENT_RASTER_POSITION, position);
+	(*orig_glDisable)(GL_TEXTURE_2D);
+	(*orig_glColor4f)(0.0f,0.0f,0.0f,gTextAlpha);
+	(*orig_glRasterPos2f)(x+1,y+1);
+	(*orig_glPushAttrib)(GL_LIST_BIT);
+	(*orig_glListBase)(fsz - 32);
+	(*orig_glCallLists)(strlen(text), GL_UNSIGNED_BYTE, text);
+	(*orig_glPopAttrib)();
+	(*orig_glEnable)(GL_TEXTURE_2D);
+	(*orig_glDisable)(GL_TEXTURE_2D);
+	(*orig_glColor4f)(r,g,b,gTextAlpha);
+	(*orig_glRasterPos2f)(x,y);
+	(*orig_glColor4f)(r,g,b,gTextAlpha);
+	(*orig_glPushAttrib)(GL_LIST_BIT);
+	(*orig_glListBase)(fsz - 32);
+	(*orig_glCallLists)(strlen(text), GL_UNSIGNED_BYTE, text);
+	(*orig_glPopAttrib)();
+	(*orig_glEnable)(GL_TEXTURE_2D);
+	(*orig_glPopAttrib)();
+	(*orig_glColor4fv)(curcolor);
+	(*orig_glRasterPos2f)(position[0],position[1]);
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -849,15 +915,17 @@ void DrawMenu(int x, int y)
 		{"No Smoke",    IT_TOGGLE, &cvar.smoke,      0,0,0,       0, 0,          0},
 		{"Lambert",     IT_TOGGLE, &cvar.lambert,    0,0,0,       0, 0,          0},
 		{"ESP Engine",  IT_TOGGLE, &cvar.esp_engine, 0,0,0,       0, 0,                0},
-		{"Player name", IT_TOGGLE, &cvar.esp_name,    0,0,0,      0, &cvar.esp_engine, 1},
-		{"Name padding",IT_INT,    &cvar.esp_name_pad,-20,40,2,   0, &cvar.esp_name,   1},
-		{"Box",         IT_TOGGLE, &cvar.esp_box,     0,0,0,      0, &cvar.esp_engine, 1},
+		{"Player name", IT_TOGGLE, &cvar.esp_name,     0,0,0,      0, &cvar.esp_engine, 1},
+		{"Name size",   IT_INT,    &cvar.esp_name_size, 1,4,1,      1, &cvar.esp_name,   1},
+		{"Name padding",IT_INT,    &cvar.esp_name_pad,  -20,40,2,   0, &cvar.esp_name,   1},
+		{"Box",         IT_TOGGLE, &cvar.esp_box,       0,0,0,      0, &cvar.esp_engine, 1},
 		{"Box padding", IT_INT,    &cvar.esp_box_pad,   -10,40,2, 0, &cvar.esp_engine, 1},
 		{"Box radius",  IT_INT,    &cvar.esp_box_radius, 0,20,2,  0, &cvar.esp_engine, 1},
 		{"Box width",   IT_INT,    &cvar.esp_box_width,  1,8,1,   0, &cvar.esp_engine, 1},
-		{"Distance",    IT_TOGGLE, &cvar.esp_dist,    0,0,0,      0, &cvar.esp_engine, 1},
-		{"Dist padding",IT_INT,    &cvar.esp_dist_pad,-20,40,2,   0, &cvar.esp_dist,   1},
-		{"Head dot",    IT_TOGGLE, &cvar.esp_head,    0,0,0,      0, &cvar.esp_engine, 1},
+		{"Distance",    IT_TOGGLE, &cvar.esp_dist,     0,0,0,      0, &cvar.esp_engine, 1},
+		{"Dist size",   IT_INT,    &cvar.esp_dist_size, 1,4,1,      1, &cvar.esp_dist,   1},
+		{"Dist padding",IT_INT,    &cvar.esp_dist_pad,  -20,40,2,   0, &cvar.esp_dist,   1},
+		{"Head dot",    IT_TOGGLE, &cvar.esp_head,      0,0,0,      0, &cvar.esp_engine, 1},
 		{"Snaplines",   IT_INT,    &cvar.esp_snap,   0,3,1,       1, &cvar.esp_engine, 1},
 		{"Vis check",   IT_TOGGLE, &cvar.esp_vischeck,0,0,0,      0, &cvar.esp_engine, 1},
 		{"Off-screen arrow",IT_TOGGLE,&cvar.esp_arrow,0,0,0,      0, &cvar.esp_engine, 1},
@@ -2202,14 +2270,17 @@ void DrawEngineEsp()
 		if(cvar.esp_name)
 		{
 			float ta=gTextAlpha; gTextAlpha=esp_a;
-			DrawText(cx-(float)strlen(namebuf)*4.0f*ui_scale, y0-(14.0f+(float)cvar.esp_name_pad)*ui_scale, vr,vg,vb, "%s", namebuf);
+			float ntw=TextWidthPxSz(namebuf,cvar.esp_name_size);
+			DrawTextSz(cx-ntw*0.5f, y0-(14.0f+(float)cvar.esp_name_pad)*ui_scale, vr,vg,vb, cvar.esp_name_size, "%s", namebuf);
 			gTextAlpha=ta;
 		}
 
 		if(cvar.esp_dist)
 		{
 			float ta=gTextAlpha; gTextAlpha=esp_a;
-			DrawText(cx-12.0f*ui_scale, y1+(2.0f+(float)cvar.esp_dist_pad)*ui_scale, 1.0f,1.0f,1.0f, "%.0fm", distM);
+			char distbuf[32]; sprintf(distbuf,"%.0fm",distM);
+			float dtw=TextWidthPxSz(distbuf,cvar.esp_dist_size);
+			DrawTextSz(cx-dtw*0.5f, y1+(2.0f+(float)cvar.esp_dist_pad)*ui_scale, 1.0f,1.0f,1.0f, cvar.esp_dist_size, "%.0fm", distM);
 			gTextAlpha=ta;
 		}
 
