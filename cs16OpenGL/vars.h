@@ -80,9 +80,9 @@ typedef struct { // cvars (of course ;P)
 	int menu_y;
 	int check_x;	// F11 check-screen panel position (x)
 	int check_y;	// F11 check-screen panel position (y)
-	int aimkey;
 	float stand_h;
 	float duck_h;
+	int menu_vis_rows;	// rows shown at once in the hack menu before scrolling (default 20)
 }cvar_s;
 
 typedef struct { // for menu controlling
@@ -139,7 +139,6 @@ bool ch=false;
 bool key_init=false;
 bool key_check=false;
 bool key_ften=false;
-bool aimkeychanged=false;
 bool hookactive=false;
 bool FirstInit=false;
 bool modelviewport=false;

@@ -58,7 +58,7 @@ float curcolor[4];
 // hack-menu scrolling: keep the panel a fixed height (MENU_VIS_ROWS rows) and
 // scroll the list when there are more entries; arrows pick the row, the view
 // follows. Holding up/down auto-repeats after REP_DELAY, then every REP_RATE ms.
-#define MENU_VIS_ROWS   10		// rows shown at once before the list scrolls
+#define MENU_VIS_ROWS   20		// rows shown at once before the list scrolls (default; overridden by menu_vis_rows in oglconf.cfg / oglsave.cfg)
 #define MENU_REP_DELAY  350		// ms a key must be held before it starts repeating
 #define MENU_REP_RATE   70		// ms between auto-repeat steps while held
 
@@ -155,7 +155,7 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "check_y %i;"	,&cvar.check_y);
 					sscanf(str, "stand_h %f;"	,&cvar.stand_h);
 					sscanf(str, "duck_h %f;"	,&cvar.duck_h);
-					sscanf(str, "aimkey %i;"	,&cvar.aimkey);
+					sscanf(str, "menu_vis_rows %i;",&cvar.menu_vis_rows);
 					//offset scan
 					sscanf(str, "offset0 s %f d %f %s %s %s %s %s;",&offset[0].s,&offset[0].d,&offset[0].npart1,&offset[0].npart2,&offset[0].npart3,&offset[0].npart4,&offset[0].npart5);
 					sscanf(str, "offset1 s %f d %f %s %s %s %s %s;",&offset[1].s,&offset[1].d,&offset[1].npart1,&offset[1].npart2,&offset[1].npart3,&offset[1].npart4,&offset[1].npart5);
@@ -245,7 +245,6 @@ void SaveSettings()
 	fprintf(f,"radar_rotate %i\n",cvar.radar_rotate);
 	fprintf(f,"radar_names %i\n",cvar.radar_names);
 	fprintf(f,"radar_rings %i\n",cvar.radar_rings);
-	fprintf(f,"aimkey %i\n",cvar.aimkey);
 	fprintf(f,"menu_x %i\n",cvar.menu_x);
 	fprintf(f,"menu_y %i\n",cvar.menu_y);
 	fprintf(f,"check_x %i\n",cvar.check_x);
@@ -254,6 +253,7 @@ void SaveSettings()
 	fprintf(f,"customoffset %i\n",customoffset?1:0);
 	fprintf(f,"stand_h %f\n",cvar.stand_h);
 	fprintf(f,"duck_h %f\n",cvar.duck_h);
+	fprintf(f,"menu_vis_rows %i\n",cvar.menu_vis_rows);
 	fclose(f);
 }
 
@@ -323,7 +323,6 @@ void LoadSettings()
 		sscanf(str,"radar_rotate %i",&cvar.radar_rotate);
 		sscanf(str,"radar_names %i"	,&cvar.radar_names);
 		sscanf(str,"radar_rings %i"	,&cvar.radar_rings);
-		sscanf(str,"aimkey %i"		,&cvar.aimkey);
 		sscanf(str,"menu_x %i"		,&cvar.menu_x);
 		sscanf(str,"menu_y %i"		,&cvar.menu_y);
 		sscanf(str,"check_x %i"		,&cvar.check_x);
@@ -332,6 +331,7 @@ void LoadSettings()
 		sscanf(str,"customoffset %i",&ci);
 		sscanf(str,"stand_h %f"		,&cvar.stand_h);
 		sscanf(str,"duck_h %f"		,&cvar.duck_h);
+		sscanf(str,"menu_vis_rows %i",&cvar.menu_vis_rows);
 	}
 	customoffset=(ci!=0);
 	fclose(f);
@@ -346,10 +346,13 @@ void HookInit(bool activate)
 		cvar.menu_x=MENU_DEF_X;   cvar.menu_y=MENU_DEF_Y;	// position defaults (oglconf/save override)
 		cvar.check_x=CHECK_DEF_X; cvar.check_y=CHECK_DEF_Y;
 		cvar.radar_x=RADAR_DEF_X; cvar.radar_y=RADAR_DEF_Y;
+		cvar.menu_vis_rows=MENU_VIS_ROWS;	// default, overridden by oglconf.cfg then oglsave.cfg
 		LoadFile("oglconf.cfg",0);	// read DEFAULT cvar settings + offsets
 		CountOffset();				// count number of custom offsets
 		SetOffsetNames();			// set the names
 		LoadSettings();				// override defaults with the user's saved settings (if any)
+		if(cvar.menu_vis_rows<4)  cvar.menu_vis_rows=4;
+		if(cvar.menu_vis_rows>55) cvar.menu_vis_rows=55;
 		if(curoffset<0||curoffset>9) curoffset=0;	// hard bound (offset[] has 10 slots)
 		if(offsetcount>0 && curoffset>offsetcount-1) curoffset=offsetcount-1;
 		if(customoffset)			// keep the custom stand/duck heights restored by LoadSettings
@@ -504,6 +507,48 @@ void MoveActivePanel(int dx,int dy)
 	}
 }
 
+//////////////////////////////////////////////////////////////////////////////////////////////////
+// Reset all config to defaults: reload oglconf.cfg, delete oglsave.cfg, notify the player.
+void ResetConfig()
+{
+	// 1) zero all gameplay cvars so stale save values can't bleed through
+	cvar.aim=0; cvar.aim_smooth=0; cvar.trigger=0; cvar.trigger_delay=0;
+	cvar.autofire=0; cvar.autofire_rate=0; cvar.notify=0; cvar.esp_log=0;
+	cvar.aimthru=0; cvar.esp_engine=0; cvar.esp_name=0; cvar.esp_box=0;
+	cvar.esp_box_pad=0; cvar.esp_box_radius=0; cvar.esp_box_width=0;
+	cvar.esp_dist=0; cvar.esp_head=0; cvar.esp_snap=0; cvar.esp_vischeck=0;
+	cvar.esp_arrow=0; cvar.esp_maxdist=0; cvar.esp_fade=0; cvar.esp_team=0;
+	cvar.esp_dbg=0; cvar.esp_hud=0; cvar.hud_hp=0; cvar.hud_ammo=0;
+	cvar.hud_die=0; cvar.hud_pad=0; cvar.chams=0; cvar.chams_wire=0;
+	cvar.radar=0; cvar.radar_shape=0; cvar.radar_size=0; cvar.radar_zoom=0;
+	cvar.radar_rotate=0; cvar.radar_names=0; cvar.radar_rings=0;
+	cvar.lambert=0; cvar.cross=0; cvar.wall=0; cvar.smoke=0; cvar.flash=0;
+	cvar.scope=0; cvar.sky=0; cvar.recoil=0; cvar.norecoil=0;
+	cvar.fov=0; cvar.shoot=0; cvar.target=0;
+	// 2) restore UI position defaults
+	cvar.menu_x=MENU_DEF_X; cvar.menu_y=MENU_DEF_Y;
+	cvar.check_x=CHECK_DEF_X; cvar.check_y=CHECK_DEF_Y;
+	cvar.radar_x=RADAR_DEF_X; cvar.radar_y=RADAR_DEF_Y;
+	cvar.menu_vis_rows=MENU_VIS_ROWS;
+	menu_move_mode=0;
+	// 3) reload defaults from oglconf.cfg
+	LoadFile("oglconf.cfg",0);
+	CountOffset();
+	SetOffsetNames();
+	if(curoffset<0||curoffset>9) curoffset=0;
+	if(offsetcount>0&&curoffset>offsetcount-1) curoffset=offsetcount-1;
+	if(cvar.menu_vis_rows<4) cvar.menu_vis_rows=4;
+	if(cvar.menu_vis_rows>55) cvar.menu_vis_rows=55;
+	SetOffset(curoffset); customoffset=false;
+	// 4) delete oglsave.cfg
+	char path[_MAX_PATH]=""; GetSavePath(path);
+	DeleteFileA(path);
+	saveloaded=false;
+	// 5) toast (notify was just restored from oglconf.cfg so it's the default value)
+	cvar.notify=1;			// force toast visible even if config had notify 0
+	SetToast("Config reset to defaults!");
+}
+
 void HandleKey(int key) // keyhandler
 {
 	if(GetAsyncKeyState(key))
@@ -530,11 +575,7 @@ void HandleKey(int key) // keyhandler
 			if(!key_ften)
 			{
 				key_ften=true;
-				aimkeychanged=true;
-				cvar.aimkey++;
-				if(cvar.aimkey>3) { cvar.aimkey=0; }
-				else if(cvar.aimkey<0) { cvar.aimkey=3; }
-				SaveSettings();	// persist the aim-key choice too
+				ResetConfig();
 			}
 			break;
 		case VK_INSERT:
@@ -855,7 +896,8 @@ void DrawMenu(int x, int y)
 	if(menu.count<0)     menu.count=0;
 
 	// scroll window: keep a fixed height and slide so the cursor stays visible
-	int visRows = (nvis<MENU_VIS_ROWS)?nvis:MENU_VIS_ROWS;
+	int visRows = cvar.menu_vis_rows; if(visRows<4) visRows=4; if(visRows>55) visRows=55;
+	visRows = (nvis<visRows)?nvis:visRows;
 	if(menu.count < menu_scroll)            menu_scroll = menu.count;				// scrolled above the view
 	if(menu.count >= menu_scroll+visRows)   menu_scroll = menu.count-visRows+1;	// scrolled below the view
 	if(menu_scroll > nvis-visRows)          menu_scroll = nvis-visRows;			// don't show empty space past the end
@@ -1100,18 +1142,6 @@ void DrawCheckText(int x,int y) // bad way of doing this
 
 	check_h=(float)(y-startY)+13.0f*ui_scale;	// size next frame's panel to fit the text
 	gTextAlpha=1.0f;							// restore for anything drawn after us
-}
-
-void DrawKeyInfo() // just drawn if 'aimkeychanged' is true
-{
-	if(cvar.aimkey==0)
-		DrawText((vp[2]/2)-120,(vp[3]/2)-30,0.9f,0.9f,1.0f,"Aim changed to <Autoaim>");
-	else if(cvar.aimkey==1)
-		DrawText((vp[2]/2)-120,(vp[3]/2)-30,0.9f,0.9f,1.0f,"Aim changed to <Mouse1>");
-	else if(cvar.aimkey==2)
-		DrawText((vp[2]/2)-120,(vp[3]/2)-30,0.9f,0.9f,1.0f,"Aim changed to <Mouse2>");
-	else if(cvar.aimkey==3)
-		DrawText((vp[2]/2)-120,(vp[3]/2)-30,0.9f,0.9f,1.0f,"Aim changed to <Mouse3>");
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2413,13 +2443,6 @@ void sys_glEnable (GLenum cap)
 		// NOTE: the menu + F11 check are drawn later (in wglSwapBuffers, via
 		// DrawOverlayUI) so they sit ON TOP of the radar / engine ESP overlay.
 
-		if(aimkeychanged) // F10 pressed
-		{
-			if(pTimer(5)) // draw key change info for 5 seconds
-				DrawKeyInfo();
-			else
-				aimkeychanged=false;
-		}
 		if(gotflashed)
 		{
 			if(pTimer(1)) // 1 second only cuz gotflashed turns true/false even if ur still supposed to be flashed
@@ -2656,11 +2679,6 @@ void sys_glViewport (GLint x,  GLint y,  GLsizei width,  GLsizei height)
 	if(cvar.aim && eng_aim_have && hookactive && enabledraw)
 	{
 		eng_aim_have=false;			// consume the per-frame pick
-		bool keyok = (cvar.aimkey==0)
-			|| (cvar.aimkey==1 && GetAsyncKeyState(VK_LBUTTON))
-			|| (cvar.aimkey==2 && GetAsyncKeyState(VK_RBUTTON))
-			|| (cvar.aimkey==3 && GetAsyncKeyState(VK_MBUTTON));
-		if(keyok)
 		{
 			// Convert screen target to absolute mouse coords (0..65535 in vp space).
 			// Optional smoothing: divide the move into N steps, only apply 1/N this frame.
