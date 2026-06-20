@@ -113,8 +113,10 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "norecoil %i;"	,&cvar.norecoil);
 					sscanf(str, "esp_engine %i;",&cvar.esp_engine);
 					sscanf(str, "esp_name %i;"	,&cvar.esp_name);
+					sscanf(str, "esp_name_pad %i;",&cvar.esp_name_pad);
 					sscanf(str, "esp_box %i;"	,&cvar.esp_box);
 					sscanf(str, "esp_dist %i;"	,&cvar.esp_dist);
+					sscanf(str, "esp_dist_pad %i;",&cvar.esp_dist_pad);
 					sscanf(str, "esp_hud %i;"	,&cvar.esp_hud);
 					sscanf(str, "hud_hp %i;"	,&cvar.hud_hp);
 					sscanf(str, "hud_ammo %i;"	,&cvar.hud_ammo);
@@ -216,11 +218,13 @@ void SaveSettings()
 	fprintf(f,"crosshair %i\n",cvar.cross);
 	fprintf(f,"esp_engine %i\n",cvar.esp_engine);
 	fprintf(f,"esp_name %i\n",cvar.esp_name);
+	fprintf(f,"esp_name_pad %i\n",cvar.esp_name_pad);
 	fprintf(f,"esp_box %i\n",cvar.esp_box);
 	fprintf(f,"esp_box_pad %i\n",cvar.esp_box_pad);
 	fprintf(f,"esp_box_radius %i\n",cvar.esp_box_radius);
 	fprintf(f,"esp_box_width %i\n",cvar.esp_box_width);
 	fprintf(f,"esp_dist %i\n",cvar.esp_dist);
+	fprintf(f,"esp_dist_pad %i\n",cvar.esp_dist_pad);
 	fprintf(f,"esp_head %i\n",cvar.esp_head);
 	fprintf(f,"esp_snap %i\n",cvar.esp_snap);
 	fprintf(f,"esp_vischeck %i\n",cvar.esp_vischeck);
@@ -294,11 +298,13 @@ void LoadSettings()
 		sscanf(str,"crosshair %i"	,&cvar.cross);
 		sscanf(str,"esp_engine %i"	,&cvar.esp_engine);
 		sscanf(str,"esp_name %i"	,&cvar.esp_name);
+		sscanf(str,"esp_name_pad %i",&cvar.esp_name_pad);
 		sscanf(str,"esp_box %i"		,&cvar.esp_box);
 		sscanf(str,"esp_box_pad %i"	,&cvar.esp_box_pad);
 		sscanf(str,"esp_box_radius %i",&cvar.esp_box_radius);
 		sscanf(str,"esp_box_width %i",&cvar.esp_box_width);
 		sscanf(str,"esp_dist %i"	,&cvar.esp_dist);
+		sscanf(str,"esp_dist_pad %i",&cvar.esp_dist_pad);
 		sscanf(str,"esp_head %i"	,&cvar.esp_head);
 		sscanf(str,"esp_snap %i"	,&cvar.esp_snap);
 		sscanf(str,"esp_vischeck %i",&cvar.esp_vischeck);
@@ -514,9 +520,9 @@ void ResetConfig()
 	// 1) zero all gameplay cvars so stale save values can't bleed through
 	cvar.aim=0; cvar.aim_smooth=0; cvar.trigger=0; cvar.trigger_delay=0;
 	cvar.autofire=0; cvar.autofire_rate=0; cvar.notify=0; cvar.esp_log=0;
-	cvar.aimthru=0; cvar.esp_engine=0; cvar.esp_name=0; cvar.esp_box=0;
+	cvar.aimthru=0; cvar.esp_engine=0; cvar.esp_name=0; cvar.esp_name_pad=0; cvar.esp_box=0;
 	cvar.esp_box_pad=0; cvar.esp_box_radius=0; cvar.esp_box_width=0;
-	cvar.esp_dist=0; cvar.esp_head=0; cvar.esp_snap=0; cvar.esp_vischeck=0;
+	cvar.esp_dist=0; cvar.esp_dist_pad=0; cvar.esp_head=0; cvar.esp_snap=0; cvar.esp_vischeck=0;
 	cvar.esp_arrow=0; cvar.esp_maxdist=0; cvar.esp_fade=0; cvar.esp_team=0;
 	cvar.esp_dbg=0; cvar.esp_hud=0; cvar.hud_hp=0; cvar.hud_ammo=0;
 	cvar.hud_die=0; cvar.hud_pad=0; cvar.chams=0; cvar.chams_wire=0;
@@ -843,13 +849,15 @@ void DrawMenu(int x, int y)
 		{"No Smoke",    IT_TOGGLE, &cvar.smoke,      0,0,0,       0, 0,          0},
 		{"Lambert",     IT_TOGGLE, &cvar.lambert,    0,0,0,       0, 0,          0},
 		{"ESP Engine",  IT_TOGGLE, &cvar.esp_engine, 0,0,0,       0, 0,                0},
-		{"Player Name", IT_TOGGLE, &cvar.esp_name,   0,0,0,       0, &cvar.esp_engine, 1},
-		{"Box",         IT_TOGGLE, &cvar.esp_box,    0,0,0,       0, &cvar.esp_engine, 1},
+		{"Player name", IT_TOGGLE, &cvar.esp_name,    0,0,0,      0, &cvar.esp_engine, 1},
+		{"Name padding",IT_INT,    &cvar.esp_name_pad,-20,40,2,   0, &cvar.esp_name,   1},
+		{"Box",         IT_TOGGLE, &cvar.esp_box,     0,0,0,      0, &cvar.esp_engine, 1},
 		{"Box padding", IT_INT,    &cvar.esp_box_pad,   -10,40,2, 0, &cvar.esp_engine, 1},
 		{"Box radius",  IT_INT,    &cvar.esp_box_radius, 0,20,2,  0, &cvar.esp_engine, 1},
 		{"Box width",   IT_INT,    &cvar.esp_box_width,  1,8,1,   0, &cvar.esp_engine, 1},
-		{"Distance",    IT_TOGGLE, &cvar.esp_dist,   0,0,0,       0, &cvar.esp_engine, 1},
-		{"Head dot",    IT_TOGGLE, &cvar.esp_head,   0,0,0,       0, &cvar.esp_engine, 1},
+		{"Distance",    IT_TOGGLE, &cvar.esp_dist,    0,0,0,      0, &cvar.esp_engine, 1},
+		{"Dist padding",IT_INT,    &cvar.esp_dist_pad,-20,40,2,   0, &cvar.esp_dist,   1},
+		{"Head dot",    IT_TOGGLE, &cvar.esp_head,    0,0,0,      0, &cvar.esp_engine, 1},
 		{"Snaplines",   IT_INT,    &cvar.esp_snap,   0,3,1,       1, &cvar.esp_engine, 1},
 		{"Vis check",   IT_TOGGLE, &cvar.esp_vischeck,0,0,0,      0, &cvar.esp_engine, 1},
 		{"Off-screen arrow",IT_TOGGLE,&cvar.esp_arrow,0,0,0,      0, &cvar.esp_engine, 1},
@@ -2194,14 +2202,14 @@ void DrawEngineEsp()
 		if(cvar.esp_name)
 		{
 			float ta=gTextAlpha; gTextAlpha=esp_a;
-			DrawText(cx-(float)strlen(namebuf)*4.0f*ui_scale, y0-14.0f*ui_scale, vr,vg,vb, "%s", namebuf);
+			DrawText(cx-(float)strlen(namebuf)*4.0f*ui_scale, y0-(14.0f+(float)cvar.esp_name_pad)*ui_scale, vr,vg,vb, "%s", namebuf);
 			gTextAlpha=ta;
 		}
 
 		if(cvar.esp_dist)
 		{
 			float ta=gTextAlpha; gTextAlpha=esp_a;
-			DrawText(cx-12.0f*ui_scale, y1+2.0f, 1.0f,1.0f,1.0f, "%.0fm", distM);
+			DrawText(cx-12.0f*ui_scale, y1+(2.0f+(float)cvar.esp_dist_pad)*ui_scale, 1.0f,1.0f,1.0f, "%.0fm", distM);
 			gTextAlpha=ta;
 		}
 
