@@ -240,7 +240,7 @@ cvar pointer, range, dependency). The scroll window, animated highlight bar, and
 fade-in/out all run from a single `UpdateMenuAnim()` call each frame.
 
 **Two config files:**
-- `oglconf.cfg` — shipped defaults + aim offsets. Loaded once on `F12`.
+- `oglconf.cfg` — shipped defaults. Loaded once on `F12`.
 - `oglsave.cfg` — auto-written on every menu change via `SaveSettings()`.
   Loaded after `oglconf.cfg` on `F12` so user tweaks override defaults.
   Pressing `F10` resets everything back to `oglconf.cfg` defaults and deletes

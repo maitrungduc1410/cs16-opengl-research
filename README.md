@@ -47,7 +47,7 @@ draw calls to implement wallhack, ESP, aimbot, radar, and a set of visual tweaks
 2. Copy **both files** into your Counter-Strike 1.6 main directory
    (the folder that contains `hl.exe` / `cstrike`):
    - `opengl32.dll` — the prebuilt hack
-   - `oglconf.cfg` — default settings (cvars, aim offsets)
+   - `oglconf.cfg` — default settings (cvars)
 3. Make sure the game is running in **OpenGL** video mode.
 4. Launch the game, then press `F12` to enable the hack.
 
@@ -85,14 +85,6 @@ draw calls to implement wallhack, ESP, aimbot, radar, and a set of visual tweaks
 Open the menu with `Insert`. Use `↑`/`↓` to scroll, `←`/`→` to change a value.
 Sub-options (indented with `- `) are hidden until their parent feature is turned on.
 
-#### Aim offset
-
-| Option | Description |
-|--------|-------------|
-| **Offset** | Selects a named aim-height preset from `oglconf.cfg` (e.g. Mp5, Scout, Headshot). |
-| **Stand_h** | Vertical aim offset when the target is standing. Higher = aim higher. |
-| **Duck_h** | Vertical aim offset when the target is crouching. |
-
 #### Aimbot
 
 | Option | Description |
@@ -103,6 +95,8 @@ Sub-options (indented with `- `) are hidden until their parent feature is turned
 | **- Shoot** | Auto-fire once aimed at a target. |
 | **- Aimthru** | Aim through walls. Off = depth-buffer visibility check required. |
 | **- FOV** | Screen-pixel radius around the crosshair to search for targets. |
+| **- Head dot** | Draw a dot at the exact point the aimbot aims at (each target-team enemy). |
+| **- Aim point** | Vertical aim offset from head center (world units; 0 = center of head, +up / −down). |
 | **Triggerbot** | Auto-fire when the crosshair rests on an enemy. |
 | **- Trigger delay** | Milliseconds to wait before firing (humanization). |
 | **Auto-fire** | Spam clicks while holding Mouse1 (auto-pistol / auto-knife). |
@@ -138,7 +132,6 @@ The ESP reads the engine's own entity list for real player names, origins, and t
 | **- Distance** | Draw the distance in metres below the box. |
 | **- - Dist size** | Font size (same scale as Name size above). |
 | **- - Dist padding** | Vertical offset below the box (negative = closer). |
-| **- Head dot** | Small filled circle just above the head. |
 | **- Snaplines** | Line from a screen anchor to each enemy: 0 = off · 1 = bottom · 2 = top · 3 = crosshair. |
 | **- Vis check** | Dim ESP when the enemy is occluded (depth-buffer test). |
 | **- Off-screen arrow** | Edge-of-screen arrow pointing at enemies outside the viewport. |
@@ -236,5 +229,4 @@ added protections. Earlier builds may also work but are untested.
 
 This repository is a research fork with a modern Visual Studio project, extensive
 new features, and documentation on how the hack is built and how it works.
-
 

@@ -39,7 +39,6 @@ typedef struct { // cvars (of course ;P)
 	int esp_dbg;	// ESP Engine sub-option: top-left "ENGINE ESP" debug readout text
 	// ---- new ESP Engine sub-options (#2,#3,#4,#5,#6) ----
 	int esp_snap;	// snapline from a fixed anchor to each enemy (0=off,1=bottom,2=top,3=crosshair)
-	int esp_head;	// head dot above each player
 	int esp_vischeck;	// 1 = dim/recolor when target is occluded (depth-buffer test)
 	int esp_maxdist;	// max distance (meters) to draw ESP for; 0 = unlimited
 	int esp_fade;	// 1 = fade ESP alpha by distance (closer = fully opaque)
@@ -63,6 +62,8 @@ typedef struct { // cvars (of course ;P)
 	int	aimthru;
 	int	aim;
 	int	aim_smooth;	// 0=snap, 1..10 = smoothing strength (higher = smoother/slower)
+	int	aim_dot;	// aimbot: draw a dot at the exact point the aimbot aims at
+	int	aim_point;	// aimbot: vertical aim offset from head center (world units, +=up)
 	int	trigger;	// triggerbot: auto-fire when crosshair is over an enemy (engine list)
 	int	trigger_delay;	// reaction delay in ms before the triggerbot fires (humanize)
 	int	autofire;	// auto-pistol / auto-knife: spam clicks while mouse1 is held
@@ -84,8 +85,6 @@ typedef struct { // cvars (of course ;P)
 	int menu_y;
 	int check_x;	// F11 check-screen panel position (x)
 	int check_y;	// F11 check-screen panel position (y)
-	float stand_h;
-	float duck_h;
 	int menu_vis_rows;	// rows shown at once in the hack menu before scrolling (default 20)
 }cvar_s;
 
@@ -107,17 +106,6 @@ typedef struct {	// controlling keys, basicly for menu
 	bool active;
 }key_s;
 
-typedef struct {	// storing custom offset infos
-	float s;
-	float d;
-	char npart1[52];
-	char npart2[52];
-	char npart3[52];
-	char npart4[52];
-	char npart5[52];
-	char name[256];
-}offset_s;
-
 typedef struct {	// team display name (used by the "Target" option + F11)
 	char name[52];
 } team_s;
@@ -130,8 +118,6 @@ int	recoilnum=0;		// compares how much mouse is moved down by cvar.recoil
 int oldtarget;			// hold the target selected when hack is turned off
 int viewportcount=0;	// counts viewport calls
 int t_count=0;			// for timer
-int offsetcount=0;
-int curoffset=0;
 
 bool t_get=false;	// timer
 bool bFlash=false;	// flags . . . 
@@ -148,7 +134,6 @@ bool FirstInit=false;
 bool modelviewport=false;
 bool enabledraw=false;		// when viewport is called 5th time its true
 bool message=false;
-bool customoffset=false;	// for menu
 bool checktext=false;		// F11, check text
 bool gotflashed=false;
 bool cfgfail=false;			// true if config couldnt be find
@@ -157,7 +142,6 @@ bool saveloaded=false;		// true if oglsave.cfg (user settings) was loaded this s
 char filename[256]="";
 char dllpath[256]="";
 char dllfile[14]="\\opengl32.dll";
-char offsetname[256]="";
 char configpath[256]="";
 char savepath[256]="";		// full path to oglsave.cfg (for the F11 check screen)
 

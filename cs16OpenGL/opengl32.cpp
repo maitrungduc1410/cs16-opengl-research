@@ -36,7 +36,6 @@ player_s	player;		// player coords, vectors, height, ...
 cvar_s		cvar;		// cvars
 menu_s		menu;		// menu bools
 key_s		keyp;		// key handler bools
-offset_s	offset[10];	// custom offset stuff
 team_s		team[2]={ {"Terrorists"}, {"Counters"} };	// hardcoded team display names (team[0]=T side, team[1]=CT side)
 
 #define FONT_SIZES  4
@@ -44,9 +43,6 @@ GLuint g_font_base[FONT_SIZES];		// font display list bases (sizes 1-4: 7/10/13/
 int    g_fontw_sz[FONT_SIZES][96];	// per-char widths per font size
 GLuint base; // for bitmap font (= g_font_base[1], the default size)
 HDC hDC;
-void CountOffset();		// get the number of added offsets
-void SetOffset(int x);	// set offset for aiming
-void SetOffsetNames();	// sets offsets names (cuz they consist of 5 parts/words)
 float curcolor[4];
 
 // default on-screen panel positions + move-mode step (used by HookInit / menu / HandleKey)
@@ -57,6 +53,11 @@ float curcolor[4];
 #define RADAR_DEF_X  84		// radar center default (pre-ui_scale): ~14px margin + 70px radius
 #define RADAR_DEF_Y  84
 #define MOVE_STEP    2		// px per polled frame while in move mode (held = continuous)
+
+// Aimbot aim height: the engine bounding-hull top sits a few units ABOVE the
+// skull, so drop by this many world units to land at the CENTER of the head.
+// cvar.aim_point is then added on top to let the user fine-tune the aim height.
+#define AIM_HEAD_CENTER 5.0f
 
 // hack-menu scrolling: keep the panel a fixed height (MENU_VIS_ROWS rows) and
 // scroll the list when there are more entries; arrows pick the row, the view
@@ -104,6 +105,8 @@ void LoadFile(char *thefile,int ftype)
 					//cvar scan
 					sscanf(str, "aim %i;"		,&cvar.aim);
 					sscanf(str, "aim_smooth %i;",&cvar.aim_smooth);
+					sscanf(str, "aim_dot %i;"	,&cvar.aim_dot);
+					sscanf(str, "aim_point %i;"	,&cvar.aim_point);
 					sscanf(str, "trigger %i;"	,&cvar.trigger);
 					sscanf(str, "trigger_delay %i;",&cvar.trigger_delay);
 					sscanf(str, "autofire %i;"	,&cvar.autofire);
@@ -141,7 +144,6 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "esp_box_pad %i;"	,&cvar.esp_box_pad);
 					sscanf(str, "esp_box_radius %i;",&cvar.esp_box_radius);
 					sscanf(str, "esp_box_width %i;",&cvar.esp_box_width);
-					sscanf(str, "esp_head %i;"	,&cvar.esp_head);
 					sscanf(str, "esp_snap %i;"	,&cvar.esp_snap);
 					sscanf(str, "esp_vischeck %i;",&cvar.esp_vischeck);
 					sscanf(str, "esp_arrow %i;"	,&cvar.esp_arrow);
@@ -160,20 +162,7 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "menu_y %i;"	,&cvar.menu_y);
 					sscanf(str, "check_x %i;"	,&cvar.check_x);
 					sscanf(str, "check_y %i;"	,&cvar.check_y);
-					sscanf(str, "stand_h %f;"	,&cvar.stand_h);
-					sscanf(str, "duck_h %f;"	,&cvar.duck_h);
 					sscanf(str, "menu_vis_rows %i;",&cvar.menu_vis_rows);
-					//offset scan
-					sscanf(str, "offset0 s %f d %f %s %s %s %s %s;",&offset[0].s,&offset[0].d,&offset[0].npart1,&offset[0].npart2,&offset[0].npart3,&offset[0].npart4,&offset[0].npart5);
-					sscanf(str, "offset1 s %f d %f %s %s %s %s %s;",&offset[1].s,&offset[1].d,&offset[1].npart1,&offset[1].npart2,&offset[1].npart3,&offset[1].npart4,&offset[1].npart5);
-					sscanf(str, "offset2 s %f d %f %s %s %s %s %s;",&offset[2].s,&offset[2].d,&offset[2].npart1,&offset[2].npart2,&offset[2].npart3,&offset[2].npart4,&offset[2].npart5);
-					sscanf(str, "offset3 s %f d %f %s %s %s %s %s;",&offset[3].s,&offset[3].d,&offset[3].npart1,&offset[3].npart2,&offset[3].npart3,&offset[3].npart4,&offset[3].npart5);
-					sscanf(str, "offset4 s %f d %f %s %s %s %s %s;",&offset[4].s,&offset[4].d,&offset[4].npart1,&offset[4].npart2,&offset[4].npart3,&offset[4].npart4,&offset[4].npart5);
-					sscanf(str, "offset5 s %f d %f %s %s %s %s %s;",&offset[5].s,&offset[5].d,&offset[5].npart1,&offset[5].npart2,&offset[5].npart3,&offset[5].npart4,&offset[5].npart5);
-					sscanf(str, "offset6 s %f d %f %s %s %s %s %s;",&offset[6].s,&offset[6].d,&offset[6].npart1,&offset[6].npart2,&offset[6].npart3,&offset[6].npart4,&offset[6].npart5);
-					sscanf(str, "offset7 s %f d %f %s %s %s %s %s;",&offset[7].s,&offset[7].d,&offset[7].npart1,&offset[7].npart2,&offset[7].npart3,&offset[7].npart4,&offset[7].npart5);
-					sscanf(str, "offset8 s %f d %f %s %s %s %s %s;",&offset[8].s,&offset[8].d,&offset[8].npart1,&offset[8].npart2,&offset[8].npart3,&offset[8].npart4,&offset[8].npart5);
-					sscanf(str, "offset9 s %f d %f %s %s %s %s %s;",&offset[9].s,&offset[9].d,&offset[9].npart1,&offset[9].npart2,&offset[9].npart3,&offset[9].npart4,&offset[9].npart5);
 				}
 			}
 			fclose(file);
@@ -184,7 +173,7 @@ void LoadFile(char *thefile,int ftype)
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 // Persistent user settings.
-//   * oglconf.cfg stays the shipped DEFAULTS (+ aim offsets).
+//   * oglconf.cfg stays the shipped DEFAULTS.
 //   * oglsave.cfg holds whatever the user last tuned in the menu and is rewritten
 //     on every change. On load, a missing file or a missing line just keeps the
 //     default value of that option, so we always degrade gracefully.
@@ -203,6 +192,8 @@ void SaveSettings()
 	fprintf(f,"// auto-saved settings (mtd) - edited from the in-game menu\n");
 	fprintf(f,"aim %i\n",cvar.aim);
 	fprintf(f,"aim_smooth %i\n",cvar.aim_smooth);
+	fprintf(f,"aim_dot %i\n",cvar.aim_dot);
+	fprintf(f,"aim_point %i\n",cvar.aim_point);
 	fprintf(f,"trigger %i\n",cvar.trigger);
 	fprintf(f,"trigger_delay %i\n",cvar.trigger_delay);
 	fprintf(f,"autofire %i\n",cvar.autofire);
@@ -232,7 +223,6 @@ void SaveSettings()
 	fprintf(f,"esp_dist %i\n",cvar.esp_dist);
 	fprintf(f,"esp_dist_pad %i\n",cvar.esp_dist_pad);
 	fprintf(f,"esp_dist_size %i\n",cvar.esp_dist_size);
-	fprintf(f,"esp_head %i\n",cvar.esp_head);
 	fprintf(f,"esp_snap %i\n",cvar.esp_snap);
 	fprintf(f,"esp_vischeck %i\n",cvar.esp_vischeck);
 	fprintf(f,"esp_arrow %i\n",cvar.esp_arrow);
@@ -260,10 +250,6 @@ void SaveSettings()
 	fprintf(f,"menu_y %i\n",cvar.menu_y);
 	fprintf(f,"check_x %i\n",cvar.check_x);
 	fprintf(f,"check_y %i\n",cvar.check_y);
-	fprintf(f,"curoffset %i\n",curoffset);
-	fprintf(f,"customoffset %i\n",customoffset?1:0);
-	fprintf(f,"stand_h %f\n",cvar.stand_h);
-	fprintf(f,"duck_h %f\n",cvar.duck_h);
 	fprintf(f,"menu_vis_rows %i\n",cvar.menu_vis_rows);
 	fclose(f);
 }
@@ -277,7 +263,6 @@ void LoadSettings()
 	if(!f) return;						// no save yet -> everything keeps its default
 	saveloaded=true;					// file opened OK -> user settings are in effect
 	char str[256]="";
-	int ci=customoffset?1:0;			// keeps current value if the line is absent
 	while(!feof(f))
 	{
 		str[0]=0;
@@ -285,6 +270,8 @@ void LoadSettings()
 		if(strstr(str,"//")) continue;
 		sscanf(str,"aim %i"			,&cvar.aim);
 		sscanf(str,"aim_smooth %i"	,&cvar.aim_smooth);
+		sscanf(str,"aim_dot %i"		,&cvar.aim_dot);
+		sscanf(str,"aim_point %i"	,&cvar.aim_point);
 		sscanf(str,"trigger %i"		,&cvar.trigger);
 		sscanf(str,"trigger_delay %i",&cvar.trigger_delay);
 		sscanf(str,"autofire %i"	,&cvar.autofire);
@@ -314,7 +301,6 @@ void LoadSettings()
 		sscanf(str,"esp_dist %i"	,&cvar.esp_dist);
 		sscanf(str,"esp_dist_pad %i",&cvar.esp_dist_pad);
 		sscanf(str,"esp_dist_size %i",&cvar.esp_dist_size);
-		sscanf(str,"esp_head %i"	,&cvar.esp_head);
 		sscanf(str,"esp_snap %i"	,&cvar.esp_snap);
 		sscanf(str,"esp_vischeck %i",&cvar.esp_vischeck);
 		sscanf(str,"esp_arrow %i"	,&cvar.esp_arrow);
@@ -342,13 +328,8 @@ void LoadSettings()
 		sscanf(str,"menu_y %i"		,&cvar.menu_y);
 		sscanf(str,"check_x %i"		,&cvar.check_x);
 		sscanf(str,"check_y %i"		,&cvar.check_y);
-		sscanf(str,"curoffset %i"	,&curoffset);
-		sscanf(str,"customoffset %i",&ci);
-		sscanf(str,"stand_h %f"		,&cvar.stand_h);
-		sscanf(str,"duck_h %f"		,&cvar.duck_h);
 		sscanf(str,"menu_vis_rows %i",&cvar.menu_vis_rows);
 	}
-	customoffset=(ci!=0);
 	fclose(f);
 }
 
@@ -362,18 +343,10 @@ void HookInit(bool activate)
 		cvar.check_x=CHECK_DEF_X; cvar.check_y=CHECK_DEF_Y;
 		cvar.radar_x=RADAR_DEF_X; cvar.radar_y=RADAR_DEF_Y;
 		cvar.menu_vis_rows=MENU_VIS_ROWS;	// default, overridden by oglconf.cfg then oglsave.cfg
-		LoadFile("oglconf.cfg",0);	// read DEFAULT cvar settings + offsets
-		CountOffset();				// count number of custom offsets
-		SetOffsetNames();			// set the names
+		LoadFile("oglconf.cfg",0);	// read DEFAULT cvar settings
 		LoadSettings();				// override defaults with the user's saved settings (if any)
 		if(cvar.menu_vis_rows<4)  cvar.menu_vis_rows=4;
 		if(cvar.menu_vis_rows>55) cvar.menu_vis_rows=55;
-		if(curoffset<0||curoffset>9) curoffset=0;	// hard bound (offset[] has 10 slots)
-		if(offsetcount>0 && curoffset>offsetcount-1) curoffset=offsetcount-1;
-		if(customoffset)			// keep the custom stand/duck heights restored by LoadSettings
-			strcpy(offsetname, offset[(curoffset>=0&&curoffset<offsetcount)?curoffset:0].name);
-		else
-			SetOffset(curoffset);	// non-custom: take stand/duck from the selected offset
 		oldtarget=cvar.target;		// sync so the line below keeps the restored target
 		cvar.target=oldtarget;		// set current target (if hack was turned off and on again, it kept old target)
 		cvar.scope=0;				// cvar which i didnt add into menu, removes sniper crosshair
@@ -385,6 +358,8 @@ void HookInit(bool activate)
 	{
 		cvar.aim=0;
 		cvar.aim_smooth=0;
+		cvar.aim_dot=0;
+		cvar.aim_point=0;
 		cvar.trigger=0;
 		cvar.trigger_delay=0;
 		cvar.autofire=0;
@@ -399,7 +374,6 @@ void HookInit(bool activate)
 		cvar.esp_box_radius=0;
 		cvar.esp_box_width=0;
 		cvar.esp_dist=0;
-		cvar.esp_head=0;
 		cvar.esp_snap=0;
 		cvar.esp_vischeck=0;
 		cvar.esp_arrow=0;
@@ -444,33 +418,6 @@ int change(int a) // basic function to toggle things on (1) and off (0)
 	if(a==0) { b=1; }
 	else if(a==1) { b=0; }
 	return b;
-}
-
-//////////////////////////////////////////////////////////////////////////////////////////////////
-void CountOffset()
-{
-	for (int x=0;x<10;x++)
-	{	
-		if((offset[x].s==0.0f) && (offset[x].d==0.0f))
-			offsetcount=x;
-		else
-			offsetcount=10;
-	}
-}
-
-//////////////////////////////////////////////////////////////////////////////////////////////////
-void SetOffsetNames()
-{
-	for (int r=0;r<10;r++)
-		sprintf(offset[r].name,"%s %s %s %s %s",offset[r].npart1,offset[r].npart2,offset[r].npart3,offset[r].npart4,offset[r].npart5);
-}
-
-//////////////////////////////////////////////////////////////////////////////////////////////////
-void SetOffset(int x) // called on hack load and whenever a custom offset is chosen
-{
-	strcpy(offsetname,offset[x].name);
-	cvar.stand_h= offset[x].s;
-	cvar.duck_h=  offset[x].d;
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -527,11 +474,11 @@ void MoveActivePanel(int dx,int dy)
 void ResetConfig()
 {
 	// 1) zero all gameplay cvars so stale save values can't bleed through
-	cvar.aim=0; cvar.aim_smooth=0; cvar.trigger=0; cvar.trigger_delay=0;
+	cvar.aim=0; cvar.aim_smooth=0; cvar.aim_dot=0; cvar.aim_point=0; cvar.trigger=0; cvar.trigger_delay=0;
 	cvar.autofire=0; cvar.autofire_rate=0; cvar.notify=0; cvar.esp_log=0;
 	cvar.aimthru=0; cvar.esp_engine=0; cvar.esp_name=0; cvar.esp_name_pad=0; cvar.esp_name_size=2; cvar.esp_box=0;
 	cvar.esp_box_pad=0; cvar.esp_box_radius=0; cvar.esp_box_width=0;
-	cvar.esp_dist=0; cvar.esp_dist_pad=0; cvar.esp_dist_size=2; cvar.esp_head=0; cvar.esp_snap=0; cvar.esp_vischeck=0;
+	cvar.esp_dist=0; cvar.esp_dist_pad=0; cvar.esp_dist_size=2; cvar.esp_snap=0; cvar.esp_vischeck=0;
 	cvar.esp_arrow=0; cvar.esp_maxdist=0; cvar.esp_fade=0; cvar.esp_team=0;
 	cvar.esp_dbg=0; cvar.esp_hud=0; cvar.hud_hp=0; cvar.hud_ammo=0;
 	cvar.hud_die=0; cvar.hud_pad=0; cvar.chams=0; cvar.chams_wire=0;
@@ -548,13 +495,8 @@ void ResetConfig()
 	menu_move_mode=0;
 	// 3) reload defaults from oglconf.cfg
 	LoadFile("oglconf.cfg",0);
-	CountOffset();
-	SetOffsetNames();
-	if(curoffset<0||curoffset>9) curoffset=0;
-	if(offsetcount>0&&curoffset>offsetcount-1) curoffset=offsetcount-1;
 	if(cvar.menu_vis_rows<4) cvar.menu_vis_rows=4;
 	if(cvar.menu_vis_rows>55) cvar.menu_vis_rows=55;
-	SetOffset(curoffset); customoffset=false;
 	// 4) delete oglsave.cfg
 	char path[_MAX_PATH]=""; GetSavePath(path);
 	DeleteFileA(path);
@@ -864,12 +806,12 @@ void SetToast(const char *fmt, ...)
 //   * dependency hiding: a row with a non-null "dep" pointer is shown only while
 //     that parent cvar is on (e.g. Shoot/Aimthru/FOV hide unless Aimbot is on),
 //     and the cursor navigates only over visible rows.
-enum { IT_TOGGLE, IT_INT, IT_FLOAT, IT_OFFSET, IT_TARGET, IT_MOVE, IT_ACTION };
+enum { IT_TOGGLE, IT_INT, IT_TARGET, IT_MOVE, IT_ACTION };
 typedef struct {
 	const char *label;
 	int   type;
-	void *p;			// int* or float* cvar this row controls
-	float mn, mx, step;	// range/step for IT_INT / IT_FLOAT
+	void *p;			// int* cvar this row controls
+	float mn, mx, step;	// range/step for IT_INT
 	int   wrap;			// wrap around at the bounds?
 	int  *dep;			// non-null => row hidden while *dep == 0
 	int   child;		// 1 = indented sub-item
@@ -894,15 +836,14 @@ void UpdateMenuAnim()
 void DrawMenu(int x, int y)
 {
 	static mitem_t items[] = {
-		{"Offset",      IT_OFFSET, 0,                0,0,0,       0, 0,          0},
-		{"Stand_h",     IT_FLOAT,  &cvar.stand_h,    10,26,0.25f, 1, 0,          0},
-		{"Duck_h",      IT_FLOAT,  &cvar.duck_h,     10,28,0.25f, 1, 0,          0},
 		{"Aimbot",      IT_TOGGLE, &cvar.aim,        0,0,0,       0, 0,          0},
 		{"Aim smooth",  IT_INT,    &cvar.aim_smooth, 0,10,1,      0, &cvar.aim,  1},
 		{"Target",      IT_TARGET, &cvar.target,     0,0,0,       0, &cvar.aim,  1},
 		{"Shoot",       IT_TOGGLE, &cvar.shoot,      0,0,0,       0, &cvar.aim,  1},
 		{"Aimthru",     IT_TOGGLE, &cvar.aimthru,    0,0,0,       0, &cvar.aim,  1},
 		{"FOV",         IT_INT,    &cvar.fov,        0,1000,10,   1, &cvar.aim,  1},
+		{"Head dot",    IT_TOGGLE, &cvar.aim_dot,    0,0,0,       0, &cvar.aim,  1},
+		{"Aim point",   IT_INT,    &cvar.aim_point,  -20,20,1,    0, &cvar.aim,  1},
 		{"Triggerbot",  IT_TOGGLE, &cvar.trigger,    0,0,0,       0, 0,          0},
 		{"Trigger delay",IT_INT,   &cvar.trigger_delay,0,500,10,  0, &cvar.trigger,1},
 		{"Auto-fire",   IT_TOGGLE, &cvar.autofire,   0,0,0,       0, 0,          0},
@@ -925,7 +866,6 @@ void DrawMenu(int x, int y)
 		{"Distance",    IT_TOGGLE, &cvar.esp_dist,     0,0,0,      0, &cvar.esp_engine, 1},
 		{"Dist size",   IT_INT,    &cvar.esp_dist_size, 1,4,1,      1, &cvar.esp_dist,   1},
 		{"Dist padding",IT_INT,    &cvar.esp_dist_pad,  -20,40,2,   0, &cvar.esp_dist,   1},
-		{"Head dot",    IT_TOGGLE, &cvar.esp_head,      0,0,0,      0, &cvar.esp_engine, 1},
 		{"Snaplines",   IT_INT,    &cvar.esp_snap,   0,3,1,       1, &cvar.esp_engine, 1},
 		{"Vis check",   IT_TOGGLE, &cvar.esp_vischeck,0,0,0,      0, &cvar.esp_engine, 1},
 		{"Off-screen arrow",IT_TOGGLE,&cvar.esp_arrow,0,0,0,      0, &cvar.esp_engine, 1},
@@ -999,19 +939,6 @@ void DrawMenu(int x, int y)
 				if(*v<(int)it->mn) *v = it->wrap?(int)it->mx:(int)it->mn;
 			}
 			break;
-		case IT_FLOAT:
-			{
-				float *v=(float*)it->p; *v += dir*it->step; customoffset=true;
-				if(*v>it->mx) *v=it->mn;
-				if(*v<it->mn) *v=it->mx;
-			}
-			break;
-		case IT_OFFSET:
-			if(dir>0) curoffset++; else if(dir<0) curoffset--;
-			SetOffset(curoffset); customoffset=false;
-			if(curoffset>offsetcount-1){ curoffset=0; SetOffset(curoffset); }
-			else if(curoffset<0){ curoffset=offsetcount-1; SetOffset(curoffset); }
-			break;
 		case IT_MOVE:
 			menu_move_mode=(int)it->mn;			// enter move mode (arrows now move the panel)
 			if(menu_move_mode==2) checktext=true;	// reveal F11 so you can position it
@@ -1028,7 +955,6 @@ void DrawMenu(int x, int y)
 		if(it->type==IT_TOGGLE)      SetToast("%s: %s", it->label, (*(int*)it->p)?"On":"Off");
 		else if(it->type==IT_INT)    SetToast("%s: %i", it->label, *(int*)it->p);
 		else if(it->type==IT_TARGET) SetToast("Target: %s", (*(int*)it->p)?team[1].name:team[0].name);
-		else if(it->type==IT_FLOAT)  SetToast("%s: %.2f", it->label, *(float*)it->p);
 		SaveSettings();		// persist the change so it survives the next game launch
 	}
 
@@ -1112,10 +1038,7 @@ void DrawMenu(int x, int y)
 			}
 			else sprintf(buf,"%s%s: %i", pre,it->label,*(int*)it->p);
 			break;
-		case IT_FLOAT:  sprintf(buf,"%s%s: %.2f", pre,it->label,*(float*)it->p);          break;
 		case IT_TARGET: sprintf(buf,"%s%s: %s", pre,it->label,(*(int*)it->p)?team[1].name:team[0].name); break;
-		case IT_OFFSET: if(!customoffset) sprintf(buf,"%s: %s",it->label,offsetname);
-		                else              sprintf(buf,"%s: <custom>",it->label);          break;
 		case IT_MOVE:
 			if(menu_move_mode==(int)it->mn) sprintf(buf,"%s%s: [moving]", pre,it->label);
 			else                            sprintf(buf,"%s%s", pre,it->label);
@@ -1193,14 +1116,6 @@ void DrawCheckText(int x,int y) // bad way of doing this
 	y=y+(int)(13*ui_scale);
 	DrawText(x,y,0.5f,1.0f,0.5f,"> Your screen resolution is: %ix%i",vp[2],vp[3]);
 	y=y+(int)(26*ui_scale);
-	DrawText(x,y,0.7f,0.7f,1.0f,"%i valid offsets found:",offsetcount);
-	y=y+(int)(13*ui_scale);
-	for (int o=0;o<offsetcount;o++)
-	{
-		DrawText(x,y,1.0f,1.0f,1.0f,"> [%i] %s| Stand: %0.2f | Duck: %0.2f",o+1,offset[o].name,offset[o].s,offset[o].d);
-		y=y+(int)(13*ui_scale);
-	}
-	y=y+(int)(13*ui_scale);
 	DrawText(x,y,0.7f,0.7f,1.0f,"Teams: %s vs %s",team[0].name,team[1].name);
 	y=y+(int)(13*ui_scale);
 	// ---- No-recoil diagnostics (so we can see WHY it does / doesn't work) ----
@@ -2092,31 +2007,46 @@ void DrawEngineEsp()
 			int usehullA=ReadInt(ent+ENT_CURSTATE+ES_USEHULL);
 			float halfhA=(usehullA==1)?18.0f:36.0f;
 			float zoffA =(usehullA==1)?6.0f :0.0f;
-			float headA[3]={o[0],o[1],o[2]+halfhA+zoffA-2.0f};	// just below head top
+			// Aim point: the CENTER of the head (the bounding-hull top sits a few
+			// units above the skull, so drop by AIM_HEAD_CENTER), plus the user's
+			// vertical offset cvar.aim_point (world units, positive = aim higher).
+			float aimz  = o[2]+halfhA+zoffA - AIM_HEAD_CENTER + (float)cvar.aim_point;
+			float aimA[3] ={o[0],o[1],aimz};
+			float headA[3]={o[0],o[1],o[2]+halfhA+zoffA-2.0f};	// head top (triggerbot box)
 			float feetA[3]={o[0],o[1],o[2]-halfhA+zoffA};
-			float sHe[3], sFe[3];
+			float sAi[3], sHe[3], sFe[3];
+			bool okAi=EngWorldToScreen(aimA,sAi);
 			bool okHe=EngWorldToScreen(headA,sHe);
 			bool okFe=EngWorldToScreen(feetA,sFe);
 
-			// --- aimbot: nearest head to the crosshair within FOV ---
-			if(need_aim && okHe)
+			// screen-space aim point (shared by the aim dot and the aimbot pick)
+			float ax=0,ay=0;
+			if(okAi){ ax=(sAi[0]*0.5f+0.5f)*sw; ay=sh-(sAi[1]*0.5f+0.5f)*sh; }
+			bool aim_on_screen = okAi && ax>=0 && ay>=0 && ax<sw && ay<sh;
+
+			// aim-point dot: marks EXACTLY where the aimbot aims. Aimbot sub-option,
+			// drawn for any on-screen target-team enemy and independent of ESP.
+			if(cvar.aim && cvar.aim_dot && aim_on_screen)
 			{
-				float ax=(sHe[0]*0.5f+0.5f)*sw, ay=sh-(sHe[1]*0.5f+0.5f)*sh;
-				if(ax>=0 && ay>=0 && ax<sw && ay<sh)
+				(*orig_glColor3f)(r,g,b);
+				FillCircle2D(ax, ay, 3.0f*ui_scale);
+			}
+
+			// --- aimbot: nearest aim point to the crosshair within FOV ---
+			if(need_aim && aim_on_screen)
+			{
+				float ddx=ax-aim_cx, ddy=ay-aim_cy;
+				float d2=ddx*ddx+ddy*ddy;
+				float fovr=(float)cvar.fov*0.5f;	// FOV used as a px radius
+				if(fovr<1.0f || d2<=fovr*fovr)
 				{
-					float ddx=ax-aim_cx, ddy=ay-aim_cy;
-					float d2=ddx*ddx+ddy*ddy;
-					float fovr=(float)cvar.fov*0.5f;	// FOV used as a px radius
-					if(fovr<1.0f || d2<=fovr*fovr)
+					bool v=true;
+					if(!cvar.aimthru)
+						v=IsWorldVisible(o[0],o[1],o[2]+10.0f,mm_w,pm_w,vp);
+					if((cvar.aimthru || v) && d2<aim_best_d2)
 					{
-						bool v=true;
-						if(!cvar.aimthru)
-							v=IsWorldVisible(o[0],o[1],o[2]+10.0f,mm_w,pm_w,vp);
-						if((cvar.aimthru || v) && d2<aim_best_d2)
-						{
-							aim_best_d2=d2; aim_best_sx=ax; aim_best_sy=ay;
-							aim_best_vis=v; aim_found=true;
-						}
+						aim_best_d2=d2; aim_best_sx=ax; aim_best_sy=ay;
+						aim_best_vis=v; aim_found=true;
 					}
 				}
 			}
@@ -2244,13 +2174,6 @@ void DrawEngineEsp()
 			(*orig_glLineWidth)(bw);
 			(*orig_glColor4f)(vr,vg,vb,esp_a);
 			DrawBox2D(x0,y0,x1,y1,(float)cvar.esp_box_radius*ui_scale);
-		}
-
-		// head dot (small filled circle just above the head)
-		if(cvar.esp_head)
-		{
-			(*orig_glColor4f)(vr,vg,vb,esp_a);
-			FillCircle2D(hx, hy-3.0f*ui_scale, 3.0f*ui_scale);
 		}
 
 		// snapline: 1=screen bottom-center, 2=top-center, 3=crosshair
