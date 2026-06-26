@@ -32,6 +32,10 @@ draw calls to implement wallhack, ESP, aimbot, radar, and a set of visual tweaks
 - [FAQ](#faq)
 - [Going deeper](#going-deeper)
 - [Credits](#credits)
+- [Hướng dẫn sử dụng (Vietnamese)](#hướng-dẫn-sử-dụng-vietnamese)
+  - [Cài đặt](#cài-đặt)
+  - [Phím điều khiển trong game](#phím-điều-khiển-trong-game)
+  - [Các tùy chọn trong menu hack](#các-tùy-chọn-trong-menu-hack)
 
 ---
 
@@ -71,7 +75,7 @@ draw calls to implement wallhack, ESP, aimbot, radar, and a set of visual tweaks
 | `↑` / `↓` | Navigate menu rows (hold for auto-repeat) |
 | `←` / `→` | Change the selected option's value or toggle it |
 | `↑` / `↓` / `←` / `→` | Move the active panel (when in move mode) |
-| `F11` | Toggle the **debug screen** (config paths, resolution, offsets) |
+| `F11` | Toggle the **debug screen** (config paths, resolution, team detection, no-recoil status) |
 | `F10` | **Reset config to defaults** — reloads `oglconf.cfg` and deletes `oglsave.cfg` |
 
 > Every change made in the menu is automatically saved to `oglsave.cfg` and
@@ -95,8 +99,8 @@ Sub-options (indented with `- `) are hidden until their parent feature is turned
 | **- Shoot** | Auto-fire once aimed at a target. |
 | **- Aimthru** | Aim through walls. Off = depth-buffer visibility check required. |
 | **- FOV** | Screen-pixel radius around the crosshair to search for targets. |
-| **- Head dot** | Draw a dot at the exact point the aimbot aims at (each target-team enemy). |
-| **- Aim point** | Vertical aim offset from head center (world units; 0 = center of head, +up / −down). |
+| **- Head dot** | Toggle a dot at the exact point the aimbot aims at (each target-team enemy). Turn it on to tune **Aim point**, then off to hide it. |
+| **- Aim point** | Vertical aim offset from head center (`-50..50`; 0 = center of head, +up / −down). Scaled with stance, so the same value stays at the same spot on the body whether the enemy is standing or crouched. |
 | **Triggerbot** | Auto-fire when the crosshair rests on an enemy. |
 | **- Trigger delay** | Milliseconds to wait before firing (humanization). |
 | **Auto-fire** | Spam clicks while holding Mouse1 (auto-pistol / auto-knife). |
@@ -230,3 +234,153 @@ added protections. Earlier builds may also work but are untested.
 This repository is a research fork with a modern Visual Studio project, extensive
 new features, and documentation on how the hack is built and how it works.
 
+---
+
+## Hướng dẫn sử dụng (Vietnamese)
+
+> [!WARNING]
+> **Source code này chỉ dành cho mục đích nghiên cứu kỹ thuật và học tập.**
+> Mục tiêu là tìm hiểu cách các bản hack ở tầng đồ họa hoạt động (proxy DLL,
+> can thiệp OpenGL, xử lý depth-buffer, đọc danh sách entity của engine).
+> **Đừng** dùng trên server online / chính thức. Dùng để chống lại người chơi
+> khác là vi phạm điều khoản dịch vụ của game và **không** an toàn với VAC.
+> Chỉ test với bot hoặc trên server riêng / non-Steam mà bạn tự quản lý.
+> Tự chịu rủi ro khi sử dụng.
+
+> [!IMPORTANT]
+> Bản **Counter-Strike 1.6 của bạn phải là build 4554 trở về trước**. Các bản
+> engine mới hơn đã chặn kỹ thuật proxy-DLL (và thêm cơ chế chống VAC).
+
+### Cài đặt
+
+1. Mở thư mục [`things-you-need-to-get-hack-works`](./things-you-need-to-get-hack-works).
+2. Chép **cả hai file** vào thư mục gốc của Counter-Strike 1.6
+   (thư mục có chứa `hl.exe` / `cstrike`):
+   - `opengl32.dll` — bản hack đã build sẵn
+   - `oglconf.cfg` — cấu hình mặc định (cvars)
+3. Đảm bảo game đang chạy ở chế độ video **OpenGL**.
+4. Mở game, sau đó nhấn `F12` để bật hack.
+
+> [!TIP]
+> Trên đa số laptop (và bàn phím Mac chạy Windows), các phím F cần giữ thêm
+> phím `Fn`, ví dụ `Fn + F12`. Phím `Insert` có thể được map thành `Fn + Enter`.
+
+> [!NOTE]
+> Nếu `F11` hiện dòng **"Could not load config file"** màu đỏ, nghĩa là thiếu
+> file `oglconf.cfg` trong thư mục game. Hãy chắc chắn nó nằm cạnh `opengl32.dll`
+> và phần đuôi mở rộng không bị ẩn (không phải `oglconf.cfg.txt`).
+
+### Phím điều khiển trong game
+
+| Phím | Hành động |
+|------|-----------|
+| `F12` | Công tắc chính — **bật / tắt** toàn bộ hack |
+| `Insert` | Mở / đóng **menu hack** |
+| `↑` / `↓` | Di chuyển giữa các dòng trong menu (giữ để lặp lại) |
+| `←` / `→` | Đổi giá trị hoặc bật/tắt tùy chọn đang chọn |
+| `↑` / `↓` / `←` / `→` | Di chuyển panel đang chọn (khi ở chế độ di chuyển) |
+| `F11` | Bật/tắt **màn hình debug** (đường dẫn cấu hình, độ phân giải, nhận diện team, trạng thái no-recoil) |
+| `F10` | **Khôi phục cấu hình mặc định** — nạp lại `oglconf.cfg` và xóa `oglsave.cfg` |
+
+> Mọi thay đổi trong menu được tự động lưu vào `oglsave.cfg` và khôi phục ở
+> lần mở hack tiếp theo. `F10` sẽ xóa file đó và đưa mọi thứ về mặc định ban đầu.
+
+### Các tùy chọn trong menu hack
+
+Mở menu bằng `Insert`. Dùng `↑`/`↓` để cuộn, `←`/`→` để đổi giá trị.
+Các tùy chọn con (thụt đầu dòng bằng `- `) chỉ hiện khi tính năng cha được bật.
+
+#### Aimbot (ngắm tự động)
+
+| Tùy chọn | Mô tả |
+|----------|-------|
+| **Aimbot** | Bật ngắm tự động. Kéo chuột về phía đầu của kẻ địch gần nhất trong vùng FOV. |
+| **- Aim smooth** | Độ mượt khi kéo chuột (0 = giật tức thì, 1–10 = càng cao càng chậm/mượt). |
+| **- Target** | Ngắm vào phe nào (Terrorists / Counter-Terrorists). |
+| **- Shoot** | Tự động bắn khi đã ngắm trúng mục tiêu. |
+| **- Aimthru** | Ngắm xuyên tường. Tắt = bắt buộc kiểm tra tầm nhìn bằng depth-buffer. |
+| **- FOV** | Bán kính tính bằng pixel quanh tâm ngắm để tìm mục tiêu. |
+| **- Head dot** | Bật/tắt một chấm tại đúng điểm aimbot sẽ ngắm tới. Bật lên để canh chỉnh **Aim point**, xong thì tắt đi để ẩn. |
+| **- Aim point** | Độ lệch ngắm theo chiều dọc so với tâm đầu (`-50..50`; 0 = chính giữa đầu, + lên trên / − xuống dưới). Tự co giãn theo tư thế, nên cùng một giá trị sẽ giữ nguyên vị trí trên thân dù địch đứng hay ngồi. |
+| **Triggerbot** | Tự động bắn khi tâm ngắm dừng trên kẻ địch. |
+| **- Trigger delay** | Số mili-giây chờ trước khi bắn (giả lập phản xạ người thật). |
+| **Auto-fire** | Liên tục click khi giữ Mouse1 (auto cho súng lục / dao). |
+| **- Auto-fire rate** | Số mili-giây giữa mỗi lần click giả lập (càng nhỏ càng nhanh). |
+
+#### Tinh chỉnh chiến đấu / hiển thị
+
+| Tùy chọn | Mô tả |
+|----------|-------|
+| **Recoil** | Bù giật chuột xuống mỗi phát bắn (0 = tắt, 1–5 = độ mạnh). |
+| **No recoil** | Triệt tiêu độ giật góc nhìn của engine qua detour `V_CalcRefdef` — không nảy màn hình. |
+| **Wallhack** | 0 = tắt · 1 = cơ bản (tắt depth test) · 2 = phát sáng cộng dồn · 3 = blend bão hòa. |
+| **No Sky** | Không vẽ bầu trời (skybox). |
+| **No Flash** | Giảm độ trắng của lựu đạn choáng xuống gần như vô hình. |
+| **No Smoke** | Không vẽ khói của lựu đạn khói. |
+| **Lambert** | Ép tất cả vertex của người chơi thành màu trắng (fullbright — vẫn thấy rõ trong chỗ tối). |
+| **Crosshair** | Vẽ một tâm ngắm tĩnh tùy chỉnh ở giữa màn hình. |
+
+#### ESP Engine
+
+ESP đọc trực tiếp danh sách entity của engine để lấy tên thật, vị trí và phe của người chơi.
+
+| Tùy chọn | Mô tả |
+|----------|-------|
+| **ESP Engine** | Công tắc chính cho ESP dựa trên engine. |
+| **- Player name** | Hiện tên người chơi phía trên khung. |
+| **- - Name size** | Cỡ chữ: 1 = nhỏ (7 px) · 2 = vừa (10 px) · 3 = lớn (13 px) · 4 = rất lớn (16 px). |
+| **- - Name padding** | Độ lệch tên phía trên khung (âm = sát hơn). |
+| **- Box** | Vẽ khung bao 2D quanh mỗi người chơi. |
+| **- - Box padding** | Phóng to / thu nhỏ khung bao theo số pixel này. |
+| **- - Box radius** | Bo góc khung (0 = góc nhọn). |
+| **- - Box width** | Độ dày nét vẽ tính bằng pixel. |
+| **- Distance** | Hiện khoảng cách (mét) phía dưới khung. |
+| **- - Dist size** | Cỡ chữ (cùng thang với Name size). |
+| **- - Dist padding** | Độ lệch phía dưới khung (âm = sát hơn). |
+| **- Snaplines** | Đường nối từ một điểm neo trên màn hình tới mỗi địch: 0 = tắt · 1 = đáy · 2 = đỉnh · 3 = tâm ngắm. |
+| **- Vis check** | Làm mờ ESP khi địch bị che khuất (kiểm tra depth-buffer). |
+| **- Off-screen arrow** | Mũi tên ở rìa màn hình chỉ hướng kẻ địch nằm ngoài tầm nhìn. |
+| **- Max distance** | Ẩn ESP khi xa hơn khoảng cách này (mét) (0 = không giới hạn). |
+| **- Distance fade** | Mờ dần ESP theo khoảng cách (càng gần càng rõ). |
+| **- Show team** | 0 = cả hai phe · 1 = chỉ CT · 2 = chỉ T. |
+| **- Debug text** | Dòng thông tin góc trên-trái hiện số người chơi và cách nhận diện phe. |
+
+#### HUD
+
+| Tùy chọn | Mô tả |
+|----------|-------|
+| **HUD HP/Ammo** | Công tắc chính cho các vòng cung HP/đạn quanh tâm ngắm của chính bạn. |
+| **- HP** | Vòng cung xanh lá (bên trái) hiện máu hiện tại theo từng nấc 10%. |
+| **- Ammo** | Vòng cung vàng (bên phải) hiện số đạn trong băng theo nấc 10%. |
+| **- Show when die** | Vẫn hiện các vòng cung khi đã chết / xem (spectate). |
+| **- Padding** | Đưa các vòng cung lại gần hoặc ra xa tâm ngắm. |
+
+#### Chams
+
+| Tùy chọn | Mô tả |
+|----------|-------|
+| **Chams** | Tô đặc màu (hồng cánh sen) cho mẫu nhân vật, nhìn xuyên tường. |
+| **- Chams Wire** | Chế độ khung dây thay vì tô đặc. |
+
+#### Radar
+
+| Tùy chọn | Mô tả |
+|----------|-------|
+| **Radar** | Bản đồ thu nhỏ 2D dựng từ danh sách entity của engine. |
+| **- Move radar** | Vào chế độ di chuyển — dùng phím mũi tên để đặt lại vị trí đĩa radar. |
+| **- Dot shape** | 0 = hình tròn · 1 = hình vuông. |
+| **- Size** | Bán kính đĩa theo đơn vị trước khi scale (30–150). |
+| **- Zoom (units)** | Số đơn vị thế giới ứng với mép đĩa (càng nhỏ càng zoom gần). |
+| **- Rotate view** | Xoay radar sao cho hướng trước của bạn luôn lên trên. |
+| **- Names** | Hiện tên rút gọn cạnh mỗi chấm. |
+| **- Range rings** | Vẽ hai vòng cự ly ở 1/3 và 2/3 bán kính zoom. |
+
+#### Misc (khác)
+
+| Tùy chọn | Mô tả |
+|----------|-------|
+| **Notifications** | Thông báo bật lên khi bật/tắt tính năng trong menu. |
+| **Detect log** | Bộ đếm phát hiện địch / PVS theo từng frame (góc trên-trái). |
+| **Move hack menu** | Di chuyển menu hack bằng phím mũi tên (`Insert` = xong). |
+| **Move F11 panel** | Di chuyển panel debug F11 bằng phím mũi tên. |
+| **Reset positions** | Đưa menu, panel F11 và radar về vị trí mặc định. |

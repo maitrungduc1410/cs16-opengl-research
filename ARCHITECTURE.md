@@ -182,6 +182,15 @@ team) is stored in `eng_aim_sx / eng_aim_sy`. On the next frame, `sys_glViewport
 nudge, with optional smoothing (`aim_smooth`). `cvar.aimthru` controls whether
 a depth-buffer visibility check is required before locking.
 
+**Aim point:** the world-space target is the **center of the head**, computed from
+the hull (`halfhA + zoffA - AIM_HEAD_CENTER`), not the hull top — the bounding box
+extends a few units above the skull. `cvar.aim_point` then shifts this up/down.
+Because the ducking hull is half height, the offset is scaled by the duck ratio
+(`halfhA / 36`) so a given value stays at the same relative spot on the body in
+both stances. `cvar.aim_dot` (the **Head dot** toggle) draws a small filled circle
+at this exact point for any on-screen target-team enemy, so the user can see and
+tune where the aimbot will land before hiding it again.
+
 ---
 
 ### Triggerbot
