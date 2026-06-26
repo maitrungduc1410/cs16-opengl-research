@@ -843,7 +843,7 @@ void DrawMenu(int x, int y)
 		{"Aimthru",     IT_TOGGLE, &cvar.aimthru,    0,0,0,       0, &cvar.aim,  1},
 		{"FOV",         IT_INT,    &cvar.fov,        0,1000,10,   1, &cvar.aim,  1},
 		{"Head dot",    IT_TOGGLE, &cvar.aim_dot,    0,0,0,       0, &cvar.aim,  1},
-		{"Aim point",   IT_INT,    &cvar.aim_point,  -20,20,1,    0, &cvar.aim,  1},
+		{"Aim point",   IT_INT,    &cvar.aim_point,  -50,50,1,    0, &cvar.aim,  1},
 		{"Triggerbot",  IT_TOGGLE, &cvar.trigger,    0,0,0,       0, 0,          0},
 		{"Trigger delay",IT_INT,   &cvar.trigger_delay,0,500,10,  0, &cvar.trigger,1},
 		{"Auto-fire",   IT_TOGGLE, &cvar.autofire,   0,0,0,       0, 0,          0},
@@ -2009,8 +2009,12 @@ void DrawEngineEsp()
 			float zoffA =(usehullA==1)?6.0f :0.0f;
 			// Aim point: the CENTER of the head (the bounding-hull top sits a few
 			// units above the skull, so drop by AIM_HEAD_CENTER), plus the user's
-			// vertical offset cvar.aim_point (world units, positive = aim higher).
-			float aimz  = o[2]+halfhA+zoffA - AIM_HEAD_CENTER + (float)cvar.aim_point;
+			// vertical offset cvar.aim_point (positive = aim higher).
+			// Ducking shrinks the hull to half height, so scale the user offset by
+			// the duck ratio to keep it at the same RELATIVE spot on the body
+			// (e.g. "-12 = neck" stays at the neck instead of dropping to the thigh).
+			float aimscale = halfhA/36.0f;
+			float aimz  = o[2]+halfhA+zoffA - AIM_HEAD_CENTER + (float)cvar.aim_point*aimscale;
 			float aimA[3] ={o[0],o[1],aimz};
 			float headA[3]={o[0],o[1],o[2]+halfhA+zoffA-2.0f};	// head top (triggerbot box)
 			float feetA[3]={o[0],o[1],o[2]-halfhA+zoffA};
