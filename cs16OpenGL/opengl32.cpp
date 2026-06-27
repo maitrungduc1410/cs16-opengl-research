@@ -1266,7 +1266,7 @@ void DrawCheckText(int x,int y) // bad way of doing this
 #define ENT_CURPOS			0x404	// cl_entity_t: current_position (update counter)
 #define ENT_ORIGIN			0xB48	// cl_entity_t: vec3 interpolated origin
 #define ENG_STALE_MS		400		// ms without an update -> treat as dead/gone (fps-independent)
-#define ENG_DEATH_HOLD_MS	1000	// after DeathMsg, force-ignore the victim this long (lets the laggy scoreboard catch up before we trust EngDead again; never delays the instant vanish)
+#define ENG_DEATH_HOLD_MAX_MS	5000	// safety cap on the DeathMsg latch: normally we hold a corpse until EngDead/stale confirms it, but never longer than this so a missed confirmation can't hide a live player forever
 #define ES_ORIGIN			0x010	// entity_state_t::origin (vec3)
 #define ES_USEHULL			0x0C8	// entity_state_t::usehull (0 stand, 1 duck)
 #define ES_ONGROUND			0x0D0	// entity_state_t::onground (-1 = airborne, else ground ent idx)
@@ -2078,13 +2078,24 @@ void DrawEngineEsp()
 		DWORD now=GetTickCount();
 		if(cur!=eng_lastcurpos[idx]) { eng_lastcurpos[idx]=cur; eng_lastchange[idx]=now; }
 		bool stale=(now-eng_lastchange[idx])>ENG_STALE_MS;	// time-based: same at 60 or 240 fps
-		// DeathMsg instant-death: while this slot is inside the post-kill hold window
-		// it is dropped from EVERYTHING below (ESP box/name/radar/aim/trigger) the
-		// same frame the kill lands, so the aimbot lets go of the corpse immediately
-		// and you can swing to the live enemy beside it. After the window the time
-		// check lapses on its own and we fall back to EngDead/stale (which by then
-		// correctly reports a still-dead or respawned player) -- no clearing needed.
-		if(eng_dead_at[idx] && (now-eng_dead_at[idx])<ENG_DEATH_HOLD_MS) continue;
+		// DeathMsg instant-death latch: the moment a slot dies it is dropped from
+		// EVERYTHING below (ESP box/name/radar/aim/trigger) that same frame, and it
+		// STAYS dropped until the engine's OWN death signal catches up. A fixed-time
+		// hold isn't enough: the scoreboard 'dead' byte lags the kill by a variable
+		// amount, and a fresh corpse can keep streaming position updates for a moment
+		// so the staleness timer hasn't fired yet -- so a fixed window expired during
+		// that gap and the corpse briefly popped back as an aim/ESP target. Holding
+		// the latch until EngDead||stale agrees closes that gap; once the engine
+		// agrees we clear the latch and the normal gate below keeps the corpse hidden
+		// and reveals a respawn. The safety cap stops a missed confirmation (e.g. an
+		// instant respawn on a build without the scoreboard) from hiding a live
+		// player forever.
+		if(eng_dead_at[idx])
+		{
+			if(EngDead(idx) || stale || (now-eng_dead_at[idx])>ENG_DEATH_HOLD_MAX_MS)
+				eng_dead_at[idx]=0;		// engine caught up (or safety cap) -> release latch
+			continue;					// hidden the whole time until release
+		}
 		if(EngDead(idx) || stale) continue;
 
 		float o[3];

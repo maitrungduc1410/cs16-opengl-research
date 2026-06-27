@@ -172,7 +172,7 @@ bool	eng_have_extra	=false;	// did we manage to locate g_PlayerExtraInfo?
 int		eng_frame		=0;	// our own frame counter (kept for misc use)
 int		eng_lastcurpos[33]={0};	// cl_entity current_position last seen, per slot
 DWORD	eng_lastchange[33]={0};	// GetTickCount() when current_position last changed
-DWORD	eng_dead_at[33]={0};	// GetTickCount() when DeathMsg said this slot died (0=not killed). Instant kill of ESP+aim; held briefly so the laggy scoreboard can catch up before we trust it again.
+DWORD	eng_dead_at[33]={0};	// GetTickCount() when DeathMsg latched this slot dead (0=not latched). Hides ESP+aim instantly and KEEPS it hidden until EngDead/stale confirms, then is cleared to hand back to the normal gate (so a respawn re-shows).
 
 // ---- own HUD: health / armor / ammo (via user-message hooks) ---------------
 // We patch the engine's "Health"/"Battery"/"CurWeapon" user-message handlers so
