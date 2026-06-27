@@ -64,10 +64,15 @@ typedef struct { // cvars (of course ;P)
 	int	aim_smooth;	// 0=snap, 1..10 = smoothing strength (higher = smoother/slower)
 	int	aim_dot;	// aimbot: draw a dot at the exact point the aimbot aims at
 	int	aim_point;	// aimbot: vertical aim offset from head center (world units, +=up)
+	int	aim_mode;	// aimbot trigger: 0=Always on, 1=Hold key, 2=Toggle key
+	int	aim_key;	// aimbot activation key (index into the shared key table)
 	int	trigger;	// triggerbot: auto-fire when crosshair is over an enemy (engine list)
 	int	trigger_delay;	// reaction delay in ms before the triggerbot fires (humanize)
 	int	autofire;	// auto-pistol / auto-knife: spam clicks while mouse1 is held
 	int	autofire_rate;	// ms between auto-fire clicks (lower = faster)
+	int	bhop;		// auto bunnyhop: inject perfectly-timed jumps on landing
+	int	bhop_hold;	// bhop trigger: 0=always active, 1=only while bhop_key is held
+	int	bhop_key;	// bhop hold key (index into the shared key table)
 	int	notify;		// toast notifications when a feature is toggled in the menu
 	int	esp_log;	// detection logging: on-screen per-frame enemy/PVS counters
 	int	fov;
@@ -203,6 +208,15 @@ bool	eng_aim_have	=false;	// did we pick a target this frame?
 float	eng_aim_sx		=0.0f;	// target screen x (px, 0..vp[2])
 float	eng_aim_sy		=0.0f;	// target screen y (px, 0..vp[3])
 bool	eng_aim_visible	=true;	// false if blocked by a wall (depth-buffer test)
+bool	g_aim_toggle_on	=false;	// aim_mode==Toggle: latched on/off state
+bool	g_aim_key_prev	=false;	// aim key down last frame (for toggle edge detection)
+
+// ---- auto-bunnyhop state (cvar.bhop) --------------------------------------
+// eng_on_ground is refreshed each frame by DrawEngineEsp (reads the local
+// player's curstate.onground); sys_glViewport then injects the jump key on the
+// landing frame. Decoupled like the aimbot so the engine list is read once.
+int		eng_on_ground	=0;		// local player grounded this frame (1=on ground, 0=in air)
+bool	g_bhop_down		=false;	// is our injected jump key currently held down?
 
 // ---- triggerbot state (cvar.trigger) --------------------------------------
 // eng_trig_active is refreshed each frame by DrawEngineEsp (true while the

@@ -107,10 +107,15 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "aim_smooth %i;",&cvar.aim_smooth);
 					sscanf(str, "aim_dot %i;"	,&cvar.aim_dot);
 					sscanf(str, "aim_point %i;"	,&cvar.aim_point);
+					sscanf(str, "aim_mode %i;"	,&cvar.aim_mode);
+					sscanf(str, "aim_key %i;"	,&cvar.aim_key);
 					sscanf(str, "trigger %i;"	,&cvar.trigger);
 					sscanf(str, "trigger_delay %i;",&cvar.trigger_delay);
 					sscanf(str, "autofire %i;"	,&cvar.autofire);
 					sscanf(str, "autofire_rate %i;",&cvar.autofire_rate);
+					sscanf(str, "bhop %i;"		,&cvar.bhop);
+					sscanf(str, "bhop_hold %i;"	,&cvar.bhop_hold);
+					sscanf(str, "bhop_key %i;"	,&cvar.bhop_key);
 					sscanf(str, "notify %i;"	,&cvar.notify);
 					sscanf(str, "esp_log %i;"	,&cvar.esp_log);
 					sscanf(str, "aimthru %i;"	,&cvar.aimthru);
@@ -194,10 +199,15 @@ void SaveSettings()
 	fprintf(f,"aim_smooth %i\n",cvar.aim_smooth);
 	fprintf(f,"aim_dot %i\n",cvar.aim_dot);
 	fprintf(f,"aim_point %i\n",cvar.aim_point);
+	fprintf(f,"aim_mode %i\n",cvar.aim_mode);
+	fprintf(f,"aim_key %i\n",cvar.aim_key);
 	fprintf(f,"trigger %i\n",cvar.trigger);
 	fprintf(f,"trigger_delay %i\n",cvar.trigger_delay);
 	fprintf(f,"autofire %i\n",cvar.autofire);
 	fprintf(f,"autofire_rate %i\n",cvar.autofire_rate);
+	fprintf(f,"bhop %i\n",cvar.bhop);
+	fprintf(f,"bhop_hold %i\n",cvar.bhop_hold);
+	fprintf(f,"bhop_key %i\n",cvar.bhop_key);
 	fprintf(f,"notify %i\n",cvar.notify);
 	fprintf(f,"esp_log %i\n",cvar.esp_log);
 	fprintf(f,"aimthru %i\n",cvar.aimthru);
@@ -272,10 +282,15 @@ void LoadSettings()
 		sscanf(str,"aim_smooth %i"	,&cvar.aim_smooth);
 		sscanf(str,"aim_dot %i"		,&cvar.aim_dot);
 		sscanf(str,"aim_point %i"	,&cvar.aim_point);
+		sscanf(str,"aim_mode %i"	,&cvar.aim_mode);
+		sscanf(str,"aim_key %i"		,&cvar.aim_key);
 		sscanf(str,"trigger %i"		,&cvar.trigger);
 		sscanf(str,"trigger_delay %i",&cvar.trigger_delay);
 		sscanf(str,"autofire %i"	,&cvar.autofire);
 		sscanf(str,"autofire_rate %i",&cvar.autofire_rate);
+		sscanf(str,"bhop %i"		,&cvar.bhop);
+		sscanf(str,"bhop_hold %i"	,&cvar.bhop_hold);
+		sscanf(str,"bhop_key %i"	,&cvar.bhop_key);
 		sscanf(str,"notify %i"		,&cvar.notify);
 		sscanf(str,"esp_log %i"		,&cvar.esp_log);
 		sscanf(str,"aimthru %i"		,&cvar.aimthru);
@@ -364,6 +379,8 @@ void HookInit(bool activate)
 		cvar.trigger_delay=0;
 		cvar.autofire=0;
 		cvar.autofire_rate=0;
+		cvar.bhop=0;
+		cvar.bhop_hold=0;
 		cvar.notify=0;
 		cvar.esp_log=0;
 		cvar.aimthru=0;
@@ -421,6 +438,36 @@ int change(int a) // basic function to toggle things on (1) and off (0)
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
+// Shared activation-key table used by the Aimbot "Aim key" and "Bhop key" menu
+// options. The cvar stores a small index; these map it to a Win32 virtual key
+// (for GetAsyncKeyState) and a human-readable label (for the menu / toast).
+#ifndef VK_XBUTTON1
+#define VK_XBUTTON1 0x05	// mouse button 4 (older SDK headers gate this behind _WIN32_WINNT)
+#endif
+#ifndef VK_XBUTTON2
+#define VK_XBUTTON2 0x06	// mouse button 5
+#endif
+#define KEY_TABLE_COUNT 12
+int KeyTableVK(int i)
+{
+	switch(i)
+	{
+	case 0:  return VK_RBUTTON;	case 1:  return VK_XBUTTON1;	case 2:  return VK_XBUTTON2;
+	case 3:  return VK_MBUTTON;	case 4:  return VK_SHIFT;	case 5:  return VK_CONTROL;
+	case 6:  return VK_MENU;	case 7:  return 'E';	case 8:  return 'F';
+	case 9:  return 'C';	case 10: return 'V';	case 11: return 'X';
+	default: return VK_RBUTTON;
+	}
+}
+const char* KeyTableName(int i)
+{
+	static const char* n[KEY_TABLE_COUNT]={
+		"Mouse R","Mouse 4","Mouse 5","Mouse M","Shift","Ctrl","Alt","E","F","C","V","X"};
+	if(i<0) i=0; if(i>=KEY_TABLE_COUNT) i=KEY_TABLE_COUNT-1;
+	return n[i];
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
 /*
 void GetNearestPlayer()
 {
@@ -474,8 +521,9 @@ void MoveActivePanel(int dx,int dy)
 void ResetConfig()
 {
 	// 1) zero all gameplay cvars so stale save values can't bleed through
-	cvar.aim=0; cvar.aim_smooth=0; cvar.aim_dot=0; cvar.aim_point=0; cvar.trigger=0; cvar.trigger_delay=0;
-	cvar.autofire=0; cvar.autofire_rate=0; cvar.notify=0; cvar.esp_log=0;
+	cvar.aim=0; cvar.aim_smooth=0; cvar.aim_dot=0; cvar.aim_point=0; cvar.aim_mode=0; cvar.aim_key=0;
+	cvar.trigger=0; cvar.trigger_delay=0;
+	cvar.autofire=0; cvar.autofire_rate=0; cvar.bhop=0; cvar.bhop_hold=0; cvar.bhop_key=0; cvar.notify=0; cvar.esp_log=0;
 	cvar.aimthru=0; cvar.esp_engine=0; cvar.esp_name=0; cvar.esp_name_pad=0; cvar.esp_name_size=2; cvar.esp_box=0;
 	cvar.esp_box_pad=0; cvar.esp_box_radius=0; cvar.esp_box_width=0;
 	cvar.esp_dist=0; cvar.esp_dist_pad=0; cvar.esp_dist_size=2; cvar.esp_snap=0; cvar.esp_vischeck=0;
@@ -844,10 +892,15 @@ void DrawMenu(int x, int y)
 		{"FOV",         IT_INT,    &cvar.fov,        0,1000,10,   1, &cvar.aim,  1},
 		{"Head dot",    IT_TOGGLE, &cvar.aim_dot,    0,0,0,       0, &cvar.aim,  1},
 		{"Aim point",   IT_INT,    &cvar.aim_point,  -50,50,1,    0, &cvar.aim,  1},
+		{"Aim mode",    IT_INT,    &cvar.aim_mode,   0,2,1,       1, &cvar.aim,  1},
+		{"Aim key",     IT_INT,    &cvar.aim_key,    0,KEY_TABLE_COUNT-1,1, 1, &cvar.aim, 1},
 		{"Triggerbot",  IT_TOGGLE, &cvar.trigger,    0,0,0,       0, 0,          0},
 		{"Trigger delay",IT_INT,   &cvar.trigger_delay,0,500,10,  0, &cvar.trigger,1},
 		{"Auto-fire",   IT_TOGGLE, &cvar.autofire,   0,0,0,       0, 0,          0},
 		{"Auto-fire rate",IT_INT,  &cvar.autofire_rate,20,300,10, 0, &cvar.autofire,1},
+		{"Bhop",        IT_TOGGLE, &cvar.bhop,       0,0,0,       0, 0,          0},
+		{"Bhop hold",   IT_INT,    &cvar.bhop_hold,  0,1,1,       1, &cvar.bhop, 1},
+		{"Bhop key",    IT_INT,    &cvar.bhop_key,   0,KEY_TABLE_COUNT-1,1, 1, &cvar.bhop, 1},
 		{"Recoil",      IT_INT,    &cvar.recoil,     0,5,1,       1, 0,          0},
 		{"No recoil",   IT_TOGGLE, &cvar.norecoil,   0,0,0,       0, 0,          0},
 		{"Wallhack",    IT_INT,    &cvar.wall,       0,3,1,       1, 0,          0},
@@ -953,7 +1006,22 @@ void DrawMenu(int x, int y)
 		}
 		// toast the change (skipped automatically if cvar.notify is off)
 		if(it->type==IT_TOGGLE)      SetToast("%s: %s", it->label, (*(int*)it->p)?"On":"Off");
-		else if(it->type==IT_INT)    SetToast("%s: %i", it->label, *(int*)it->p);
+		else if(it->type==IT_INT)
+		{
+			if(it->p==&cvar.aim_mode)
+			{
+				static const char *am[3]={"Always","Hold","Toggle"};
+				int v=*(int*)it->p; if(v<0)v=0; if(v>2)v=2; SetToast("%s: %s", it->label, am[v]);
+			}
+			else if(it->p==&cvar.bhop_hold)
+			{
+				static const char *bm[2]={"Always","Hold"};
+				int v=*(int*)it->p; if(v<0)v=0; if(v>1)v=1; SetToast("%s: %s", it->label, bm[v]);
+			}
+			else if(it->p==&cvar.aim_key || it->p==&cvar.bhop_key)
+				SetToast("%s: %s", it->label, KeyTableName(*(int*)it->p));
+			else SetToast("%s: %i", it->label, *(int*)it->p);
+		}
 		else if(it->type==IT_TARGET) SetToast("Target: %s", (*(int*)it->p)?team[1].name:team[0].name);
 		SaveSettings();		// persist the change so it survives the next game launch
 	}
@@ -1035,6 +1103,22 @@ void DrawMenu(int x, int y)
 				int v=*(int*)it->p;
 				if(v<=0) sprintf(buf,"%s%s: Unlimited", pre,it->label);
 				else     sprintf(buf,"%s%s: %im", pre,it->label,v);
+			}
+			else if(it->p==&cvar.aim_mode)
+			{
+				static const char *am[3]={"Always","Hold","Toggle"};
+				int v=*(int*)it->p; if(v<0)v=0; if(v>2)v=2;
+				sprintf(buf,"%s%s: %s", pre,it->label,am[v]);
+			}
+			else if(it->p==&cvar.bhop_hold)
+			{
+				static const char *bm[2]={"Always","Hold"};
+				int v=*(int*)it->p; if(v<0)v=0; if(v>1)v=1;
+				sprintf(buf,"%s%s: %s", pre,it->label,bm[v]);
+			}
+			else if(it->p==&cvar.aim_key || it->p==&cvar.bhop_key)
+			{
+				sprintf(buf,"%s%s: %s", pre,it->label,KeyTableName(*(int*)it->p));
 			}
 			else sprintf(buf,"%s%s: %i", pre,it->label,*(int*)it->p);
 			break;
@@ -1164,6 +1248,7 @@ void DrawCheckText(int x,int y) // bad way of doing this
 #define ENG_STALE_MS		400		// ms without an update -> treat as dead/gone (fps-independent)
 #define ES_ORIGIN			0x010	// entity_state_t::origin (vec3)
 #define ES_USEHULL			0x0C8	// entity_state_t::usehull (0 stand, 1 duck)
+#define ES_ONGROUND			0x0D0	// entity_state_t::onground (-1 = airborne, else ground ent idx)
 
 #define EXTRA_STRIDE		0x68	// g_PlayerExtraInfo entry size
 #define EXTRA_TEAMNUMBER	0x2A	// short: team (1=T, 2=CT)
@@ -1794,7 +1879,7 @@ void DrawEngineEsp()
 	// per-frame entity walk below.
 	bool need_aim  = (cvar.aim!=0);
 	bool need_scan = need_aim || cvar.trigger || cvar.esp_log;
-	if(!cvar.esp_engine && !cvar.esp_hud && !cvar.radar && !need_scan) return;
+	if(!cvar.esp_engine && !cvar.esp_hud && !cvar.radar && !need_scan && !cvar.bhop) return;
 	eng_frame++;
 
 	GLint vpe[4];
@@ -1855,7 +1940,7 @@ void DrawEngineEsp()
 		return;
 	}
 
-	if(cvar.esp_engine || cvar.radar || need_scan)
+	if(cvar.esp_engine || cvar.radar || need_scan || cvar.bhop)
 	{
 
 	float lo[3]={0,0,0};
@@ -1867,6 +1952,11 @@ void DrawEngineEsp()
 		lo[2]=ReadFlt(local+ENT_ORIGIN+8);
 		eng_local_idx =ReadInt(local+ENT_INDEX);
 		eng_local_team=EngTeam(eng_local_idx);
+		// auto-bhop: read the local player's ground state from curstate.onground
+		// (-1 = airborne; any other value = standing on an entity). sys_glViewport
+		// consumes this on the next frame to time the jump injection.
+		int og=ReadInt(local+ENT_CURSTATE+ES_ONGROUND);
+		eng_on_ground=(og!=-1)?1:0;
 	}
 
 	// ---- 2D radar frame. Center is freely positioned (radar_x/radar_y, move mode 3). ----
@@ -2676,13 +2766,30 @@ void sys_glViewport (GLint x,  GLint y,  GLsizei width,  GLsizei height)
 	if(viewportcount >= 5)
 		enabledraw=true;	// enable drawing of text when viewport is called 5th time
 
+	// ---- aim activation gate (Always / Hold key / Toggle key) ----
+	// aim_mode 0 = always on; 1 = only while aim_key is held; 2 = key toggles a
+	// latched state. Edge-detected here so the latch flips once per physical press
+	// regardless of how many times sys_glViewport runs this frame.
+	bool aim_active=true;
+	if(cvar.aim && hookactive && enabledraw)
+	{
+		bool keydn=(GetAsyncKeyState(KeyTableVK(cvar.aim_key))&0x8000)!=0;
+		if(cvar.aim_mode==1)		aim_active=keydn;					// hold
+		else if(cvar.aim_mode==2)							// toggle
+		{
+			if(keydn && !g_aim_key_prev) g_aim_toggle_on=!g_aim_toggle_on;
+			aim_active=g_aim_toggle_on;
+		}
+		g_aim_key_prev=keydn;
+	}
+
 	// ---- engine-based aimbot ----
 	// Consumes the screen target computed by DrawEngineEsp's player loop on the
 	// PREVIOUS frame (DrawEngineEsp runs at the end of each frame in
 	// wglSwapBuffers, this viewport hook runs during the next frame). We clear
 	// eng_aim_have to ensure exactly one mouse nudge per frame even though
 	// sys_glViewport is called many times.
-	if(cvar.aim && eng_aim_have && hookactive && enabledraw)
+	if(cvar.aim && aim_active && eng_aim_have && hookactive && enabledraw)
 	{
 		eng_aim_have=false;			// consume the per-frame pick
 		{
@@ -2724,6 +2831,32 @@ void sys_glViewport (GLint x,  GLint y,  GLsizei width,  GLsizei height)
 			HandleKey(VK_LBUTTON);		// keep recoil compensation in sync
 			eng_trig_fire=now;
 		}
+	}
+
+	// ---- auto bunnyhop (cvar.bhop) ----
+	// eng_on_ground is refreshed by DrawEngineEsp. We hold the jump key (SPACE)
+	// down while grounded and release it in the air, so every landing produces a
+	// fresh 0->1 edge -> the engine jumps on the exact frame we touch down.
+	// Assumes jump is bound to SPACE (the default).
+	if(cvar.bhop && hookactive && enabledraw)
+	{
+		bool want = (cvar.bhop_hold==0) ||
+		            ((GetAsyncKeyState(KeyTableVK(cvar.bhop_key))&0x8000)!=0);
+		if(want && eng_on_ground)
+		{
+			keybd_event(VK_SPACE,0,0,0);					// press -> jump on landing edge
+			g_bhop_down=true;
+		}
+		else if(g_bhop_down)
+		{
+			keybd_event(VK_SPACE,0,KEYEVENTF_KEYUP,0);		// release while airborne / not wanting
+			g_bhop_down=false;
+		}
+	}
+	else if(g_bhop_down)	// bhop disabled mid-air -> make sure we let go of SPACE
+	{
+		keybd_event(VK_SPACE,0,KEYEVENTF_KEYUP,0);
+		g_bhop_down=false;
 	}
 
 	modelviewport=false;

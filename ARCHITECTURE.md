@@ -19,6 +19,7 @@ see [README.md](./README.md). For build instructions see [BUILDING.md](./BUILDIN
   - [Aimbot](#aimbot)
   - [Triggerbot](#triggerbot)
   - [Auto-fire](#auto-fire)
+  - [Auto bunnyhop](#auto-bunnyhop)
   - [No-recoil detour](#no-recoil-detour)
   - [No Flash / No Smoke / No Sky](#no-flash--no-smoke--no-sky)
   - [Hack menu and config persistence](#hack-menu-and-config-persistence)
@@ -191,6 +192,13 @@ both stances. `cvar.aim_dot` (the **Head dot** toggle) draws a small filled circ
 at this exact point for any on-screen target-team enemy, so the user can see and
 tune where the aimbot will land before hiding it again.
 
+**Activation gate:** `cvar.aim_mode` decides *when* the mouse nudge is allowed —
+**Always**, **Hold** (only while `cvar.aim_key` is down), or **Toggle** (the key
+latches an on/off state). The key is resolved from a shared index→virtual-key
+table (`KeyTableVK`) and read with `GetAsyncKeyState` inside `sys_glViewport`; the
+toggle is edge-detected so it flips exactly once per physical press regardless of
+how many times the viewport hook runs that frame.
+
 ---
 
 ### Triggerbot
@@ -211,6 +219,28 @@ button is physically held and `cvar.autofire` is on, the hack alternates one
 frame releasing (UP) and the next frame pressing (DOWN) at `autofire_rate` ms
 intervals. GoldSrc fires one shot per 0→1 edge of `IN_ATTACK`, so this alternate
 approach produces clean, reliable shots at the configured rate.
+
+---
+
+### Auto bunnyhop
+
+GoldSrc adds `PM_PreventMegaBunnyJumping`, which caps bhop speed at `1.7 ×
+sv_maxspeed` and *penalises* overshoot, and a jump only fires on the 0→1 edge of
+`+jump` on the exact frame you touch the ground — a ~1-tick window that's almost
+impossible to hit by hand. This cheat can't change server cvars, but it can nail
+the timing:
+
+- `DrawEngineEsp` reads the local player's `curstate.onground` each frame
+  (`ENT_CURSTATE + ES_ONGROUND`; `-1` = airborne) and stores it in `eng_on_ground`.
+- `sys_glViewport` then **holds `SPACE` down while grounded and releases it in the
+  air** via `keybd_event`. Because it releases every airborne frame, each landing
+  produces a fresh press edge, so the engine jumps the instant you touch down.
+- `cvar.bhop_hold` gates this to a held key (`cvar.bhop_key`, same key table as the
+  aim key) or leaves it always-on. The injected jump key is `SPACE`, distinct from
+  the (mouse/other) hold key, so `GetAsyncKeyState` on the hold key stays reliable.
+
+This assumes jump is bound to `SPACE` (the default). The `onground` offset is for
+engine build 4554, consistent with the rest of the entity-state offsets.
 
 ---
 
