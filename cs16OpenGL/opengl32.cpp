@@ -70,6 +70,14 @@ float curcolor[4];
 void DrawBox2D(float x0,float y0,float x1,float y1,float rad);			// rounded outline
 void FillRoundRect2D(float x0,float y0,float x1,float y1,float rad);		// rounded fill
 void SetToast(const char *fmt, ...);									// toast notification (defined lower)
+void SetAimStatus(const char *fmt, ...);								// pink aim-key status (Toggle mode)
+void DrawAimStatus();													// draws the pink aim-key status pill
+
+// Pink aim-status color: the same tone we draw the T-team ESP box in (see the
+// per-player team color below), so the aim feedback reads as a familiar accent.
+#define AIM_NOTIFY_R 1.0f
+#define AIM_NOTIFY_G 0.25f
+#define AIM_NOTIFY_B 0.25f
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -845,6 +853,18 @@ void SetToast(const char *fmt, ...)
 	vsprintf(toast_msg,fmt,ap);
 	va_end(ap);
 	toast_until=GetTickCount()+2000;	// visible for 2 seconds
+}
+
+// Queue the pink aim-status pill for Toggle mode (e.g. "Aimbot: ON"). Same 2s
+// lifetime/fade as a toast; pressing the aim key again just resets the timeout.
+// Respects cvar.notify like the regular toast.
+void SetAimStatus(const char *fmt, ...)
+{
+	if(!cvar.notify) return;
+	va_list ap; va_start(ap,fmt);
+	vsprintf(aim_status_msg,fmt,ap);
+	va_end(ap);
+	aim_status_until=GetTickCount()+2000;	// same visible window as SetToast
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2771,13 +2791,24 @@ void sys_glViewport (GLint x,  GLint y,  GLsizei width,  GLsizei height)
 	// latched state. Edge-detected here so the latch flips once per physical press
 	// regardless of how many times sys_glViewport runs this frame.
 	bool aim_active=true;
+	aim_status_hold=false;		// reset each frame; only Hold-mode-while-held sets it true
 	if(cvar.aim && hookactive && enabledraw)
 	{
 		bool keydn=(GetAsyncKeyState(KeyTableVK(cvar.aim_key))&0x8000)!=0;
-		if(cvar.aim_mode==1)		aim_active=keydn;					// hold
+		if(cvar.aim_mode==1)							// hold
+		{
+			aim_active=keydn;
+			// Persistent pink status for the whole time the key is held.
+			if(keydn && cvar.notify){ strcpy(aim_status_msg,"Aimbot: ON"); aim_status_hold=true; }
+		}
 		else if(cvar.aim_mode==2)							// toggle
 		{
-			if(keydn && !g_aim_key_prev) g_aim_toggle_on=!g_aim_toggle_on;
+			if(keydn && !g_aim_key_prev)					// rising edge = one press
+			{
+				g_aim_toggle_on=!g_aim_toggle_on;
+				// Timed pink status on each press (re-pressing resets the timeout).
+				SetAimStatus("Aimbot: %s", g_aim_toggle_on?"ON":"OFF");
+			}
 			aim_active=g_aim_toggle_on;
 		}
 		g_aim_key_prev=keydn;
@@ -2925,16 +2956,12 @@ void DrawOverlayUI()
 	(*orig_glPopAttrib)();
 }
 
-// Centered toast near the bottom of the screen. Drawn in its own 2D pass so it
-// shows regardless of whether the ESP/menu passes ran. Fades out over the last
-// 400 ms of its lifetime.
-void DrawToast()
+// Draw a centered rounded "pill" of text at vertical fraction cyf of the screen,
+// with the given accent color (used for both the border and the text) and alpha.
+// Shared by the yellow feature-toast and the pink aim-status notification.
+static void DrawPill(const char *msg, float cyf, float cr, float cg, float cb, float a)
 {
-	if(toast_until==0 || toast_msg[0]==0) return;
-	DWORD now=GetTickCount();
-	if(now>=toast_until){ toast_until=0; return; }
-
-	float a=(float)(toast_until-now)/400.0f; if(a>1.0f) a=1.0f;	// fade last 400ms
+	if(msg==0 || msg[0]==0) return;
 
 	GLint vpe[4]; (*orig_glGetIntegerv)(GL_VIEWPORT,vpe);
 	float sw=(float)vpe[2], sh=(float)vpe[3];
@@ -2949,27 +2976,59 @@ void DrawToast()
 	(*orig_glOrtho)(0,sw,sh,0,-1,1);
 	(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPushMatrix)(); (*orig_glLoadIdentity)();
 
-	float tw=TextWidthPx(toast_msg);						// exact text width -> true centering
+	float tw=TextWidthPx(msg);								// exact text width -> true centering
 	float padX=16.0f*ui_scale, padY=10.0f*ui_scale;			// generous padding on all 4 sides
 	float charH=10.0f*ui_scale;								// font cap height (~10px @1080p)
-	float cx=sw*0.5f, cyc=sh*0.80f;							// horizontal + vertical center of the pill
+	float cx=sw*0.5f, cyc=sh*cyf;							// horizontal + vertical center of the pill
 	float x0=cx-tw*0.5f-padX, x1=cx+tw*0.5f+padX;
 	float y0=cyc-charH*0.5f-padY, y1=cyc+charH*0.5f+padY;
 	float rad=6.0f*ui_scale;
 
 	(*orig_glColor4f)(0.0f,0.0f,0.0f,0.55f*a);				// translucent fill
 	FillRoundRect2D(x0,y0,x1,y1,rad);
-	(*orig_glColor4f)(1.0f,0.9f,0.4f,a);					// yellow border to match the text
+	(*orig_glColor4f)(cr,cg,cb,a);							// accent border to match the text
 	(*orig_glLineWidth)(2.0f*ui_scale);						// same stroke width as the hack menu
 	DrawBox2D(x0,y0,x1,y1,rad);
 
 	float ta=gTextAlpha; gTextAlpha=a;
-	DrawText(cx-tw*0.5f, cyc+charH*0.5f, 1.0f,0.9f,0.4f, "%s", toast_msg);	// centered
+	DrawText(cx-tw*0.5f, cyc+charH*0.5f, cr,cg,cb, "%s", msg);	// centered
 	gTextAlpha=ta;
 
 	(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPopMatrix)();
 	(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPopMatrix)();
 	(*orig_glPopAttrib)();
+}
+
+// Centered toast near the bottom of the screen. Drawn in its own 2D pass so it
+// shows regardless of whether the ESP/menu passes ran. Fades out over the last
+// 400 ms of its lifetime.
+void DrawToast()
+{
+	if(toast_until==0 || toast_msg[0]==0) return;
+	DWORD now=GetTickCount();
+	if(now>=toast_until){ toast_until=0; return; }
+
+	float a=(float)(toast_until-now)/400.0f; if(a>1.0f) a=1.0f;	// fade last 400ms
+	DrawPill(toast_msg, 0.80f, 1.0f,0.9f,0.4f, a);				// yellow, bottom-centered
+}
+
+// Pink aim-key status pill, drawn just above the feature toast so the two never
+// overlap. Hold mode: persistent (no fade) for as long as the key is held.
+// Toggle mode: a timed pill (like the toast) that fades over its last 400 ms.
+void DrawAimStatus()
+{
+	if(aim_status_hold)											// Hold mode, key currently down
+	{
+		DrawPill(aim_status_msg, 0.74f, AIM_NOTIFY_R,AIM_NOTIFY_G,AIM_NOTIFY_B, 1.0f);
+		return;
+	}
+
+	if(aim_status_until==0 || aim_status_msg[0]==0) return;		// Toggle mode (timed)
+	DWORD now=GetTickCount();
+	if(now>=aim_status_until){ aim_status_until=0; return; }
+
+	float a=(float)(aim_status_until-now)/400.0f; if(a>1.0f) a=1.0f;	// fade last 400ms
+	DrawPill(aim_status_msg, 0.74f, AIM_NOTIFY_R,AIM_NOTIFY_G,AIM_NOTIFY_B, a);
 }
 
 // Low-level mouse hook callback. We ONLY care about the physical left button and
@@ -3078,6 +3137,7 @@ void sys_wglSwapBuffers(HDC hDC)
 		EnsureNoRecoilHook();	// (un)install the V_CalcRefdef detour for no visual recoil
 		DrawEngineEsp();	// radar + engine ESP + own HUD (bottom overlay layer)
 		DrawToast();		// feature toggle notifications (middle layer)
+		DrawAimStatus();	// pink Hold/Toggle aim-key status (middle layer)
 		DrawOverlayUI();	// hack menu + F11 check (top overlay layer)
 	}
 	viewportcount=0;		// reset viewport count, cuz this is the last function called every frame

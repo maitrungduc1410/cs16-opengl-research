@@ -230,6 +230,15 @@ DWORD	eng_trig_fire	=0;		// last triggerbot shot tick (refractory period)
 char	toast_msg[64]	="";	// current toast text ("" = none)
 DWORD	toast_until		=0;		// GetTickCount() when the toast disappears (0 = none)
 
+// ---- aim-status notification (Hold/Toggle aim-key feedback) ----------------
+// A separate pink pill (T-team color) that tells you when the aimbot is active
+// under Hold/Toggle aim modes. Hold: shown for the whole time the key is held
+// (aim_status_hold). Toggle: shown for a 2s timeout on each press, like a toast
+// (aim_status_until); pressing again resets the timeout.
+char	aim_status_msg[64]	="";	// current aim-status text ("" = none)
+DWORD	aim_status_until	=0;		// GetTickCount() when the timed status disappears (0 = none)
+bool	aim_status_hold		=false;	// true => persistent (Hold mode, key currently down)
+
 // ---- detection logging / PVS counters (cvar.esp_log) ----------------------
 int		det_cur			=0;		// enemy players received from the server this frame
 int		det_peak		=0;		// highest enemy count seen this session
