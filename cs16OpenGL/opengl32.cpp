@@ -2445,16 +2445,21 @@ void sys_glBegin (GLenum mode)
 			(*orig_glGetFloatv)(GL_CURRENT_COLOR, flashcol);
 			// The stock flashbang is a pure-white fullscreen quad, but modded
 			// servers tint it (pink/green/random each round), so requiring exact
-			// white missed those entirely. A flash is really just a BRIGHT overlay
-			// of any hue -- so we ARM on brightness here, then in sys_glEnd we only
-			// actually suppress the quad if it truly spans the whole screen. That
-			// fullscreen gate is what keeps bright-but-small HUD quads (ammo/health
-			// digits, weapon/grenade icons, buy menu, crosshair) from being eaten.
+			// white missed those entirely. A flash is really just a BRIGHT, UNTEXTURED
+			// overlay of any hue. We ARM on "bright + untextured" here, then in
+			// sys_glEnd only suppress it if it truly spans the whole screen.
+			//   - The UNTEXTURED check is essential: every bright HUD element (ammo
+			//     digits, kill-feed weapon icons, buy-menu weapon image, buy-zone
+			//     card icon) is a TEXTURED sprite, so it never arms and is drawn
+			//     normally. Buffering a textured quad would also break it, because
+			//     replaying its vertices in sys_glEnd loses the per-vertex texcoords.
+			//   - The fullscreen gate then protects untextured bright quads that
+			//     aren't the flash (e.g. the buy-menu panel).
 			float mx=flashcol[0];
 			if(flashcol[1]>mx) mx=flashcol[1];
 			if(flashcol[2]>mx) mx=flashcol[2];
-			bFlash=(mx>=0.5f);
-			if(bFlash) flashVN=0;	// start buffering this quad's vertices
+			bFlash=(mx>=0.5f) && !(*orig_glIsEnabled)(GL_TEXTURE_2D);
+			if(bFlash) flashVN=0;	// start buffering this (untextured) quad's vertices
 		}
 		if(cvar.scope)
 		{
