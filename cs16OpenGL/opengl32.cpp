@@ -154,6 +154,8 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "radar_names %i;",&cvar.radar_names);
 					sscanf(str, "radar_rings %i;",&cvar.radar_rings);
 					sscanf(str, "hud_pad %i;"	,&cvar.hud_pad);
+					sscanf(str, "spec_warn %i;"	,&cvar.spec_warn);
+					sscanf(str, "spec_pad %i;"	,&cvar.spec_pad);
 					sscanf(str, "esp_box_pad %i;"	,&cvar.esp_box_pad);
 					sscanf(str, "esp_box_radius %i;",&cvar.esp_box_radius);
 					sscanf(str, "esp_box_width %i;",&cvar.esp_box_width);
@@ -253,6 +255,8 @@ void SaveSettings()
 	fprintf(f,"hud_ammo %i\n",cvar.hud_ammo);
 	fprintf(f,"hud_die %i\n",cvar.hud_die);
 	fprintf(f,"hud_pad %i\n",cvar.hud_pad);
+	fprintf(f,"spec_warn %i\n",cvar.spec_warn);
+	fprintf(f,"spec_pad %i\n",cvar.spec_pad);
 	fprintf(f,"chams %i\n",cvar.chams);
 	fprintf(f,"chams_wire %i\n",cvar.chams_wire);
 	fprintf(f,"radar %i\n",cvar.radar);
@@ -336,6 +340,8 @@ void LoadSettings()
 		sscanf(str,"hud_ammo %i"	,&cvar.hud_ammo);
 		sscanf(str,"hud_die %i"		,&cvar.hud_die);
 		sscanf(str,"hud_pad %i"		,&cvar.hud_pad);
+		sscanf(str,"spec_warn %i"	,&cvar.spec_warn);
+		sscanf(str,"spec_pad %i"	,&cvar.spec_pad);
 		sscanf(str,"chams %i"		,&cvar.chams);
 		sscanf(str,"chams_wire %i"	,&cvar.chams_wire);
 		sscanf(str,"radar %i"		,&cvar.radar);
@@ -410,6 +416,8 @@ void HookInit(bool activate)
 		cvar.hud_hp=0;
 		cvar.hud_ammo=0;
 		cvar.hud_die=0;
+		cvar.spec_warn=0;
+		cvar.spec_pad=0;
 		cvar.chams=0;
 		cvar.chams_wire=0;
 		cvar.radar=0;
@@ -537,7 +545,7 @@ void ResetConfig()
 	cvar.esp_dist=0; cvar.esp_dist_pad=0; cvar.esp_dist_size=2; cvar.esp_snap=0; cvar.esp_vischeck=0;
 	cvar.esp_arrow=0; cvar.esp_maxdist=0; cvar.esp_fade=0; cvar.esp_team=0;
 	cvar.esp_dbg=0; cvar.esp_hud=0; cvar.hud_hp=0; cvar.hud_ammo=0;
-	cvar.hud_die=0; cvar.hud_pad=0; cvar.chams=0; cvar.chams_wire=0;
+	cvar.hud_die=0; cvar.hud_pad=0; cvar.spec_warn=0; cvar.spec_pad=0; cvar.chams=0; cvar.chams_wire=0;
 	cvar.radar=0; cvar.radar_shape=0; cvar.radar_size=0; cvar.radar_zoom=0;
 	cvar.radar_rotate=0; cvar.radar_names=0; cvar.radar_rings=0;
 	cvar.lambert=0; cvar.cross=0; cvar.wall=0; cvar.smoke=0; cvar.flash=0;
@@ -951,6 +959,8 @@ void DrawMenu(int x, int y)
 		{"Ammo",        IT_TOGGLE, &cvar.hud_ammo,   0,0,0,       0, &cvar.esp_hud,    1},
 		{"Show when die",IT_TOGGLE,&cvar.hud_die,    0,0,0,       0, &cvar.esp_hud,    1},
 		{"Padding",     IT_INT,    &cvar.hud_pad,   -20,80,4,     0, &cvar.esp_hud,    1},
+		{"Spec warning",IT_TOGGLE, &cvar.spec_warn,  0,0,0,       0, 0,                0},
+		{"Spec padding",IT_INT,    &cvar.spec_pad,  -40,200,4,    0, &cvar.spec_warn,  1},
 		{"Chams",       IT_TOGGLE, &cvar.chams,      0,0,0,       0, 0,                0},
 		{"Chams Wire",  IT_TOGGLE, &cvar.chams_wire, 0,0,0,       0, &cvar.chams,      1},
 		{"Radar",       IT_TOGGLE, &cvar.radar,      0,0,0,       0, 0,                0},
@@ -977,7 +987,7 @@ void DrawMenu(int x, int y)
 	float dt=g_menu_dt;
 
 	// visible rows only (skip those whose parent cvar is off)
-	int vis[64], nvis=0;
+	int vis[80], nvis=0;
 	for(int i=0;i<N;i++)
 		if(items[i].dep==0 || *(items[i].dep)!=0) vis[nvis++]=i;
 	if(nvis==0) return;
@@ -1271,6 +1281,9 @@ void DrawCheckText(int x,int y) // bad way of doing this
 #define ES_ORIGIN			0x010	// entity_state_t::origin (vec3)
 #define ES_USEHULL			0x0C8	// entity_state_t::usehull (0 stand, 1 duck)
 #define ES_ONGROUND			0x0D0	// entity_state_t::onground (-1 = airborne, else ground ent idx)
+#define ES_IUSER1			0x104	// entity_state_t::iuser1 (spectator observer MODE; 0 = not observing)
+#define ES_IUSER2			0x108	// entity_state_t::iuser2 (spectator observer TARGET entity index)
+#define ENG_SPEC_MATCH_R	48.0f	// spec_warn fallback: a spectator whose camera origin is within this many world units of the local player is treated as watching us (catches in-eye spectators when the engine doesn't replicate iuser2)
 
 #define EXTRA_STRIDE		0x68	// g_PlayerExtraInfo entry size
 #define EXTRA_TEAMNUMBER	0x2A	// short: team (1=T, 2=CT)
@@ -1905,7 +1918,7 @@ void DrawEngineEsp()
 	// per-frame entity walk below.
 	bool need_aim  = (cvar.aim!=0);
 	bool need_scan = need_aim || cvar.trigger || cvar.esp_log;
-	if(!cvar.esp_engine && !cvar.esp_hud && !cvar.radar && !need_scan && !cvar.bhop) return;
+	if(!cvar.esp_engine && !cvar.esp_hud && !cvar.radar && !need_scan && !cvar.bhop && !cvar.spec_warn) return;
 	eng_frame++;
 
 	GLint vpe[4];
@@ -1966,7 +1979,7 @@ void DrawEngineEsp()
 		return;
 	}
 
-	if(cvar.esp_engine || cvar.radar || need_scan || cvar.bhop)
+	if(cvar.esp_engine || cvar.radar || need_scan || cvar.bhop || cvar.spec_warn)
 	{
 
 	float lo[3]={0,0,0};
@@ -2053,6 +2066,16 @@ void DrawEngineEsp()
 	int  det_seen = 0;								// enemy players received this frame (PVS counter)
 	bool trig_hit = false;							// crosshair on an enemy this frame (triggerbot)
 
+	// spec_warn ("who's watching me"): collected during the player walk below, drawn
+	// after it as a compact block under the crosshair. spec_total counts ALL spectators
+	// observing us; spec_show caps the names actually drawn at 3 (per the design).
+	char spec_names[3][64];
+	float spec_cols[3][3];
+	int  spec_show = 0;								// names stored for display (0..3)
+	int  spec_total = 0;							// total spectators targeting us
+	int  spec_seen = 0;								// debug: spectators present in the list this frame
+	int  spec_dbg_mode = -1, spec_dbg_tgt = -1;		// debug: first spectator's raw iuser1/iuser2
+
 	for(int idx=1; idx<=32; idx++)
 	{
 		if(idx==eng_local_idx) continue;
@@ -2064,7 +2087,50 @@ void DrawEngineEsp()
 			hud_player_info_t info; memset(&info,0,sizeof(info));
 			((eng_GetPlayerInfo_t)fnInfo)(idx,&info);
 			if(info.name==0 || !IsReadable((DWORD)info.name,1)) continue;	// empty slot
-			if(info.spectator) continue;
+			if(info.spectator)
+			{
+				// "Who's watching me": a spectator's observer target lives in their
+				// entity_state (iuser1=mode, iuser2=target index). We treat them as
+				// watching us if iuser2 == our index, OR (fallback, for in-eye specs
+				// when the engine doesn't replicate iuser2 to us) their camera origin
+				// sits on top of ours. Either way the slot is still skipped from
+				// ESP/aim below via the continue.
+				if(cvar.spec_warn && eng_local_idx>0 && fnEnt>=0x10000)
+				{
+					spec_seen++;
+					DWORD sent=(DWORD)((eng_GetEntityByIndex_t)fnEnt)(idx);
+					if(sent)
+					{
+						int obsmode=ReadInt(sent+ENT_CURSTATE+ES_IUSER1);
+						int obstgt =ReadInt(sent+ENT_CURSTATE+ES_IUSER2);
+						if(spec_seen==1){ spec_dbg_mode=obsmode; spec_dbg_tgt=obstgt; }
+						bool watch=(obsmode>0 && obstgt==eng_local_idx);
+						if(!watch)
+						{
+							float so0=ReadFlt(sent+ENT_ORIGIN), so1=ReadFlt(sent+ENT_ORIGIN+4), so2=ReadFlt(sent+ENT_ORIGIN+8);
+							if(so0||so1||so2)
+							{
+								float dxs=so0-lo[0], dys=so1-lo[1], dzs=so2-lo[2];
+								if(dxs*dxs+dys*dys+dzs*dzs < ENG_SPEC_MATCH_R*ENG_SPEC_MATCH_R) watch=true;
+							}
+						}
+						if(watch)
+						{
+							spec_total++;
+							if(spec_show<3)
+							{
+								strncpy(spec_names[spec_show],info.name,63); spec_names[spec_show][63]=0;
+								int st=EngTeam(idx);
+								if(st==1)      { spec_cols[spec_show][0]=1.0f; spec_cols[spec_show][1]=0.25f; spec_cols[spec_show][2]=0.25f; }	// T  = red
+								else if(st==2) { spec_cols[spec_show][0]=0.25f;spec_cols[spec_show][1]=0.55f; spec_cols[spec_show][2]=1.0f;  }	// CT = blue
+								else           { spec_cols[spec_show][0]=0.25f;spec_cols[spec_show][1]=1.0f;  spec_cols[spec_show][2]=0.25f; }	// no team (pure spectator/admin) = green
+								spec_show++;
+							}
+						}
+					}
+				}
+				continue;
+			}
 			strncpy(namebuf,info.name,63); namebuf[63]=0;
 			if(info.model && IsReadable((DWORD)info.model,1))
 			{ strncpy(modelbuf,info.model,63); modelbuf[63]=0; }
@@ -2399,6 +2465,38 @@ void DrawEngineEsp()
 	if(cvar.esp_log)
 		DrawText(dbgx,dbgy+dbgline,0.6f,0.9f,1.0f,"PVS/detect: cur=%i  peak=%i  avg=%.1f",
 			det_cur, det_peak, det_avg);
+
+	// spec_warn debug: shows whether the engine actually gives us the observer target.
+	// "specs" = spectators in the list, "watch" = those resolved to be watching us,
+	// mode0/tgt0 = the first spectator's raw iuser1/iuser2 (tgt0 == me => iuser2 works).
+	if(cvar.spec_warn && cvar.esp_dbg)
+		DrawText(dbgx,dbgy+dbgline*2.0f,1.0f,0.7f,0.2f,"SPEC: specs=%i watch=%i  me=%i mode0=%i tgt0=%i",
+			spec_seen, spec_total, eng_local_idx, spec_dbg_mode, spec_dbg_tgt);
+
+	// "Who's watching me" block, centered just below the crosshair. Only present
+	// while at least one spectator targets us (no fade: instant appear/disappear).
+	// Line 1: a red dot + "N watching". Following lines: up to 3 names, each in its
+	// team color (red T / blue CT / green = no team, i.e. a pure spectator/admin).
+	if(cvar.spec_warn && spec_total>0)
+	{
+		float cxh=sw*0.5f, cyh=sh*0.5f;
+		float lineh=14.0f*ui_scale;								// stack spacing per name
+		float baseY=cyh + (52.0f+(float)cvar.spec_pad)*ui_scale;	// padding matches the HUD arcs' 52u baseline
+		char hdr[32]; sprintf(hdr,"%i watching", spec_total);
+		float hw=TextWidthPx(hdr);
+		float dotr=3.0f*ui_scale, gap=6.0f*ui_scale;
+		float startx=cxh-(dotr*2.0f+gap+hw)*0.5f;				// center the dot+text group
+		(*orig_glColor4f)(1.0f,0.25f,0.25f,gTextAlpha);
+		FillCircle2D(startx+dotr, baseY-3.0f*ui_scale, dotr);	// dot ~centered on the text row
+		(*orig_glColor4f)(1,1,1,1);
+		DrawText(startx+dotr*2.0f+gap, baseY, 1.0f,0.25f,0.25f, "%s", hdr);
+		for(int si=0;si<spec_show;si++)
+		{
+			float nw=TextWidthPx(spec_names[si]);
+			DrawText(cxh-nw*0.5f, baseY+lineh*(float)(si+1),
+				spec_cols[si][0],spec_cols[si][1],spec_cols[si][2], "%s", spec_names[si]);
+		}
+	}
 
 	}	// end if(cvar.esp_engine || cvar.radar || need_aim)
 

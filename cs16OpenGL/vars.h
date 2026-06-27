@@ -59,6 +59,8 @@ typedef struct { // cvars (of course ;P)
 	int radar_names;// 1 = draw short player name next to their dot
 	int radar_rings;// 1 = draw concentric range rings inside the radar
 	int hud_pad;	// HUD sub-option: extra arc padding around the crosshair (units)
+	int spec_warn;	// "who's watching me": show spectators targeting the local player, near the crosshair
+	int spec_pad;	// spec_warn sub-option: vertical offset below the crosshair (units, scaled by ui_scale)
 	int	aimthru;
 	int	aim;
 	int	aim_smooth;	// 0=snap, 1..10 = smoothing strength (higher = smoother/slower)

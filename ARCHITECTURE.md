@@ -15,6 +15,7 @@ see [README.md](./README.md). For build instructions see [BUILDING.md](./BUILDIN
   - [Engine entity-list ESP](#engine-entity-list-esp)
   - [Radar](#radar)
   - [Own HUD (HP / Ammo arcs)](#own-hud-hp--ammo-arcs)
+  - [Spectator warning ("who's watching me")](#spectator-warning-whos-watching-me)
   - [Chams](#chams)
   - [Aimbot](#aimbot)
   - [Triggerbot](#triggerbot)
@@ -160,6 +161,43 @@ spectating a live teammate doesn't reset the dead state.
 
 The HP and ammo arcs are drawn as 10-tick `GL_LINES` segments arranged in two
 symmetric 96° arcs flanking the crosshair.
+
+---
+
+### Spectator warning ("who's watching me")
+
+A safety feature aimed at the ban problem: on real servers you usually get banned
+because an **admin spectates you and reacts**, so seeing *who* is observing you in
+real time lets you play legit the moment someone's on you. Gated by
+`cvar.spec_warn`, drawn in the same 2D pass as the rest of the overlay.
+
+The engine player list already exposes a `spectator` flag per slot
+(`hud_player_info_t`, via `pfnGetPlayerInfo`), and the ESP loop normally just
+skips those slots. For spec_warn we instead resolve each spectator's **observer
+target** before skipping it:
+
+- **Primary — `iuser2`.** A spectator's observer state lives in their
+  `entity_state_t`: `iuser1` = observer mode (0 = not observing), `iuser2` = the
+  entity index being watched. If `iuser1 > 0` and `iuser2 == eng_local_idx`, that
+  spectator is watching us.
+- **Fallback — origin match.** GoldSrc does **not** reliably replicate another
+  player's `iuser2` to a normal (non-spectator) client, so when the primary check
+  fails we fall back to geometry: an **in-eye** spectator's camera origin sits on
+  top of the player they watch, so a spectator whose origin is within
+  `ENG_SPEC_MATCH_R` (48 u) of our origin is treated as watching us. This catches
+  the common admin-in-eye case even when `iuser2` is withheld; chase-cam (offset
+  behind the target) is only approximate, which is why both signals are OR'd.
+
+The result is collected during the existing player walk (`spec_total` counts all
+watchers; up to 3 names + their team colors are stored) and drawn as a compact
+block centered just **below the crosshair** — a red dot + "`N watching`", then the
+names, each in its ESP **team color** (red T / blue CT / green = no team, i.e. a
+pure spectator/admin). It only appears while `spec_total > 0` (instant
+appear/disappear, no fade). `cvar.spec_pad` shifts the block down from a 52u
+baseline that matches the HP/ammo arcs, all scaled by `ui_scale`. With
+`esp_dbg` on, a `SPEC:` line reports the raw spectator count and the first
+spectator's `iuser1/iuser2` so the `iuser2` offset / replication can be verified
+on a given server.
 
 ---
 
