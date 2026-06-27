@@ -1978,14 +1978,13 @@ void DrawEngineEsp()
 		int og=ReadInt(local+ENT_CURSTATE+ES_ONGROUND);
 		eng_on_ground=(og!=-1)?1:0;
 
-		// Bhop diagnostics (ESP debug toggle): shows the raw onground value, the
-		// derived ground flag, and whether we're currently holding SPACE down.
-		// If onground_raw never changes between 0 (grounded) and -1 (air) as you
-		// jump, the ES_ONGROUND offset is wrong for this build; if it toggles
-		// correctly but you still don't hop, it's the key injection.
+		// Bhop diagnostics (ESP debug toggle). onground_raw is shown for reference
+		// only -- it stays 0 ("grounded") even mid-air because the engine predicts
+		// the local player and never updates curstate, which is exactly why bhop
+		// now spams the jump key instead of holding it while "grounded".
 		if(cvar.esp_dbg && cvar.bhop)
 			DrawText(16.0f*ui_scale,40.0f*ui_scale,1.0f,0.7f,0.2f,
-				"BHOP: onground_raw=%d  ground=%d  space_injected=%d",og,eng_on_ground,g_bhop_down?1:0);
+				"BHOP: spam-jump active  (onground_raw=%d, unreliable for local player)",og);
 	}
 
 	// ---- 2D radar frame. Center is freely positioned (radar_x/radar_y, move mode 3). ----
@@ -2873,34 +2872,9 @@ void sys_glViewport (GLint x,  GLint y,  GLsizei width,  GLsizei height)
 		}
 	}
 
-	// ---- auto bunnyhop (cvar.bhop) ----
-	// eng_on_ground is refreshed by DrawEngineEsp. We hold the jump key (SPACE)
-	// down while grounded and release it in the air, so every landing produces a
-	// fresh 0->1 edge -> the engine jumps on the exact frame we touch down.
-	// Assumes jump is bound to SPACE (the default).
-	if(cvar.bhop && hookactive && enabledraw)
-	{
-		bool want = (cvar.bhop_hold==0) ||
-		            ((GetAsyncKeyState(KeyTableVK(cvar.bhop_key))&0x8000)!=0);
-		// Pass the hardware scan code (not just the VK) so the engine's keyboard
-		// handler registers the synthetic SPACE exactly like a real key press.
-		BYTE sc=(BYTE)MapVirtualKey(VK_SPACE,0);
-		if(want && eng_on_ground)
-		{
-			keybd_event(VK_SPACE,sc,0,0);					// press -> jump on landing edge
-			g_bhop_down=true;
-		}
-		else if(g_bhop_down)
-		{
-			keybd_event(VK_SPACE,sc,KEYEVENTF_KEYUP,0);		// release while airborne / not wanting
-			g_bhop_down=false;
-		}
-	}
-	else if(g_bhop_down)	// bhop disabled mid-air -> make sure we let go of SPACE
-	{
-		keybd_event(VK_SPACE,(BYTE)MapVirtualKey(VK_SPACE,0),KEYEVENTF_KEYUP,0);
-		g_bhop_down=false;
-	}
+	// (auto-bunnyhop moved to UpdateBhop(), called once per frame from
+	// wglSwapBuffers -- sys_glViewport runs several times per frame, which would
+	// make the press/release toggle fire an unpredictable number of times.)
 
 	modelviewport=false;
 	ch=false;
@@ -3091,6 +3065,41 @@ DWORD WINAPI MouseHookThread(LPVOID)
 // clicks pollute it (causing the earlier "fires forever" latch). Instead we read
 // g_phys_lb, the true physical button state from the low-level hook, which
 // ignores injected events. So we start/stop strictly on YOUR real hold/release.
+// ---- auto bunnyhop (cvar.bhop) -------------------------------------------
+// Called ONCE per frame from wglSwapBuffers. Spams the jump key (SPACE) by
+// toggling press/release every frame, the way classic bhop scripts do.
+//
+// Why spam instead of "hold while grounded": the engine predicts the LOCAL
+// player's movement client-side and never writes the air state back into
+// curstate, so curstate.onground reads "grounded" even mid-jump (confirmed via
+// the BHOP debug line). Holding SPACE down based on that stale flag makes the
+// engine jump exactly once and then refuse all further jumps -- GoldSrc's
+// PM_Jump ignores +jump until it has seen a -jump (the anti-pogo rule), which
+// also blocks your manual jumps. Toggling SPACE every frame produces a fresh
+// +jump/-jump edge each frame, so we re-jump the instant we land and never
+// latch the key down. Assumes jump is bound to SPACE (the default).
+void UpdateBhop()
+{
+	bool want=false;
+	if(cvar.bhop && hookactive && enabledraw && !menu.active)
+		want = (cvar.bhop_hold==0) ||									// Always
+		       ((GetAsyncKeyState(KeyTableVK(cvar.bhop_key))&0x8000)!=0);	// Hold key
+
+	BYTE sc=(BYTE)MapVirtualKey(VK_SPACE,0);		// scan code so the engine sees a real key
+
+	if(want)
+	{
+		// Alternate down/up each frame -> +jump / -jump edges at the frame rate.
+		if(g_bhop_down){ keybd_event(VK_SPACE,sc,KEYEVENTF_KEYUP,0); g_bhop_down=false; }
+		else           { keybd_event(VK_SPACE,sc,0,0);              g_bhop_down=true;  }
+	}
+	else if(g_bhop_down)	// not bhopping (or hack off) -> make sure SPACE is released
+	{
+		keybd_event(VK_SPACE,sc,KEYEVENTF_KEYUP,0);
+		g_bhop_down=false;
+	}
+}
+
 void UpdateAutofire()
 {
 	static bool  phase_press=false;		// next injected event is the DOWN (fire) half
@@ -3152,6 +3161,7 @@ void sys_wglSwapBuffers(HDC hDC)
 		DrawAimStatus();	// pink Hold/Toggle aim-key status (middle layer)
 		DrawOverlayUI();	// hack menu + F11 check (top overlay layer)
 	}
+	UpdateBhop();			// once-per-frame jump spam (also releases SPACE when bhop/hack is off)
 	viewportcount=0;		// reset viewport count, cuz this is the last function called every frame
 	(*orig_wglSwapBuffers) (hDC);
 }
