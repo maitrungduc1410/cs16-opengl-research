@@ -59,8 +59,6 @@ typedef struct { // cvars (of course ;P)
 	int radar_names;// 1 = draw short player name next to their dot
 	int radar_rings;// 1 = draw concentric range rings inside the radar
 	int hud_pad;	// HUD sub-option: extra arc padding around the crosshair (units)
-	int spec_warn;	// "who's watching me": show spectators targeting the local player, near the crosshair
-	int spec_pad;	// spec_warn sub-option: vertical offset below the crosshair (units, scaled by ui_scale)
 	int	aimthru;
 	int	aim;
 	int	aim_smooth;	// 0=snap, 1..10 = smoothing strength (higher = smoother/slower)
@@ -166,20 +164,6 @@ DWORD	norec_fn		=0;	// address of client.dll!V_CalcRefdef (0 = not located yet)
 bool	norec_hooked	=false;	// is our V_CalcRefdef detour currently installed?
 float	norec_peak		=0;	// debug: largest |punch| the engine tried to apply (F11)
 float	norec_last[3]	={0,0,0};	// debug: last punch values seen before we cleared them (F11)
-// ---- spec_warn session diagnostics (F11) ----------------------------------
-// Accumulated across the whole session (reset on HookInit) so a spectate that
-// lasts only a few seconds is still visible on the F11 screen afterwards. This
-// answers "is the detection running, and was I EVER watched this game?" without
-// having to stare at the live SPEC: line at the exact moment it happens.
-unsigned spec_diag_frames	=0;	// frames the detection loop has scanned (proves it runs)
-int		spec_diag_named		=0;	// highest slot idx that returned a readable name (GetPlayerInfo sanity)
-int		spec_diag_flag_peak	=0;	// peak slots with the GetPlayerInfo spectator flag set
-int		spec_diag_obs_peak	=0;	// peak slots whose entity_state.iuser1>0 (observer mode replicated)
-int		spec_diag_watch_peak=0;	// peak simultaneous spectators resolved onto us in one frame
-int		spec_diag_watch_ever=0;	// 1 once anyone was ever resolved watching us this session
-char	spec_diag_last_name[64]="";	// most recent watcher's name (empty = none yet)
-int		spec_diag_last_mode	=0;	// most recent watcher's observer mode (iuser1)
-DWORD	spec_diag_last_ms	=0;	// GetTickCount() when the last watcher was seen (0 = never)
 DWORD	eng_extrainfo	=0;	// address of g_PlayerExtraInfo array (in client.dll)
 int		eng_local_idx	=0;	// entity index of the local player
 int		eng_local_team	=0;	// team number of the local player (0=unknown,1/2)

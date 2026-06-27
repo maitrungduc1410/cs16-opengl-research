@@ -15,7 +15,7 @@ see [README.md](./README.md). For build instructions see [BUILDING.md](./BUILDIN
   - [Engine entity-list ESP](#engine-entity-list-esp)
   - [Radar](#radar)
   - [Own HUD (HP / Ammo arcs)](#own-hud-hp--ammo-arcs)
-  - [Spectator warning ("who's watching me")](#spectator-warning-whos-watching-me)
+  - [Design note: the abandoned spectator warning ("who's watching me")](#design-note-the-abandoned-spectator-warning-whos-watching-me)
   - [Chams](#chams)
   - [Aimbot](#aimbot)
   - [Triggerbot](#triggerbot)
@@ -164,55 +164,38 @@ symmetric 96° arcs flanking the crosshair.
 
 ---
 
-### Spectator warning ("who's watching me")
+### Design note: the abandoned spectator warning ("who's watching me")
 
-A safety feature aimed at the ban problem: on real servers you usually get banned
-because an **admin spectates you and reacts**, so seeing *who* is observing you in
-real time lets you play legit the moment someone's on you. Gated by
-`cvar.spec_warn`, drawn in the same 2D pass as the rest of the overlay.
+**Tried and removed — it does not work, by design of GoldSrc.** The idea was a
+safety feature for the ban problem: surface *who* is spectating you (an admin
+about to react) near the crosshair so you can play legit the moment someone's on
+you. We built two generations of it (a `cvar.spec_warn` near-crosshair block, then
+a broadened detector plus an F11 session log) and both were removed after testing.
 
-The engine player list exposes a `spectator` flag per slot (`hud_player_info_t`,
-via `pfnGetPlayerInfo`), but we do **not** trust it alone: many servers never set
-that flag for *other* clients. Instead, for every named slot we read the entity
-observer mode and treat the slot as a spectator when the flag is set **or**
-`iuser1 > 0`. We resolve each such slot's **observer target** before skipping it:
+How it was meant to work: each slot's observer state lives in its `entity_state_t`
+(`iuser1` = observer mode, `iuser2` = watched entity index). A spectator was
+counted as watching us when `iuser1 > 0` and `iuser2 == eng_local_idx`, with an
+origin-match fallback (an in-eye spectator's camera sits on top of its target) for
+servers that withhold `iuser2`. We even stopped trusting the `pfnGetPlayerInfo`
+`spectator` flag and read `iuser1` for every named slot, in case the flag was
+stripped.
 
-- **Primary — `iuser2`.** A spectator's observer state lives in their
-  `entity_state_t`: `iuser1` = observer mode (0 = not observing), `iuser2` = the
-  entity index being watched. If `iuser1 > 0` and `iuser2 == eng_local_idx`, that
-  spectator is watching us. A live, playing enemy has `iuser1 == 0`, so reading
-  this for every slot never mis-flags a real target.
-- **Fallback — origin match.** GoldSrc does **not** reliably replicate another
-  player's `iuser2` to a normal (non-spectator) client, so when the primary check
-  fails we fall back to geometry: an **in-eye** spectator's camera origin sits on
-  top of the player they watch, so a spectator whose origin is within
-  `ENG_SPEC_MATCH_R` (48 u) of our origin is treated as watching us. This catches
-  the common admin-in-eye case even when `iuser2` is withheld; chase-cam (offset
-  behind the target) is only approximate, which is why both signals are OR'd.
+**Why it fails.** GoldSrc servers deliberately **do not replicate spectator data
+to ordinary players** — that's the whole point of spectating (admins watch
+suspected cheaters covertly). So on a normal client the spectator slots simply
+never arrive: the player list shows no spectator flag, and there is no
+`entity_state` to read `iuser1/iuser2` from. The F11 diagnostic made this concrete:
+across **~100k frames of real play the watcher count never left 0** — not because
+the scan wasn't running, but because the bytes are never sent to the client.
 
-The result is collected during the existing player walk (`spec_total` counts all
-watchers; up to 3 names + their team colors are stored) and drawn as a compact
-block centered just **below the crosshair** — a red dot + "`N watching`", then the
-names, each in its ESP **team color** (red T / blue CT / green = no team, i.e. a
-pure spectator/admin). It only appears while `spec_total > 0` (instant
-appear/disappear, no fade). `cvar.spec_pad` shifts the block down from a 52u
-baseline that matches the HP/ammo arcs, all scaled by `ui_scale`. With
-`esp_dbg` on, a `SPEC:` line reports the per-frame counts (`flag` = GetPlayerInfo
-flag, `obs` = `iuser1 > 0`), the resolved `watch` count, `named` (highest slot
-that returned a name — proves `pfnGetPlayerInfo` works), and the first slot's raw
-`iuser1/iuser2` so replication can be verified on a given server.
-
-**Session diagnostics (F11).** Because a spectate may last only seconds and is
-easy to miss on the live line, the detection also accumulates persistent counters
-(reset when the hack is armed in `HookInit`): frames scanned, peak flagged/observer
-slots, peak watchers, and an "ever watched" record with the last watcher's name,
-observer mode, and how long ago. These are printed on the F11 check screen under
-**"Spectator watch (this session)"**. The intended workflow: arm the hack, have a
-friend/admin spectate you in each mode for a few seconds, then open F11 — if every
-peak is still 0, the server isn't replicating spectator data to your client at all
-(GoldSrc deliberately hides spectators from players), which means **no** client-side
-tool can detect it on that server. If `obs`/watch peaks rise, detection works and
-you can tune `ENG_SPEC_MATCH_R` from there.
+**Conclusion (so it isn't re-attempted):** purely client-side spectator detection
+is not possible on a standard server. The only leak cases are servers that
+misconfigure replication, or an in-eye spectator whose camera origin happens to
+coincide with yours — too rare and unreliable to ship. A real solution would need
+server-side cooperation (a plugin) or HLTV-list parsing, neither of which a
+client-only proxy DLL can do. The feature, its cvars (`spec_warn`/`spec_pad`), the
+`ES_IUSER1/2` + `ENG_SPEC_MATCH_R` reads, the menu rows, and the F11 session log
+were all removed.
 
 ---
 
