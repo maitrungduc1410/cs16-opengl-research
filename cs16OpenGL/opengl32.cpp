@@ -1266,6 +1266,7 @@ void DrawCheckText(int x,int y) // bad way of doing this
 #define ENT_CURPOS			0x404	// cl_entity_t: current_position (update counter)
 #define ENT_ORIGIN			0xB48	// cl_entity_t: vec3 interpolated origin
 #define ENG_STALE_MS		400		// ms without an update -> treat as dead/gone (fps-independent)
+#define ENG_DEATH_HOLD_MS	1000	// after DeathMsg, force-ignore the victim this long (lets the laggy scoreboard catch up before we trust EngDead again; never delays the instant vanish)
 #define ES_ORIGIN			0x010	// entity_state_t::origin (vec3)
 #define ES_USEHULL			0x0C8	// entity_state_t::usehull (0 stand, 1 duck)
 #define ES_ONGROUND			0x0D0	// entity_state_t::onground (-1 = airborne, else ground ent idx)
@@ -1599,6 +1600,10 @@ int __cdecl Hk_DeathMsg(const char *n,int s,void *b)
 	{
 		int victim=((unsigned char*)b)[1];
 		if(victim==eng_local_idx && eng_local_idx>0) me_dead=true;
+		// Instant death signal for ESP + aimbot + triggerbot: the moment ANYONE
+		// dies, stamp the slot so the shared alive-gate drops them this same frame
+		// (no waiting on the laggy scoreboard byte or the 400ms staleness timer).
+		if(victim>0 && victim<=32) eng_dead_at[victim]=GetTickCount();
 	}
 	return um_org_death ? um_org_death(n,s,b) : 1;
 }
@@ -2073,6 +2078,13 @@ void DrawEngineEsp()
 		DWORD now=GetTickCount();
 		if(cur!=eng_lastcurpos[idx]) { eng_lastcurpos[idx]=cur; eng_lastchange[idx]=now; }
 		bool stale=(now-eng_lastchange[idx])>ENG_STALE_MS;	// time-based: same at 60 or 240 fps
+		// DeathMsg instant-death: while this slot is inside the post-kill hold window
+		// it is dropped from EVERYTHING below (ESP box/name/radar/aim/trigger) the
+		// same frame the kill lands, so the aimbot lets go of the corpse immediately
+		// and you can swing to the live enemy beside it. After the window the time
+		// check lapses on its own and we fall back to EngDead/stale (which by then
+		// correctly reports a still-dead or respawned player) -- no clearing needed.
+		if(eng_dead_at[idx] && (now-eng_dead_at[idx])<ENG_DEATH_HOLD_MS) continue;
 		if(EngDead(idx) || stale) continue;
 
 		float o[3];
