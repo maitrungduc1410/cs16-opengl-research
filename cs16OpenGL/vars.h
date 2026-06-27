@@ -217,6 +217,8 @@ bool	g_aim_key_prev	=false;	// aim key down last frame (for toggle edge detectio
 // landing frame. Decoupled like the aimbot so the engine list is read once.
 int		eng_on_ground	=0;		// local player grounded this frame (1=on ground, 0=in air)
 bool	g_bhop_down		=false;	// is our injected jump key currently held down?
+bool	g_bhop_want		=false;	// UpdateBhop: are we actively spamming jump this frame? (debug)
+unsigned g_bhop_pulses	=0;		// UpdateBhop: count of injected SPACE presses (debug)
 
 // ---- triggerbot state (cvar.trigger) --------------------------------------
 // eng_trig_active is refreshed each frame by DrawEngineEsp (true while the

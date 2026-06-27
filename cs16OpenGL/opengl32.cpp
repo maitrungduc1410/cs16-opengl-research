@@ -1978,13 +1978,16 @@ void DrawEngineEsp()
 		int og=ReadInt(local+ENT_CURSTATE+ES_ONGROUND);
 		eng_on_ground=(og!=-1)?1:0;
 
-		// Bhop diagnostics (ESP debug toggle). onground_raw is shown for reference
-		// only -- it stays 0 ("grounded") even mid-air because the engine predicts
-		// the local player and never updates curstate, which is exactly why bhop
-		// now spams the jump key instead of holding it while "grounded".
+		// Bhop diagnostics (ESP debug toggle). want=1 means UpdateBhop is actively
+		// spamming; pulses increments on every injected SPACE press. If want=1 and
+		// pulses keeps rising but you still don't jump, the engine isn't accepting
+		// the injected key (injection method) rather than us not sending it.
+		// onground_raw is informational only (stays 0 even mid-air for the local
+		// player), which is why we spam jump instead of gating on it.
 		if(cvar.esp_dbg && cvar.bhop)
 			DrawText(16.0f*ui_scale,40.0f*ui_scale,1.0f,0.7f,0.2f,
-				"BHOP: spam-jump active  (onground_raw=%d, unreliable for local player)",og);
+				"BHOP: want=%d pulses=%u down=%d  (onground_raw=%d, unreliable)",
+				g_bhop_want?1:0, g_bhop_pulses, g_bhop_down?1:0, og);
 	}
 
 	// ---- 2D radar frame. Center is freely positioned (radar_x/radar_y, move mode 3). ----
@@ -3067,7 +3070,9 @@ DWORD WINAPI MouseHookThread(LPVOID)
 // ignores injected events. So we start/stop strictly on YOUR real hold/release.
 // ---- auto bunnyhop (cvar.bhop) -------------------------------------------
 // Called ONCE per frame from wglSwapBuffers. Spams the jump key (SPACE) by
-// toggling press/release every frame, the way classic bhop scripts do.
+// alternating press/release every frame, exactly like the autofire feature
+// alternates the mouse button (the engine samples input once per usercmd/frame,
+// so a clean cross-frame 0->1 edge is what makes it act).
 //
 // Why spam instead of "hold while grounded": the engine predicts the LOCAL
 // player's movement client-side and never writes the air state back into
@@ -3075,27 +3080,41 @@ DWORD WINAPI MouseHookThread(LPVOID)
 // the BHOP debug line). Holding SPACE down based on that stale flag makes the
 // engine jump exactly once and then refuse all further jumps -- GoldSrc's
 // PM_Jump ignores +jump until it has seen a -jump (the anti-pogo rule), which
-// also blocks your manual jumps. Toggling SPACE every frame produces a fresh
-// +jump/-jump edge each frame, so we re-jump the instant we land and never
-// latch the key down. Assumes jump is bound to SPACE (the default).
+// also blocks your manual jumps.
+//
+// IMPORTANT: we inject with KEYEVENTF_SCANCODE (hardware scan code, bVk=0).
+// CS 1.6 reads the keyboard through DirectInput, which keys off SCAN CODES; a
+// plain virtual-key keybd_event often isn't seen by DirectInput at all. The
+// scan-code form is picked up by both DirectInput and the Win32 message pump.
+// Assumes jump is bound to SPACE (the default).
 void UpdateBhop()
 {
 	bool want=false;
 	if(cvar.bhop && hookactive && enabledraw && !menu.active)
 		want = (cvar.bhop_hold==0) ||									// Always
 		       ((GetAsyncKeyState(KeyTableVK(cvar.bhop_key))&0x8000)!=0);	// Hold key
+	g_bhop_want=want;	// expose for the debug readout
 
-	BYTE sc=(BYTE)MapVirtualKey(VK_SPACE,0);		// scan code so the engine sees a real key
+	BYTE sc=(BYTE)MapVirtualKey(VK_SPACE,MAPVK_VK_TO_VSC);	// SPACE hardware scan code (0x39)
 
 	if(want)
 	{
 		// Alternate down/up each frame -> +jump / -jump edges at the frame rate.
-		if(g_bhop_down){ keybd_event(VK_SPACE,sc,KEYEVENTF_KEYUP,0); g_bhop_down=false; }
-		else           { keybd_event(VK_SPACE,sc,0,0);              g_bhop_down=true;  }
+		if(g_bhop_down)
+		{
+			keybd_event(0,sc,KEYEVENTF_SCANCODE|KEYEVENTF_KEYUP,0);
+			g_bhop_down=false;
+		}
+		else
+		{
+			keybd_event(0,sc,KEYEVENTF_SCANCODE,0);
+			g_bhop_down=true;
+			g_bhop_pulses++;								// count presses (debug)
+		}
 	}
 	else if(g_bhop_down)	// not bhopping (or hack off) -> make sure SPACE is released
 	{
-		keybd_event(VK_SPACE,sc,KEYEVENTF_KEYUP,0);
+		keybd_event(0,sc,KEYEVENTF_SCANCODE|KEYEVENTF_KEYUP,0);
 		g_bhop_down=false;
 	}
 }
