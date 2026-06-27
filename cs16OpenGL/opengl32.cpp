@@ -3089,8 +3089,11 @@ DWORD WINAPI MouseHookThread(LPVOID)
 // Assumes jump is bound to SPACE (the default).
 void UpdateBhop()
 {
+	// NOTE: do NOT gate on enabledraw here. It's a one-shot per-frame flag that
+	// sys_glViewport raises and sys_glEnable consumes BEFORE wglSwapBuffers runs,
+	// so it's always false by the time we're called. Match autofire's gating.
 	bool want=false;
-	if(cvar.bhop && hookactive && enabledraw && !menu.active)
+	if(cvar.bhop && hookactive && !menu.active)
 		want = (cvar.bhop_hold==0) ||									// Always
 		       ((GetAsyncKeyState(KeyTableVK(cvar.bhop_key))&0x8000)!=0);	// Hold key
 	g_bhop_want=want;	// expose for the debug readout
