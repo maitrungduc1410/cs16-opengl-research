@@ -199,6 +199,49 @@ table (`KeyTableVK`) and read with `GetAsyncKeyState` inside `sys_glViewport`; t
 toggle is edge-detected so it flips exactly once per physical press regardless of
 how many times the viewport hook runs that frame.
 
+#### Design note: the abandoned "real hitbox" (real-geometry) aim point
+
+We tried replacing the hull-derived head point with a point taken from the
+player's **actually drawn geometry**, and removed it again because it was
+*less* accurate than the fixed point. Recording the reasoning so we don't
+re-attempt the same dead end.
+
+**What was tried.** GoldSrc software-skins studio models and submits their
+vertices in **world space** through our `glVertex` hooks, bracketed by
+`glShadeModel(GL_SMOOTH)` (model start) and `glPopMatrix` (model end). The
+experiment accumulated each drawn model's world-space axis-aligned bounding box
+(AABB) during the scene, then in `DrawEngineEsp` matched a box to a player and
+aimed at the box **top** (intended as the real head crown), so the aim height
+would track ducking / jumping / animation that the constant hull can't. It was
+exposed as a **"Real hitbox"** toggle (`aim_bone`).
+
+**Why it was worse.** An AABB of the whole moving model is not a head:
+- The box top is pulled **above the skull** by raised arms, the held weapon, and
+  running/animation poses, so the aim point floated above the head and, at an
+  angle, projected off to the side ("above the head / on the arm").
+- A held-weapon model is submitted too; its compact box could win the
+  player-match and drag the point down to **hand height**. Tightening the match
+  to the tallest body-sized box (`ENG_MIN_BODY_H`) reduced but didn't remove this.
+- The box reshapes every frame as the model animates, so even after anchoring the
+  **horizontal** aim back to the entity origin (which made XY identical to the
+  fixed point), the **vertical** stayed noisy — the point visibly jittered.
+
+So the only thing the box added over the fixed point was a *noisier* vertical, for
+no real gain. The fixed point (constant offset from the rock-steady entity origin,
+scaled by the duck ratio) lands on the head consistently and feels better in play.
+
+**The only approach that would actually beat the fixed point** is reading the
+engine's per-player **head bone** transform from `hw.dll` — a precise head point
+that tracks animation without the box noise. We did **not** do this: it needs
+per-build memory signatures (bone-matrix array pointer + per-model head bone
+index) that can't be verified without running the exact CS build, and a wrong
+signature crashes the game. If head-accurate aim is ever revisited, that bone-read
+path — not a vertex bounding box — is the route to take.
+
+Removed in full: the `aim_bone` cvar, the `Real hitbox` menu row, `MatchPlayerBox`,
+and the per-model AABB capture in `sys_glShadeModel` / `sys_glVertex3f` /
+`sys_glVertex3fv` / `sys_glPopMatrix`.
+
 ---
 
 ### Triggerbot

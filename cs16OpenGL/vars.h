@@ -64,7 +64,6 @@ typedef struct { // cvars (of course ;P)
 	int	aim_smooth;	// 0=snap, 1..10 = smoothing strength (higher = smoother/slower)
 	int	aim_dot;	// aimbot: draw a dot at the exact point the aimbot aims at
 	int	aim_point;	// aimbot: vertical aim offset from head center (world units, +=up)
-	int	aim_bone;	// aimbot: aim at the REAL model top (head) from the drawn vertices instead of origin+fixed hull height (tracks ducking/jumping/animation)
 	int	aim_mode;	// aimbot trigger: 0=Always on, 1=Hold key, 2=Toggle key
 	int	aim_key;	// aimbot activation key (index into the shared key table)
 	int	trigger;	// triggerbot: auto-fire when crosshair is over an enemy (engine list)
@@ -176,26 +175,6 @@ DWORD	eng_lastchange[33]={0};	// GetTickCount() when current_position last chang
 DWORD	eng_dead_at[33]={0};	// GetTickCount() when DeathMsg latched this slot dead (0=not latched). Hides ESP+aim instantly and KEEPS it hidden until EngDead/stale/respawn confirms, then is cleared to hand back to the normal gate (so a respawn re-shows).
 float	eng_dead_org[33][3]={0};// origin captured on the first latched (death) frame: the death spot, used to detect a respawn teleport so a fast respawn isn't held hidden to the safety cap
 bool	eng_dead_org_set[33]={false};// has eng_dead_org been captured for this latch yet?
-
-// --- real-geometry aim: per-frame world-space AABBs of drawn player models -----
-// GoldSrc software-skins studio models and submits their vertices in WORLD space
-// through our glVertex hooks, bracketed by glShadeModel(GL_SMOOTH) (model start,
-// sets player.get) and glPopMatrix (model end). While capturing we accumulate
-// each model's axis-aligned bounding box; DrawEngineEsp matches a box to a player
-// by nearest origin and aims at its true top (the head) instead of origin+fixed
-// hull height -- so the aim point tracks ducking/jumping/animation. If no box is
-// matched (e.g. the model wasn't drawn this frame) the aimbot falls back to the
-// origin+hull estimate, so this can only ever improve or no-op, never crash.
-#define ENG_MAX_BOX        48		// max player models captured per frame (enemies + corpses + viewmodel)
-#define ENG_BOX_MATCH_R    40.0f	// world units: max XY gap to bind a captured box to an entity origin
-#define ENG_MIN_BODY_H     30.0f	// world units: a captured model must be at least this tall to count as a player BODY. Rejects the held-weapon / grenade / small-prop models (a held gun's vertical extent is well under this) so a weapon box can't be mistaken for the body and drag the aim onto the hand. A ducked player is still ~36+ tall, so real players survive.
-float	eng_box_min[ENG_MAX_BOX][3];	// captured AABB mins (world space), this frame
-float	eng_box_max[ENG_MAX_BOX][3];	// captured AABB maxs (world space), this frame
-int		eng_box_n=0;				// number of player-model boxes captured this frame
-bool	eng_cap_active=false;		// currently inside a player model (accumulating its AABB)
-int		eng_cap_verts=0;			// vertices seen in the current model so far
-float	eng_cap_min[3];				// the current model's running AABB min
-float	eng_cap_max[3];				// the current model's running AABB max
 
 // ---- own HUD: health / armor / ammo (via user-message hooks) ---------------
 // We patch the engine's "Health"/"Battery"/"CurWeapon" user-message handlers so
