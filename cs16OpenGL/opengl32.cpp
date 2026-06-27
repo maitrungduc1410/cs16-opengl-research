@@ -2400,11 +2400,11 @@ void sys_glAlphaFunc (GLenum func,  GLclampf ref)
 
 void sys_glBegin (GLenum mode)
 {
-	// No Flash: bFlash must only suppress vertices of the ONE white fullscreen quad the
-	// engine draws for a flashbang. It used to leak past that quad (it was never cleared
-	// for non-QUADS primitives), so once any white quad set it, every later glVertex2f
-	// draw - including the AWP scope rings and crosshair - got dropped too. Clear it at
-	// the start of every primitive; the GL_QUADS block below re-arms it when needed.
+	// No Flash: bFlash is only ARMED for a bright GL_QUADS quad (re-armed in the
+	// GL_QUADS block below). While armed, the quad's vertices are buffered and
+	// sys_glEnd decides whether it's the real fullscreen flash (suppress) or an
+	// innocent bright HUD quad (replay). Clear it at the start of every primitive so
+	// a stale arm from a previous quad can never leak into a later draw.
 	bFlash=false;
 
 	if ((cvar.wall==1) && (bWall) && (mode==GL_TRIANGLE_FAN || mode==GL_TRIANGLE_STRIP))
@@ -2445,15 +2445,16 @@ void sys_glBegin (GLenum mode)
 			(*orig_glGetFloatv)(GL_CURRENT_COLOR, flashcol);
 			// The stock flashbang is a pure-white fullscreen quad, but modded
 			// servers tint it (pink/green/random each round), so requiring exact
-			// white missed those entirely. A flash is really just a BRIGHT
-			// fullscreen overlay of any hue -- detect that instead. The
-			// fullscreen-geometry check in sys_glVertex2f (y==vp[3]) then confirms
-			// it's the fullscreen quad, not a small bright UI element. Dark
-			// overlays (black AWP scope, round-end fades) stay below the threshold.
+			// white missed those entirely. A flash is really just a BRIGHT overlay
+			// of any hue -- so we ARM on brightness here, then in sys_glEnd we only
+			// actually suppress the quad if it truly spans the whole screen. That
+			// fullscreen gate is what keeps bright-but-small HUD quads (ammo/health
+			// digits, weapon/grenade icons, buy menu, crosshair) from being eaten.
 			float mx=flashcol[0];
 			if(flashcol[1]>mx) mx=flashcol[1];
 			if(flashcol[2]>mx) mx=flashcol[2];
 			bFlash=(mx>=0.5f);
+			if(bFlash) flashVN=0;	// start buffering this quad's vertices
 		}
 		if(cvar.scope)
 		{
@@ -2625,6 +2626,32 @@ void sys_glEnable (GLenum cap)
 
 void sys_glEnd (void)
 {
+	if(bFlash && cvar.flash)
+	{
+		// We buffered a bright GL_QUADS quad. Suppress it ONLY if it really covers
+		// the whole screen corner-to-corner (the flashbang blind). Anything smaller
+		// is a HUD/UI element and gets drawn exactly as the engine intended.
+		bool fullscreen=false;
+		if(flashVN==4)
+		{
+			float minx=flashVX[0],maxx=flashVX[0],miny=flashVY[0],maxy=flashVY[0];
+			for(int i=1;i<flashVN;i++)
+			{
+				if(flashVX[i]<minx) minx=flashVX[i];
+				if(flashVX[i]>maxx) maxx=flashVX[i];
+				if(flashVY[i]<miny) miny=flashVY[i];
+				if(flashVY[i]>maxy) maxy=flashVY[i];
+			}
+			float w=(float)vp[2], h=(float)vp[3];	// 1px slack for rounding
+			if(minx<=1.0f && maxx>=w-1.0f && miny<=1.0f && maxy>=h-1.0f)
+				fullscreen=true;
+		}
+		if(fullscreen)
+			gotflashed=true;	// drop the overlay entirely + show the FLASHED text
+		else	// not a flash -> draw the buffered quad untouched
+			for(int i=0;i<flashVN;i++) (*orig_glVertex2f)(flashVX[i],flashVY[i]);
+		bFlash=false; flashVN=0;
+	}
 	(*orig_glEnd) ();
 }
 
@@ -2748,16 +2775,23 @@ void sys_glVertex2f (GLfloat x,  GLfloat y)
 {
 	if(bFlash && cvar.flash)
 	{
-		if (y==vp[3]) // matches the fullscreen quad height -> this is the flashbang overlay
+		// Buffer this armed (bright) quad's corners; sys_glEnd decides whether it's
+		// the real fullscreen flash (drop it) or an innocent bright HUD quad (replay
+		// it untouched). We must NOT draw-or-drop per vertex here: dropping is what
+		// used to make the crosshair / buy menu / weapon + grenade icons disappear.
+		if(flashVN < 4)
 		{
-			GLfloat flashcol[4]; 
-			(*orig_glGetFloatv)(GL_CURRENT_COLOR, flashcol); // we store the color and ...
-			(*orig_glColor4f)(flashcol[0],flashcol[1],flashcol[2],0.01f);	// call the color but with very low alpha (trans)
-			bFlash=false;
-			gotflashed=true; // draw flash warning message
+			flashVX[flashVN]=x; flashVY[flashVN]=y; flashVN++;
+			return;
 		}
+		// More than 4 vertices in this batch -> it isn't the lone flash quad. Replay
+		// what we buffered and stop intercepting so nothing in the batch is lost.
+		// (The engine's current color is still the one it set for this quad, so the
+		// replayed vertices keep their intended color.)
+		for(int i=0;i<flashVN;i++) (*orig_glVertex2f)(flashVX[i],flashVY[i]);
+		bFlash=false; flashVN=0;
 	}
-	else (*orig_glVertex2f) (x, y);
+	(*orig_glVertex2f) (x, y);
 }
 
 void sys_glVertex3f (GLfloat x,  GLfloat y,  GLfloat z)

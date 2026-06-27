@@ -126,6 +126,13 @@ int t_count=0;			// for timer
 
 bool t_get=false;	// timer
 bool bFlash=false;	// flags . . . 
+// Flashbang detection buffer: when a bright GL_QUADS quad arms bFlash we stash its
+// vertices here instead of drawing them, then decide in sys_glEnd whether the quad
+// actually covers the WHOLE screen (the real flash blind) or is just a bright HUD
+// quad (ammo/health digits, weapon/grenade icons, buy menu) that must be left alone.
+int   flashVN=0;	// number of buffered vertices for the current armed quad
+float flashVX[5];	// buffered vertex x (a quad is 4; 5th slot guards overflow)
+float flashVY[5];	// buffered vertex y
 bool bSmoke=false;
 bool bScope=false;
 bool bWall=false;
