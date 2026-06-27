@@ -2443,10 +2443,17 @@ void sys_glBegin (GLenum mode)
 		{
 			GLfloat flashcol[4];
 			(*orig_glGetFloatv)(GL_CURRENT_COLOR, flashcol);
-			if(flashcol[0]==1.0 && flashcol[1]==1.0 && flashcol[2]==1.0)
-				bFlash=true;
-			else
-				bFlash=false;
+			// The stock flashbang is a pure-white fullscreen quad, but modded
+			// servers tint it (pink/green/random each round), so requiring exact
+			// white missed those entirely. A flash is really just a BRIGHT
+			// fullscreen overlay of any hue -- detect that instead. The
+			// fullscreen-geometry check in sys_glVertex2f (y==vp[3]) then confirms
+			// it's the fullscreen quad, not a small bright UI element. Dark
+			// overlays (black AWP scope, round-end fades) stay below the threshold.
+			float mx=flashcol[0];
+			if(flashcol[1]>mx) mx=flashcol[1];
+			if(flashcol[2]>mx) mx=flashcol[2];
+			bFlash=(mx>=0.5f);
 		}
 		if(cvar.scope)
 		{
@@ -2741,7 +2748,7 @@ void sys_glVertex2f (GLfloat x,  GLfloat y)
 {
 	if(bFlash && cvar.flash)
 	{
-		if (y==vp[3]) // if this matches we know, hl draws a white fullscreen (flashbang)
+		if (y==vp[3]) // matches the fullscreen quad height -> this is the flashbang overlay
 		{
 			GLfloat flashcol[4]; 
 			(*orig_glGetFloatv)(GL_CURRENT_COLOR, flashcol); // we store the color and ...
