@@ -171,15 +171,17 @@ because an **admin spectates you and reacts**, so seeing *who* is observing you 
 real time lets you play legit the moment someone's on you. Gated by
 `cvar.spec_warn`, drawn in the same 2D pass as the rest of the overlay.
 
-The engine player list already exposes a `spectator` flag per slot
-(`hud_player_info_t`, via `pfnGetPlayerInfo`), and the ESP loop normally just
-skips those slots. For spec_warn we instead resolve each spectator's **observer
-target** before skipping it:
+The engine player list exposes a `spectator` flag per slot (`hud_player_info_t`,
+via `pfnGetPlayerInfo`), but we do **not** trust it alone: many servers never set
+that flag for *other* clients. Instead, for every named slot we read the entity
+observer mode and treat the slot as a spectator when the flag is set **or**
+`iuser1 > 0`. We resolve each such slot's **observer target** before skipping it:
 
 - **Primary — `iuser2`.** A spectator's observer state lives in their
   `entity_state_t`: `iuser1` = observer mode (0 = not observing), `iuser2` = the
   entity index being watched. If `iuser1 > 0` and `iuser2 == eng_local_idx`, that
-  spectator is watching us.
+  spectator is watching us. A live, playing enemy has `iuser1 == 0`, so reading
+  this for every slot never mis-flags a real target.
 - **Fallback — origin match.** GoldSrc does **not** reliably replicate another
   player's `iuser2` to a normal (non-spectator) client, so when the primary check
   fails we fall back to geometry: an **in-eye** spectator's camera origin sits on
@@ -195,9 +197,22 @@ names, each in its ESP **team color** (red T / blue CT / green = no team, i.e. a
 pure spectator/admin). It only appears while `spec_total > 0` (instant
 appear/disappear, no fade). `cvar.spec_pad` shifts the block down from a 52u
 baseline that matches the HP/ammo arcs, all scaled by `ui_scale`. With
-`esp_dbg` on, a `SPEC:` line reports the raw spectator count and the first
-spectator's `iuser1/iuser2` so the `iuser2` offset / replication can be verified
-on a given server.
+`esp_dbg` on, a `SPEC:` line reports the per-frame counts (`flag` = GetPlayerInfo
+flag, `obs` = `iuser1 > 0`), the resolved `watch` count, `named` (highest slot
+that returned a name — proves `pfnGetPlayerInfo` works), and the first slot's raw
+`iuser1/iuser2` so replication can be verified on a given server.
+
+**Session diagnostics (F11).** Because a spectate may last only seconds and is
+easy to miss on the live line, the detection also accumulates persistent counters
+(reset when the hack is armed in `HookInit`): frames scanned, peak flagged/observer
+slots, peak watchers, and an "ever watched" record with the last watcher's name,
+observer mode, and how long ago. These are printed on the F11 check screen under
+**"Spectator watch (this session)"**. The intended workflow: arm the hack, have a
+friend/admin spectate you in each mode for a few seconds, then open F11 — if every
+peak is still 0, the server isn't replicating spectator data to your client at all
+(GoldSrc deliberately hides spectators from players), which means **no** client-side
+tool can detect it on that server. If `obs`/watch peaks rise, detection works and
+you can tune `ENG_SPEC_MATCH_R` from there.
 
 ---
 

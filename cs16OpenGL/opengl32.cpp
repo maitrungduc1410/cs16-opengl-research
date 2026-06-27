@@ -379,6 +379,10 @@ void HookInit(bool activate)
 		oldtarget=cvar.target;		// sync so the line below keeps the restored target
 		cvar.target=oldtarget;		// set current target (if hack was turned off and on again, it kept old target)
 		cvar.scope=0;				// cvar which i didnt add into menu, removes sniper crosshair
+		// fresh spec_warn diagnostics each time the hack is (re)armed
+		spec_diag_frames=0; spec_diag_named=0; spec_diag_flag_peak=0; spec_diag_obs_peak=0;
+		spec_diag_watch_peak=0; spec_diag_watch_ever=0; spec_diag_last_name[0]=0;
+		spec_diag_last_mode=0; spec_diag_last_ms=0;
 		hookactive=true;			// turn bool true, e.g. to allow menu etc.
 		message=true;				// turn true to get status text (F11)
 		SetToast("Hack: ON");				// greet (respects cvar.notify)
@@ -1245,6 +1249,36 @@ void DrawCheckText(int x,int y) // bad way of doing this
 		norec_peak,norec_last[0],norec_last[1],norec_last[2]);
 	y=y+(int)(13*ui_scale);
 
+	// ---- Spectator-watch session log (accumulated since the hack was armed) ----
+	// This answers "is the watcher detection actually running, and was anyone EVER
+	// spectating me this game?" without having to catch the live moment. If frames
+	// keep climbing but every peak stays 0 over a game where you KNOW someone
+	// spectated you, your server simply isn't replicating spectators to clients
+	// (the common case) -- so client-side detection is impossible there.
+	y=y+(int)(13*ui_scale);
+	DrawText(x,y,0.7f,0.7f,1.0f,"Spectator watch (this session):");
+	y=y+(int)(13*ui_scale);
+	if(!cvar.spec_warn && !cvar.esp_dbg)
+		DrawText(x,y,1.0f,0.85f,0.4f,"> detection idle (turn on 'Spec warning' to scan)");
+	else
+		DrawText(x,y,0.5f,1.0f,0.5f,"> scan running: yes   frames=%u   slots named up to: %i",
+			spec_diag_frames, spec_diag_named);
+	y=y+(int)(13*ui_scale);
+	DrawText(x,y,1.0f,1.0f,1.0f,"> peak spectators seen: flag=%i  observer(iuser1>0)=%i",
+		spec_diag_flag_peak, spec_diag_obs_peak);
+	y=y+(int)(13*ui_scale);
+	if(spec_diag_watch_ever)
+	{
+		DWORD ago=(spec_diag_last_ms?(GetTickCount()-spec_diag_last_ms):0);
+		DrawText(x,y,1.0f,0.4f,0.4f,"> EVER watched: YES   peak watchers: %i",spec_diag_watch_peak);
+		y=y+(int)(13*ui_scale);
+		DrawText(x,y,1.0f,0.7f,0.4f,"  last watcher: \"%s\" (mode %i) %0.1fs ago",
+			spec_diag_last_name, spec_diag_last_mode, (float)ago/1000.0f);
+	}
+	else
+		DrawText(x,y,0.5f,1.0f,0.5f,"> EVER watched: no one detected yet this session");
+	y=y+(int)(13*ui_scale);
+
 	check_h=(float)(y-startY)+13.0f*ui_scale;	// size next frame's panel to fit the text
 	gTextAlpha=1.0f;							// restore for anything drawn after us
 }
@@ -2073,7 +2107,10 @@ void DrawEngineEsp()
 	float spec_cols[3][3];
 	int  spec_show = 0;								// names stored for display (0..3)
 	int  spec_total = 0;							// total spectators targeting us
-	int  spec_seen = 0;								// debug: spectators present in the list this frame
+	int  spec_seen = 0;								// debug: spectator/observer slots seen this frame
+	int  spec_flag_n = 0;							// this frame: slots with the GetPlayerInfo spectator flag
+	int  spec_obs_n = 0;							// this frame: slots with entity_state.iuser1>0 (observer mode)
+	int  spec_watch_mode = 0;						// observer mode (iuser1) of the first resolved watcher
 	int  spec_dbg_mode = -1, spec_dbg_tgt = -1;		// debug: first spectator's raw iuser1/iuser2
 
 	for(int idx=1; idx<=32; idx++)
@@ -2087,22 +2124,32 @@ void DrawEngineEsp()
 			hud_player_info_t info; memset(&info,0,sizeof(info));
 			((eng_GetPlayerInfo_t)fnInfo)(idx,&info);
 			if(info.name==0 || !IsReadable((DWORD)info.name,1)) continue;	// empty slot
-			if(info.spectator)
+			if(idx>spec_diag_named) spec_diag_named=idx;	// sanity: GetPlayerInfo IS returning names
+
+			// "Who's watching me": a spectator's observer target lives in their
+			// entity_state (iuser1=mode, iuser2=target index). We deliberately do
+			// NOT trust the GetPlayerInfo spectator flag alone -- many servers never
+			// set it for other clients yet still leak iuser1/iuser2 -- so we read the
+			// entity observer mode for EVERY named slot and treat the slot as a
+			// spectator when the flag is set OR iuser1>0. A live, playing enemy has
+			// iuser1==0, so this never mis-flags a normal target. We count a
+			// spectator as watching us if iuser2 == our index, OR (fallback, for
+			// in-eye specs whose iuser2 the server withholds) their camera origin
+			// sits on top of ours.
+			bool flagged=(info.spectator!=0);
+			int  obsmode=0;
+			if((cvar.spec_warn||cvar.esp_dbg) && eng_local_idx>0 && fnEnt>=0x10000)
 			{
-				// "Who's watching me": a spectator's observer target lives in their
-				// entity_state (iuser1=mode, iuser2=target index). We treat them as
-				// watching us if iuser2 == our index, OR (fallback, for in-eye specs
-				// when the engine doesn't replicate iuser2 to us) their camera origin
-				// sits on top of ours. Either way the slot is still skipped from
-				// ESP/aim below via the continue.
-				if(cvar.spec_warn && eng_local_idx>0 && fnEnt>=0x10000)
+				DWORD sent=(DWORD)((eng_GetEntityByIndex_t)fnEnt)(idx);
+				if(sent)
 				{
-					spec_seen++;
-					DWORD sent=(DWORD)((eng_GetEntityByIndex_t)fnEnt)(idx);
-					if(sent)
+					obsmode    =ReadInt(sent+ENT_CURSTATE+ES_IUSER1);
+					int obstgt =ReadInt(sent+ENT_CURSTATE+ES_IUSER2);
+					if(flagged || obsmode>0)
 					{
-						int obsmode=ReadInt(sent+ENT_CURSTATE+ES_IUSER1);
-						int obstgt =ReadInt(sent+ENT_CURSTATE+ES_IUSER2);
+						spec_seen++;
+						if(flagged)   spec_flag_n++;
+						if(obsmode>0) spec_obs_n++;
 						if(spec_seen==1){ spec_dbg_mode=obsmode; spec_dbg_tgt=obstgt; }
 						bool watch=(obsmode>0 && obstgt==eng_local_idx);
 						if(!watch)
@@ -2116,6 +2163,7 @@ void DrawEngineEsp()
 						}
 						if(watch)
 						{
+							if(spec_total==0) spec_watch_mode=obsmode;	// first watcher's mode -> F11 log
 							spec_total++;
 							if(spec_show<3)
 							{
@@ -2129,8 +2177,8 @@ void DrawEngineEsp()
 						}
 					}
 				}
-				continue;
 			}
+			if(flagged || obsmode>0) continue;	// spectator/observer slot: skip ESP/aim below
 			strncpy(namebuf,info.name,63); namebuf[63]=0;
 			if(info.model && IsReadable((DWORD)info.model,1))
 			{ strncpy(modelbuf,info.model,63); modelbuf[63]=0; }
@@ -2437,6 +2485,24 @@ void DrawEngineEsp()
 		eng_players++;
 	}
 
+	// spec_warn session diagnostics: fold this frame's counts into the persistent
+	// peaks the F11 screen reads back. We only tally on frames where we actually
+	// probed observer state, so spec_diag_frames is a true "the scan ran" proof.
+	if(cvar.spec_warn || cvar.esp_dbg)
+	{
+		spec_diag_frames++;
+		if(spec_flag_n > spec_diag_flag_peak)  spec_diag_flag_peak  = spec_flag_n;
+		if(spec_obs_n  > spec_diag_obs_peak)   spec_diag_obs_peak   = spec_obs_n;
+		if(spec_total  > spec_diag_watch_peak) spec_diag_watch_peak = spec_total;
+		if(spec_total>0)
+		{
+			spec_diag_watch_ever=1;
+			spec_diag_last_ms=GetTickCount();
+			spec_diag_last_mode=spec_watch_mode;
+			strncpy(spec_diag_last_name, spec_names[0], 63); spec_diag_last_name[63]=0;
+		}
+	}
+
 	if(aim_found)
 	{
 		eng_aim_have=true;
@@ -2467,11 +2533,14 @@ void DrawEngineEsp()
 			det_cur, det_peak, det_avg);
 
 	// spec_warn debug: shows whether the engine actually gives us the observer target.
-	// "specs" = spectators in the list, "watch" = those resolved to be watching us,
-	// mode0/tgt0 = the first spectator's raw iuser1/iuser2 (tgt0 == me => iuser2 works).
+	// "spec" = spectator/observer slots seen (flag=GetPlayerInfo flag, obs=iuser1>0),
+	// "watch" = those resolved onto us, mode0/tgt0 = the first one's raw iuser1/iuser2
+	// (tgt0 == me => iuser2 is replicated). "named" = highest slot that returned a
+	// name (sanity that GetPlayerInfo works at all). If spec stays 0 all game, the
+	// server isn't sending spectator data to your client -> see the F11 panel.
 	if(cvar.spec_warn && cvar.esp_dbg)
-		DrawText(dbgx,dbgy+dbgline*2.0f,1.0f,0.7f,0.2f,"SPEC: specs=%i watch=%i  me=%i mode0=%i tgt0=%i",
-			spec_seen, spec_total, eng_local_idx, spec_dbg_mode, spec_dbg_tgt);
+		DrawText(dbgx,dbgy+dbgline*2.0f,1.0f,0.7f,0.2f,"SPEC: spec=%i (flag=%i obs=%i) watch=%i  me=%i named=%i mode0=%i tgt0=%i",
+			spec_seen, spec_flag_n, spec_obs_n, spec_total, eng_local_idx, spec_diag_named, spec_dbg_mode, spec_dbg_tgt);
 
 	// "Who's watching me" block, centered just below the crosshair. Only present
 	// while at least one spectator targets us (no fade: instant appear/disappear).
