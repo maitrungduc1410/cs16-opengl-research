@@ -173,7 +173,9 @@ bool	eng_have_extra	=false;	// did we manage to locate g_PlayerExtraInfo?
 int		eng_frame		=0;	// our own frame counter (kept for misc use)
 int		eng_lastcurpos[33]={0};	// cl_entity current_position last seen, per slot
 DWORD	eng_lastchange[33]={0};	// GetTickCount() when current_position last changed
-DWORD	eng_dead_at[33]={0};	// GetTickCount() when DeathMsg latched this slot dead (0=not latched). Hides ESP+aim instantly and KEEPS it hidden until EngDead/stale confirms, then is cleared to hand back to the normal gate (so a respawn re-shows).
+DWORD	eng_dead_at[33]={0};	// GetTickCount() when DeathMsg latched this slot dead (0=not latched). Hides ESP+aim instantly and KEEPS it hidden until EngDead/stale/respawn confirms, then is cleared to hand back to the normal gate (so a respawn re-shows).
+float	eng_dead_org[33][3]={0};// origin captured on the first latched (death) frame: the death spot, used to detect a respawn teleport so a fast respawn isn't held hidden to the safety cap
+bool	eng_dead_org_set[33]={false};// has eng_dead_org been captured for this latch yet?
 
 // --- real-geometry aim: per-frame world-space AABBs of drawn player models -----
 // GoldSrc software-skins studio models and submits their vertices in WORLD space
@@ -186,6 +188,7 @@ DWORD	eng_dead_at[33]={0};	// GetTickCount() when DeathMsg latched this slot dea
 // origin+hull estimate, so this can only ever improve or no-op, never crash.
 #define ENG_MAX_BOX        48		// max player models captured per frame (enemies + corpses + viewmodel)
 #define ENG_BOX_MATCH_R    40.0f	// world units: max XY gap to bind a captured box to an entity origin
+#define ENG_MIN_BODY_H     30.0f	// world units: a captured model must be at least this tall to count as a player BODY. Rejects the held-weapon / grenade / small-prop models (a held gun's vertical extent is well under this) so a weapon box can't be mistaken for the body and drag the aim onto the hand. A ducked player is still ~36+ tall, so real players survive.
 float	eng_box_min[ENG_MAX_BOX][3];	// captured AABB mins (world space), this frame
 float	eng_box_max[ENG_MAX_BOX][3];	// captured AABB maxs (world space), this frame
 int		eng_box_n=0;				// number of player-model boxes captured this frame

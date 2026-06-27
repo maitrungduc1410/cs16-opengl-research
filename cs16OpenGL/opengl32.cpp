@@ -1271,7 +1271,8 @@ void DrawCheckText(int x,int y) // bad way of doing this
 #define ENT_CURPOS			0x404	// cl_entity_t: current_position (update counter)
 #define ENT_ORIGIN			0xB48	// cl_entity_t: vec3 interpolated origin
 #define ENG_STALE_MS		400		// ms without an update -> treat as dead/gone (fps-independent)
-#define ENG_DEATH_HOLD_MAX_MS	5000	// safety cap on the DeathMsg latch: normally we hold a corpse until EngDead/stale confirms it, but never longer than this so a missed confirmation can't hide a live player forever
+#define ENG_DEATH_HOLD_MAX_MS	1200	// safety cap on the DeathMsg latch: normally we hold a corpse until EngDead/stale/respawn confirms it, but never longer than this so a missed confirmation can't hide a live player. Kept short because in deathmatch the engine may never report the death (instant respawn keeps the slot alive+streaming), so this cap, not a confirmation, ends the hold.
+#define ENG_RESPAWN_DIST		150.0f	// world units: an origin jump this large while latched means the player respawned (teleported to a spawn point), so release the latch immediately instead of waiting on the engine / safety cap. A corpse never moves this far.
 #define ES_ORIGIN			0x010	// entity_state_t::origin (vec3)
 #define ES_USEHULL			0x0C8	// entity_state_t::usehull (0 stand, 1 duck)
 #define ES_ONGROUND			0x0D0	// entity_state_t::onground (-1 = airborne, else ground ent idx)
@@ -1898,21 +1899,29 @@ bool IsWorldVisible(float x,float y,float z,GLdouble *mm_in,GLdouble *pm_in,GLin
 	return (pix>wz-0.0008f);		// tiny epsilon: head usually pokes ~through model surface
 }
 
-// Real-hitbox aim: find the player-model AABB captured this frame whose
-// horizontal centre sits closest to this entity's origin, within a small radius
-// (so a corpse / teammate / viewmodel box can't bind to the wrong player). On a
-// match it fills bmin/bmax with that box's world-space bounds and returns true;
-// otherwise the caller keeps the origin+hull estimate.
+// Real-hitbox aim: find this player's drawn-model AABB among the boxes captured
+// this frame. We look at every box whose horizontal centre sits within a small
+// radius of the entity origin (so another player's / teammate's box can't bind),
+// and of those pick the TALLEST one. Tallest = the body: a player who is holding
+// a weapon also submits the held-weapon model, whose compact box can sit nearer
+// the origin than the body box (the body's centre is pulled forward by the
+// outstretched arms) and would otherwise win a nearest-centre match -- that is
+// what dragged the aim point down onto the hand/gun. Height is the reliable
+// "this is the body" signal. On a match it fills bmin/bmax with that box's
+// world-space bounds and returns true; otherwise the caller keeps the hull
+// estimate.
 bool MatchPlayerBox(const float *o,float *bmin,float *bmax)
 {
-	int best=-1; float bestd2=ENG_BOX_MATCH_R*ENG_BOX_MATCH_R;
+	int best=-1; float besth=-1.0f;
+	float r2=ENG_BOX_MATCH_R*ENG_BOX_MATCH_R;
 	for(int i=0;i<eng_box_n;i++)
 	{
 		float cx=(eng_box_min[i][0]+eng_box_max[i][0])*0.5f;
 		float cy=(eng_box_min[i][1]+eng_box_max[i][1])*0.5f;
 		float dx=cx-o[0], dy=cy-o[1];
-		float d2=dx*dx+dy*dy;
-		if(d2<bestd2){ bestd2=d2; best=i; }
+		if(dx*dx+dy*dy>r2) continue;				// not this player's model
+		float h=eng_box_max[i][2]-eng_box_min[i][2];
+		if(h>besth){ besth=h; best=i; }				// prefer the tallest = the body
 	}
 	if(best<0) return false;
 	bmin[0]=eng_box_min[best][0]; bmin[1]=eng_box_min[best][1]; bmin[2]=eng_box_min[best][2];
@@ -2105,26 +2114,7 @@ void DrawEngineEsp()
 		DWORD now=GetTickCount();
 		if(cur!=eng_lastcurpos[idx]) { eng_lastcurpos[idx]=cur; eng_lastchange[idx]=now; }
 		bool stale=(now-eng_lastchange[idx])>ENG_STALE_MS;	// time-based: same at 60 or 240 fps
-		// DeathMsg instant-death latch: the moment a slot dies it is dropped from
-		// EVERYTHING below (ESP box/name/radar/aim/trigger) that same frame, and it
-		// STAYS dropped until the engine's OWN death signal catches up. A fixed-time
-		// hold isn't enough: the scoreboard 'dead' byte lags the kill by a variable
-		// amount, and a fresh corpse can keep streaming position updates for a moment
-		// so the staleness timer hasn't fired yet -- so a fixed window expired during
-		// that gap and the corpse briefly popped back as an aim/ESP target. Holding
-		// the latch until EngDead||stale agrees closes that gap; once the engine
-		// agrees we clear the latch and the normal gate below keeps the corpse hidden
-		// and reveals a respawn. The safety cap stops a missed confirmation (e.g. an
-		// instant respawn on a build without the scoreboard) from hiding a live
-		// player forever.
-		if(eng_dead_at[idx])
-		{
-			if(EngDead(idx) || stale || (now-eng_dead_at[idx])>ENG_DEATH_HOLD_MAX_MS)
-				eng_dead_at[idx]=0;		// engine caught up (or safety cap) -> release latch
-			continue;					// hidden the whole time until release
-		}
-		if(EngDead(idx) || stale) continue;
-
+		// origin first -- the death latch's respawn check needs it too.
 		float o[3];
 		o[0]=ReadFlt(ent+ENT_ORIGIN); o[1]=ReadFlt(ent+ENT_ORIGIN+4); o[2]=ReadFlt(ent+ENT_ORIGIN+8);
 		if(o[0]==0&&o[1]==0&&o[2]==0)	// fallback: entity_state origin
@@ -2133,6 +2123,34 @@ void DrawEngineEsp()
 			o[0]=ReadFlt(cs+ES_ORIGIN); o[1]=ReadFlt(cs+ES_ORIGIN+4); o[2]=ReadFlt(cs+ES_ORIGIN+8);
 			if(o[0]==0&&o[1]==0&&o[2]==0) continue;
 		}
+
+		// DeathMsg instant-death latch: the moment a slot dies it is dropped from
+		// EVERYTHING below (ESP box/name/radar/aim/trigger) that same frame, and it
+		// STAYS dropped until we're sure what happened next. A fixed-time hold isn't
+		// enough: the scoreboard 'dead' byte lags the kill by a variable amount, and
+		// a fresh corpse can keep streaming position updates for a moment so the
+		// staleness timer hasn't fired yet -- a fixed window expired during that gap
+		// and the corpse briefly popped back as an aim/ESP target. The latch releases
+		// on whichever happens first:
+		//   - EngDead/stale : the engine confirmed the corpse -> normal gate hides it.
+		//   - respawn       : the origin teleported a long way (to a spawn point) ->
+		//                     it's a NEW life, show it now. This is the key one for
+		//                     deathmatch: an instant respawn keeps the slot alive and
+		//                     streaming, so EngDead/stale may NEVER fire and we'd
+		//                     otherwise stay hidden all the way to the safety cap (the
+		//                     multi-second "I respawned but I'm invisible" delay).
+		//   - safety cap    : backstop so a missed signal can't hide a live player.
+		if(eng_dead_at[idx])
+		{
+			if(!eng_dead_org_set[idx])		// remember the death spot on the first latched frame
+			{ eng_dead_org[idx][0]=o[0]; eng_dead_org[idx][1]=o[1]; eng_dead_org[idx][2]=o[2]; eng_dead_org_set[idx]=true; }
+			float jx=o[0]-eng_dead_org[idx][0], jy=o[1]-eng_dead_org[idx][1], jz=o[2]-eng_dead_org[idx][2];
+			bool respawned=(jx*jx+jy*jy+jz*jz)>(ENG_RESPAWN_DIST*ENG_RESPAWN_DIST);
+			if(EngDead(idx) || stale || respawned || (now-eng_dead_at[idx])>ENG_DEATH_HOLD_MAX_MS)
+			{ eng_dead_at[idx]=0; eng_dead_org_set[idx]=false; }	// released; the normal gate below decides corpse(hide)/respawn(show)
+			else continue;					// still in the post-death gap -> stay hidden
+		}
+		if(EngDead(idx) || stale) continue;
 
 		// team color (shared by the radar dot and the on-screen ESP below)
 		int team=EngTeam(idx);
@@ -2185,18 +2203,20 @@ void DrawEngineEsp()
 			float feetZ=o[2]-halfhA+zoffA;			// feet
 			float aimscale = halfhA/36.0f;			// duck/stand ratio for the user offset
 			// Real-hitbox override: if we captured this player's drawn model this
-			// frame, use its TRUE bounding box instead of the fixed hull -- the top
-			// is the actual head crown (tracks ducking/jumping/animation), and the
-			// XY is the model centre. Only the vertical really changes (XY already
-			// matched origin), but it fixes height errors the constant hull can't.
+			// frame, use its TRUE box for the VERTICAL only -- the top is the actual
+			// head crown, so the aim height tracks ducking / jumping / animation that
+			// the fixed hull can't. We deliberately KEEP the horizontal aim on the
+			// entity origin (the player's vertical spine), NOT the box's XY centre:
+			// the box also contains the outstretched arms and the held weapon, so its
+			// centre drifts forward toward the gun and jitters as the model animates
+			// -- that was the aim dot landing on the hand/gun and "always moving".
+			// Origin XY sits directly under the head and is rock-steady.
 			if(cvar.aim_bone)
 			{
 				float bmin[3],bmax[3];
 				if(MatchPlayerBox(o,bmin,bmax))
 				{
-					hxA=(bmin[0]+bmax[0])*0.5f;
-					hyA=(bmin[1]+bmax[1])*0.5f;
-					topZ =bmax[2];
+					topZ =bmax[2];							// real head crown (vertical only)
 					feetZ=bmin[2];
 					float bh=bmax[2]-bmin[2];
 					aimscale=(bh>1.0f)?(bh/72.0f):aimscale;	// real height -> duck/stand ratio
@@ -2533,7 +2553,14 @@ void sys_glBegin (GLenum mode)
 			float mx=flashcol[0];
 			if(flashcol[1]>mx) mx=flashcol[1];
 			if(flashcol[2]>mx) mx=flashcol[2];
-			bFlash=(mx>=0.5f) && !(*orig_glIsEnabled)(GL_TEXTURE_2D);
+			// A genuine blinding flash -- white OR a modded/tinted one -- is drawn as
+			// a near-OPAQUE fullscreen overlay (high alpha). A kill-confirm / damage /
+			// respawn screen fade is the SAME bright untextured fullscreen quad but
+			// TRANSLUCENT (low alpha), so the old "bright + untextured + fullscreen"
+			// test misread it as a flash and popped "YOU HAVE BEEN FLASHED!" on every
+			// kill. Adding the alpha gate keeps real flashes (they're opaque) while
+			// letting these see-through fades render normally and stay silent.
+			bFlash=(mx>=0.5f) && (flashcol[3]>=0.60f) && !(*orig_glIsEnabled)(GL_TEXTURE_2D);
 			if(bFlash) flashVN=0;	// start buffering this (untextured) quad's vertices
 		}
 		if(cvar.scope)
@@ -2755,7 +2782,7 @@ void sys_glPopMatrix (void)
 		if (eng_cap_active)
 		{
 			float bh=eng_cap_max[2]-eng_cap_min[2];
-			if (eng_cap_verts>=16 && bh>4.0f && bh<200.0f && eng_box_n<ENG_MAX_BOX)
+			if (eng_cap_verts>=16 && bh>ENG_MIN_BODY_H && bh<200.0f && eng_box_n<ENG_MAX_BOX)
 			{
 				eng_box_min[eng_box_n][0]=eng_cap_min[0]; eng_box_max[eng_box_n][0]=eng_cap_max[0];
 				eng_box_min[eng_box_n][1]=eng_cap_min[1]; eng_box_max[eng_box_n][1]=eng_cap_max[1];
