@@ -115,6 +115,7 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "aim_smooth %i;",&cvar.aim_smooth);
 					sscanf(str, "aim_dot %i;"	,&cvar.aim_dot);
 					sscanf(str, "aim_point %i;"	,&cvar.aim_point);
+					sscanf(str, "aim_bone %i;"	,&cvar.aim_bone);
 					sscanf(str, "aim_mode %i;"	,&cvar.aim_mode);
 					sscanf(str, "aim_key %i;"	,&cvar.aim_key);
 					sscanf(str, "trigger %i;"	,&cvar.trigger);
@@ -207,6 +208,7 @@ void SaveSettings()
 	fprintf(f,"aim_smooth %i\n",cvar.aim_smooth);
 	fprintf(f,"aim_dot %i\n",cvar.aim_dot);
 	fprintf(f,"aim_point %i\n",cvar.aim_point);
+	fprintf(f,"aim_bone %i\n",cvar.aim_bone);
 	fprintf(f,"aim_mode %i\n",cvar.aim_mode);
 	fprintf(f,"aim_key %i\n",cvar.aim_key);
 	fprintf(f,"trigger %i\n",cvar.trigger);
@@ -290,6 +292,7 @@ void LoadSettings()
 		sscanf(str,"aim_smooth %i"	,&cvar.aim_smooth);
 		sscanf(str,"aim_dot %i"		,&cvar.aim_dot);
 		sscanf(str,"aim_point %i"	,&cvar.aim_point);
+		sscanf(str,"aim_bone %i"	,&cvar.aim_bone);
 		sscanf(str,"aim_mode %i"	,&cvar.aim_mode);
 		sscanf(str,"aim_key %i"		,&cvar.aim_key);
 		sscanf(str,"trigger %i"		,&cvar.trigger);
@@ -383,6 +386,7 @@ void HookInit(bool activate)
 		cvar.aim_smooth=0;
 		cvar.aim_dot=0;
 		cvar.aim_point=0;
+		cvar.aim_bone=0;
 		cvar.trigger=0;
 		cvar.trigger_delay=0;
 		cvar.autofire=0;
@@ -529,7 +533,7 @@ void MoveActivePanel(int dx,int dy)
 void ResetConfig()
 {
 	// 1) zero all gameplay cvars so stale save values can't bleed through
-	cvar.aim=0; cvar.aim_smooth=0; cvar.aim_dot=0; cvar.aim_point=0; cvar.aim_mode=0; cvar.aim_key=0;
+	cvar.aim=0; cvar.aim_smooth=0; cvar.aim_dot=0; cvar.aim_point=0; cvar.aim_bone=0; cvar.aim_mode=0; cvar.aim_key=0;
 	cvar.trigger=0; cvar.trigger_delay=0;
 	cvar.autofire=0; cvar.autofire_rate=0; cvar.bhop=0; cvar.bhop_hold=0; cvar.bhop_key=0; cvar.notify=0; cvar.esp_log=0;
 	cvar.aimthru=0; cvar.esp_engine=0; cvar.esp_name=0; cvar.esp_name_pad=0; cvar.esp_name_size=2; cvar.esp_box=0;
@@ -912,6 +916,7 @@ void DrawMenu(int x, int y)
 		{"FOV",         IT_INT,    &cvar.fov,        0,1000,10,   1, &cvar.aim,  1},
 		{"Head dot",    IT_TOGGLE, &cvar.aim_dot,    0,0,0,       0, &cvar.aim,  1},
 		{"Aim point",   IT_INT,    &cvar.aim_point,  -50,50,1,    0, &cvar.aim,  1},
+		{"Real hitbox", IT_TOGGLE, &cvar.aim_bone,   0,0,0,       0, &cvar.aim,  1},
 		{"Aim mode",    IT_INT,    &cvar.aim_mode,   0,2,1,       1, &cvar.aim,  1},
 		{"Aim key",     IT_INT,    &cvar.aim_key,    0,KEY_TABLE_COUNT-1,1, 1, &cvar.aim, 1},
 		{"Triggerbot",  IT_TOGGLE, &cvar.trigger,    0,0,0,       0, 0,          0},
@@ -1893,6 +1898,28 @@ bool IsWorldVisible(float x,float y,float z,GLdouble *mm_in,GLdouble *pm_in,GLin
 	return (pix>wz-0.0008f);		// tiny epsilon: head usually pokes ~through model surface
 }
 
+// Real-hitbox aim: find the player-model AABB captured this frame whose
+// horizontal centre sits closest to this entity's origin, within a small radius
+// (so a corpse / teammate / viewmodel box can't bind to the wrong player). On a
+// match it fills bmin/bmax with that box's world-space bounds and returns true;
+// otherwise the caller keeps the origin+hull estimate.
+bool MatchPlayerBox(const float *o,float *bmin,float *bmax)
+{
+	int best=-1; float bestd2=ENG_BOX_MATCH_R*ENG_BOX_MATCH_R;
+	for(int i=0;i<eng_box_n;i++)
+	{
+		float cx=(eng_box_min[i][0]+eng_box_max[i][0])*0.5f;
+		float cy=(eng_box_min[i][1]+eng_box_max[i][1])*0.5f;
+		float dx=cx-o[0], dy=cy-o[1];
+		float d2=dx*dx+dy*dy;
+		if(d2<bestd2){ bestd2=d2; best=i; }
+	}
+	if(best<0) return false;
+	bmin[0]=eng_box_min[best][0]; bmin[1]=eng_box_min[best][1]; bmin[2]=eng_box_min[best][2];
+	bmax[0]=eng_box_max[best][0]; bmax[1]=eng_box_max[best][1]; bmax[2]=eng_box_max[best][2];
+	return true;
+}
+
 // Draw ESP for every player in the engine entity list. Called each frame from
 // the wglSwapBuffers hook, in its own 2D pixel-space pass.
 void DrawEngineEsp()
@@ -2151,17 +2178,38 @@ void DrawEngineEsp()
 			int usehullA=ReadInt(ent+ENT_CURSTATE+ES_USEHULL);
 			float halfhA=(usehullA==1)?18.0f:36.0f;
 			float zoffA =(usehullA==1)?6.0f :0.0f;
-			// Aim point: the CENTER of the head (the bounding-hull top sits a few
-			// units above the skull, so drop by AIM_HEAD_CENTER), plus the user's
-			// vertical offset cvar.aim_point (positive = aim higher).
-			// Ducking shrinks the hull to half height, so scale the user offset by
-			// the duck ratio to keep it at the same RELATIVE spot on the body
-			// (e.g. "-12 = neck" stays at the neck instead of dropping to the thigh).
-			float aimscale = halfhA/36.0f;
-			float aimz  = o[2]+halfhA+zoffA - AIM_HEAD_CENTER + (float)cvar.aim_point*aimscale;
-			float aimA[3] ={o[0],o[1],aimz};
-			float headA[3]={o[0],o[1],o[2]+halfhA+zoffA-2.0f};	// head top (triggerbot box)
-			float feetA[3]={o[0],o[1],o[2]-halfhA+zoffA};
+			// Default (fallback) head geometry from the engine hull: XY = origin,
+			// top = origin + hull half-height, feet = origin - hull half-height.
+			float hxA=o[0], hyA=o[1];				// head XY
+			float topZ =o[2]+halfhA+zoffA;			// crown / hull top
+			float feetZ=o[2]-halfhA+zoffA;			// feet
+			float aimscale = halfhA/36.0f;			// duck/stand ratio for the user offset
+			// Real-hitbox override: if we captured this player's drawn model this
+			// frame, use its TRUE bounding box instead of the fixed hull -- the top
+			// is the actual head crown (tracks ducking/jumping/animation), and the
+			// XY is the model centre. Only the vertical really changes (XY already
+			// matched origin), but it fixes height errors the constant hull can't.
+			if(cvar.aim_bone)
+			{
+				float bmin[3],bmax[3];
+				if(MatchPlayerBox(o,bmin,bmax))
+				{
+					hxA=(bmin[0]+bmax[0])*0.5f;
+					hyA=(bmin[1]+bmax[1])*0.5f;
+					topZ =bmax[2];
+					feetZ=bmin[2];
+					float bh=bmax[2]-bmin[2];
+					aimscale=(bh>1.0f)?(bh/72.0f):aimscale;	// real height -> duck/stand ratio
+				}
+			}
+			// Aim point: the CENTER of the head (the top sits a few units above the
+			// skull, so drop by AIM_HEAD_CENTER), plus the user's vertical offset
+			// cvar.aim_point (positive = aim higher). The offset is scaled by the
+			// duck ratio so "-12 = neck" stays at the neck instead of the thigh.
+			float aimz  = topZ - AIM_HEAD_CENTER + (float)cvar.aim_point*aimscale;
+			float aimA[3] ={hxA,hyA,aimz};
+			float headA[3]={hxA,hyA,topZ-2.0f};		// head top (triggerbot box)
+			float feetA[3]={hxA,hyA,feetZ};
 			float sAi[3], sHe[3], sFe[3];
 			bool okAi=EngWorldToScreen(aimA,sAi);
 			bool okHe=EngWorldToScreen(headA,sHe);
@@ -2394,6 +2442,10 @@ void DrawEngineEsp()
 	(*orig_glMatrixMode)(GL_MODELVIEW);
 	(*orig_glPopMatrix)();
 	(*orig_glPopAttrib)();
+
+	// Real-hitbox aim: we've consumed this frame's captured player boxes; clear
+	// the list so the next frame's scene render starts accumulating fresh ones.
+	eng_box_n=0; eng_cap_active=false;
 }
 
 // (tier1 DrawPlayerEsp removed - replaced entirely by DrawEngineEsp)
@@ -2698,6 +2750,20 @@ void sys_glPopMatrix (void)
 	if (player.get) // player was drawn
 	{
 		player.get=false;
+		// Real-hitbox aim: this model finished -> bank its AABB (if it had enough
+		// real geometry to be a player and a sane height) for DrawEngineEsp to use.
+		if (eng_cap_active)
+		{
+			float bh=eng_cap_max[2]-eng_cap_min[2];
+			if (eng_cap_verts>=16 && bh>4.0f && bh<200.0f && eng_box_n<ENG_MAX_BOX)
+			{
+				eng_box_min[eng_box_n][0]=eng_cap_min[0]; eng_box_max[eng_box_n][0]=eng_cap_max[0];
+				eng_box_min[eng_box_n][1]=eng_cap_min[1]; eng_box_max[eng_box_n][1]=eng_cap_max[1];
+				eng_box_min[eng_box_n][2]=eng_cap_min[2]; eng_box_max[eng_box_n][2]=eng_cap_max[2];
+				eng_box_n++;
+			}
+			eng_cap_active=false;
+		}
 		if (cvar.chams)							// undo chams render state after each model
 		{										// (so the world keeps its fill + textures)
 			(*orig_glPolygonMode)(GL_FRONT_AND_BACK, GL_FILL);
@@ -2758,6 +2824,14 @@ void sys_glShadeModel (GLenum mode)
 	if ((mode==GL_SMOOTH) && !(player.get))
 	{
 		player.get=true;
+		// Real-hitbox aim: start accumulating this model's world-space AABB from
+		// the vertex stream so DrawEngineEsp can aim at its true head (top).
+		if (hookactive && cvar.aim_bone && eng_box_n<ENG_MAX_BOX)
+		{
+			eng_cap_active=true; eng_cap_verts=0;
+			eng_cap_min[0]=eng_cap_min[1]=eng_cap_min[2]= 1e9f;
+			eng_cap_max[0]=eng_cap_max[1]=eng_cap_max[2]=-1e9f;
+		}
 		if (cvar.chams && cvar.chams_wire)		// wireframe ("spider") chams; restored in glPopMatrix
 		{
 			(*orig_glPolygonMode)(GL_FRONT_AND_BACK, GL_LINE);
@@ -2824,6 +2898,14 @@ void sys_glVertex2f (GLfloat x,  GLfloat y)
 
 void sys_glVertex3f (GLfloat x,  GLfloat y,  GLfloat z)
 {
+	if (eng_cap_active)							// real-hitbox aim: grow this model's world-space AABB
+	{
+		if(x<eng_cap_min[0])eng_cap_min[0]=x; if(x>eng_cap_max[0])eng_cap_max[0]=x;
+		if(y<eng_cap_min[1])eng_cap_min[1]=y; if(y>eng_cap_max[1])eng_cap_max[1]=y;
+		if(z<eng_cap_min[2])eng_cap_min[2]=z; if(z>eng_cap_max[2])eng_cap_max[2]=z;
+		eng_cap_verts++;
+	}
+
 	if (player.get)								// inside a player model (set by sys_glShadeModel)
 	{
 		if (cvar.chams)							// flat silhouette / colored wireframe model
@@ -2844,6 +2926,14 @@ void sys_glVertex3f (GLfloat x,  GLfloat y,  GLfloat z)
 void sys_glVertex3fv (const GLfloat *v)
 {
 	modelviewport=true;
+
+	if (eng_cap_active && v)					// real-hitbox aim: grow this model's world-space AABB
+	{
+		if(v[0]<eng_cap_min[0])eng_cap_min[0]=v[0]; if(v[0]>eng_cap_max[0])eng_cap_max[0]=v[0];
+		if(v[1]<eng_cap_min[1])eng_cap_min[1]=v[1]; if(v[1]>eng_cap_max[1])eng_cap_max[1]=v[1];
+		if(v[2]<eng_cap_min[2])eng_cap_min[2]=v[2]; if(v[2]>eng_cap_max[2])eng_cap_max[2]=v[2];
+		eng_cap_verts++;
+	}
 
 	if(bSmoke && cvar.smoke) // leave this function if hl draws smoke
 	{
