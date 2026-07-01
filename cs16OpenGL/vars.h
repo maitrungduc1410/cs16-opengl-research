@@ -193,6 +193,13 @@ int		me_weaponid		=-1;	// active weapon id      (CurWeapon msg)
 int		me_maxclip[64]	={0};	// biggest clip ever seen per weapon id (for the %)
 bool	msg_hooked		=false;	// did we install the user-message hooks yet?
 int		eng_msg_tries	=0;		// how many times we tried to find the msg nodes
+char	eng_msg_team[33]={0};	// per-slot team from the "TeamInfo" user-message
+								// (0=unknown/spectator, 1=T, 2=CT). This is the
+								// server's own scoreboard source, so it is correct
+								// regardless of the player's (custom) model and needs
+								// no fragile signature scan - it is the PRIMARY team
+								// source for ESP coloring and aim side-filtering, ahead
+								// of g_PlayerExtraInfo and the model-name guess.
 
 // ---- UI scaling + menu animation -------------------------------------------
 float	ui_scale		=1.0f;	// text/menu scale vs 1080p baseline (set in BuildFont)

@@ -15,6 +15,7 @@ see [README.md](./README.md). For build instructions see [BUILDING.md](./BUILDIN
   - [Engine entity-list ESP](#engine-entity-list-esp)
   - [Radar](#radar)
   - [Own HUD (HP / Ammo arcs)](#own-hud-hp--ammo-arcs)
+  - [Team detection (ESP colors + aim side-filter)](#team-detection-esp-colors--aim-side-filter)
   - [Design note: the abandoned spectator warning ("who's watching me")](#design-note-the-abandoned-spectator-warning-whos-watching-me)
   - [Chams](#chams)
   - [Aimbot](#aimbot)
@@ -118,7 +119,8 @@ the table without any signature scanning.
 **Per-player data extracted each frame:**
 - World origin (`ENT_ORIGIN` / `entity_state_t::origin`) for 3D → 2D projection
 - Hull type (`usehull`) to compute standing vs. ducking height for box sizing
-- Team via `g_PlayerExtraInfo` (scanned once via byte-pattern) or model name fallback
+- Team via a three-tier resolution (see *Team detection* below): the `TeamInfo`
+  user-message first, then `g_PlayerExtraInfo`, then a model-name guess
 - Alive / stale via `current_position` update counter + 400 ms timeout
 
 **WorldToScreen:** via `pTriAPI` slot 12 (`WorldToScreen`), the engine's own
@@ -148,8 +150,8 @@ radius. The radar center is freely positionable via `Move radar` in the menu
 ### Own HUD (HP / Ammo arcs)
 
 GoldSrc sends HP, armor, and weapon clip to the client via **user messages**
-(`Health`, `Battery`, `CurWeapon`, `DeathMsg`, `ResetHUD`). The engine keeps a
-linked list of `usermsg_t` nodes (each holding a name string and a handler
+(`Health`, `Battery`, `CurWeapon`, `DeathMsg`, `ResetHUD`, `TeamInfo`). The engine
+keeps a linked list of `usermsg_t` nodes (each holding a name string and a handler
 function pointer). We scan private heap pages for nodes matching those names,
 save the original handler, and overwrite the pointer with our own. Our handler
 reads the value, updates our locals, then calls the original — so the vanilla HUD
@@ -161,6 +163,39 @@ spectating a live teammate doesn't reset the dead state.
 
 The HP and ammo arcs are drawn as 10-tick `GL_LINES` segments arranged in two
 symmetric 96° arcs flanking the crosshair.
+
+---
+
+### Team detection (ESP colors + aim side-filter)
+
+The ESP colors each player by team — **red = T, blue = CT, green = unknown** — and
+the aimbot/triggerbot only engage the side selected in the menu. Getting the team
+right is therefore load-bearing. Team is resolved in three tiers, most-reliable
+first (`DrawEngineEsp`):
+
+1. **`TeamInfo` user-message (primary).** The server broadcasts
+   `TeamInfo <playerIndex> <"TERRORIST"|"CT"|"SPECTATOR"|"UNASSIGNED">` to every
+   client whenever anyone joins or switches team — it is exactly the source the
+   scoreboard is built from. We hook it with the same heap-scan machinery as the
+   HP messages (`Hk_TeamInfo` → `eng_msg_team[idx]`, `1 = T`, `2 = CT`). Because it
+   is keyed on player index rather than the model, it is correct for **any** model,
+   including custom ones, and message names are stable across every build so it
+   needs no signature scan.
+2. **`g_PlayerExtraInfo` (`EngTeam`).** Reads `teamnumber` out of `client.dll`'s
+   extra-info array, located by a byte-pattern scan. Used only when tier 1 hasn't
+   supplied a team yet and the scan actually resolved on this build.
+3. **Model-name guess (`TeamFromModel`).** Last resort: matches the model string
+   against the stock CS model names (`leet`/`arctic`/… → T, `urban`/`gsg9`/… → CT).
+
+**Why the tiers, and the bug tier 1 fixes:** the `g_PlayerExtraInfo` signature is
+fragile and fails to resolve on many builds (see the "signature fragility" note on
+the message hooks). When it fails, `EngTeam` returns 0 for everyone and team color
+falls entirely to `TeamFromModel`. That heuristic only knows the stock models, so
+on custom-model maps/servers those players match nothing and render **green on both
+sides** — indistinguishable friend from foe. Hooking `TeamInfo` as the primary,
+model- and build-independent source eliminates that failure mode; the old tiers
+remain as fallbacks. The `esp_dbg` readout shows the active source (`team=msg` /
+`extra` / `model`).
 
 ---
 

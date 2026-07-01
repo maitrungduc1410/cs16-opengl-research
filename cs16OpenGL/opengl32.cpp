@@ -1579,11 +1579,13 @@ static pfnUserMsgHook um_org_battery = 0;
 static pfnUserMsgHook um_org_curwpn  = 0;
 static pfnUserMsgHook um_org_death   = 0;
 static pfnUserMsgHook um_org_reset   = 0;
+static pfnUserMsgHook um_org_teaminfo= 0;
 static DWORD um_node_health  = 0;			// usermsg_t node addresses we patched
 static DWORD um_node_battery = 0;
 static DWORD um_node_curwpn  = 0;
 static DWORD um_node_death   = 0;
 static DWORD um_node_reset   = 0;
+static DWORD um_node_teaminfo= 0;
 
 int __cdecl Hk_Health(const char *n,int s,void *b)
 {
@@ -1632,6 +1634,27 @@ int __cdecl Hk_CurWeapon(const char *n,int s,void *b)
 		}
 	}
 	return um_org_curwpn ? um_org_curwpn(n,s,b) : 1;
+}
+// TeamInfo layout (CS 1.6): byte player-index, then a null-terminated team name
+// ("TERRORIST" / "CT" / "SPECTATOR" / "UNASSIGNED"). The server sends this to
+// every client whenever anyone joins or switches team - it is exactly what the
+// scoreboard is built from, so it is correct no matter what (custom) model the
+// player wears, and needs no signature scan. We latch it per slot; the ESP color
+// and aim side-filter read eng_msg_team first (see DrawEngineEsp).
+int __cdecl Hk_TeamInfo(const char *n,int s,void *b)
+{
+	if(b && s>=2)
+	{
+		int idx=*(unsigned char*)b;
+		const char *t=(const char*)b+1;			// team name starts after the index byte
+		if(idx>=1 && idx<=32 && IsReadable((DWORD)t,1))
+		{
+			if(!strcmp(t,"TERRORIST"))	eng_msg_team[idx]=1;	// repo convention: 1 = T
+			else if(!strcmp(t,"CT"))	eng_msg_team[idx]=2;	//                 2 = CT
+			else						eng_msg_team[idx]=0;	// SPECTATOR / UNASSIGNED
+		}
+	}
+	return um_org_teaminfo ? um_org_teaminfo(n,s,b) : 1;
 }
 
 // Scan committed PRIVATE (heap) pages for a usermsg node whose szName == name.
@@ -1696,9 +1719,10 @@ void HookOwnMsgs()
 		if(um_node_curwpn  && ReadDW(um_node_curwpn +UM_PFN)!=(DWORD)Hk_CurWeapon) ok=false;
 		if(um_node_death   && ReadDW(um_node_death  +UM_PFN)!=(DWORD)Hk_DeathMsg)  ok=false;
 		if(um_node_reset   && ReadDW(um_node_reset  +UM_PFN)!=(DWORD)Hk_ResetHUD)  ok=false;
+		if(um_node_teaminfo&& ReadDW(um_node_teaminfo+UM_PFN)!=(DWORD)Hk_TeamInfo) ok=false;
 		if(ok) return;
 		msg_hooked=false; eng_msg_tries=0;
-		um_node_health=um_node_battery=um_node_curwpn=um_node_death=um_node_reset=0;
+		um_node_health=um_node_battery=um_node_curwpn=um_node_death=um_node_reset=um_node_teaminfo=0;
 	}
 	// The Health/Battery/CurWeapon nodes only get registered AFTER you connect to a
 	// server (HUD_Init), which can be far more than 60 frames after the HUD is first
@@ -1724,8 +1748,11 @@ void HookOwnMsgs()
 	if(um_node_reset==0)
 	{ DWORD n=FindUserMsgNode("ResetHUD");
 	  if(n){ um_node_reset=n; um_org_reset=(pfnUserMsgHook)ReadDW(n+UM_PFN); PatchPfn(n,(DWORD)Hk_ResetHUD); } }
+	if(um_node_teaminfo==0)
+	{ DWORD n=FindUserMsgNode("TeamInfo");
+	  if(n){ um_node_teaminfo=n; um_org_teaminfo=(pfnUserMsgHook)ReadDW(n+UM_PFN); PatchPfn(n,(DWORD)Hk_TeamInfo); } }
 
-	if(um_node_health && um_node_battery && um_node_curwpn && um_node_death && um_node_reset) msg_hooked=true;
+	if(um_node_health && um_node_battery && um_node_curwpn && um_node_death && um_node_reset && um_node_teaminfo) msg_hooked=true;
 }
 
 // Two 10-tick arcs flanking the crosshair: green (left) = health, yellow (right)
@@ -2117,8 +2144,14 @@ void DrawEngineEsp()
 		}
 		if(EngDead(idx) || stale) continue;
 
-		// team color (shared by the radar dot and the on-screen ESP below)
-		int team=EngTeam(idx);
+		// team color (shared by the radar dot and the on-screen ESP below).
+		// Three-tier team resolution, most-reliable first:
+		//   1) TeamInfo user-message (eng_msg_team) - the server's scoreboard
+		//      source; correct for ANY model (incl. custom) and needs no signature.
+		//   2) g_PlayerExtraInfo (EngTeam) - only when that scan resolved on this build.
+		//   3) model-name guess (TeamFromModel) - last resort; fails on custom models.
+		int team=eng_msg_team[idx];
+		if(team==0) team=EngTeam(idx);
 		if(team==0) team=TeamFromModel(modelbuf);
 		float r,g,b;
 		if(team==1)      { r=1.0f; g=0.25f; b=0.25f; }	// T  = red
@@ -2394,7 +2427,7 @@ void DrawEngineEsp()
 	float dbgx=16.0f*ui_scale, dbgy=24.0f*ui_scale, dbgline=20.0f*ui_scale;
 	if(cvar.esp_engine && cvar.esp_dbg)
 		DrawText(dbgx,dbgy,0.2f,1.0f,0.4f,"ENGINE ESP: %i players  team=%s",
-			eng_players, eng_have_extra?"extra":"model");
+			eng_players, um_node_teaminfo?"msg":(eng_have_extra?"extra":"model"));
 
 	if(cvar.esp_log)
 		DrawText(dbgx,dbgy+dbgline,0.6f,0.9f,1.0f,"PVS/detect: cur=%i  peak=%i  avg=%.1f",
