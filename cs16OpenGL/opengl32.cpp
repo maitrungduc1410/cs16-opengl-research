@@ -881,7 +881,9 @@ void SetAimStatus(const char *fmt, ...)
 //   * fade in/out (menu_alpha) and a highlight bar that smoothly slides to the
 //     selected row (both time-based, so they look the same at 60 or 240 fps)
 //   * dependency hiding: a row with a non-null "dep" pointer is shown only while
-//     that parent cvar is on (e.g. Shoot/Aimthru/FOV hide unless Aimbot is on),
+//     that parent cvar is on (e.g. Shoot/Aimthru/FOV hide unless Aimbot is on).
+//     This is transitive - the whole ancestor chain must be on, so a grandchild
+//     (Name size -> Player name -> ESP Engine) hides when ANY ancestor is off -
 //     and the cursor navigates only over visible rows.
 enum { IT_TOGGLE, IT_INT, IT_TARGET, IT_MOVE, IT_ACTION };
 typedef struct {
@@ -987,10 +989,26 @@ void DrawMenu(int x, int y)
 	if(menu_alpha<0.002f) return;					// fully hidden
 	float dt=g_menu_dt;
 
-	// visible rows only (skip those whose parent cvar is off)
+	// visible rows only. A row is shown only if its dependency cvar is on AND the
+	// row that owns that cvar is itself visible - i.e. we walk the WHOLE ancestor
+	// chain, not just the immediate parent. Otherwise a grandchild like "Name size"
+	// (dep = esp_name, which is itself a child of esp_engine) would stay visible
+	// when its grandparent "ESP Engine" is off, because esp_name keeps its value.
 	int vis[80], nvis=0;
 	for(int i=0;i<N;i++)
-		if(items[i].dep==0 || *(items[i].dep)!=0) vis[nvis++]=i;
+	{
+		bool show=true;
+		int *dep=items[i].dep;
+		for(int guard=0; dep && guard<N; guard++)
+		{
+			if(*dep==0){ show=false; break; }			// an ancestor toggle is off -> hide
+			int owner=-1;								// climb to the row that controls this dep cvar
+			for(int j=0;j<N;j++) if(items[j].p==dep){ owner=j; break; }
+			if(owner<0) break;							// no owning row -> reached the chain top
+			dep=items[owner].dep;						// ...then check that row's own dependency
+		}
+		if(show) vis[nvis++]=i;
+	}
 	if(nvis==0) return;
 	if(menu.count>=nvis) menu.count=nvis-1;			// clamp the cursor (no wrap-around now that we scroll)
 	if(menu.count<0)     menu.count=0;
