@@ -3208,8 +3208,14 @@ void sys_glViewport (GLint x,  GLint y,  GLsizei width,  GLsizei height)
 	// latched state. Edge-detected here so the latch flips once per physical press
 	// regardless of how many times sys_glViewport runs this frame.
 	bool aim_active=true;
-	aim_status_hold=false;		// reset each frame; only Hold-mode-while-held sets it true
-	if(cvar.aim && hookactive && enabledraw)
+	// This runs on EVERY sys_glViewport call (many per frame), so it must NOT gate
+	// on enabledraw: that flag is a one-shot, flipped true on the 5th viewport and
+	// consumed back to false by the next glEnable. A later viewport call in the same
+	// frame would then reset aim_status_hold below and skip the gate that re-sets it,
+	// so the Hold-mode pill vanished. Key/status logic only needs cvar.aim+hookactive;
+	// enabledraw still gates the actual mouse nudge and drawing further down.
+	aim_status_hold=false;		// recomputed below from the live aim-key state
+	if(cvar.aim && hookactive)
 	{
 		bool keydn=(GetAsyncKeyState(KeyTableVK(cvar.aim_key))&0x8000)!=0;
 		if(cvar.aim_mode==1)							// hold

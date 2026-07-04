@@ -345,7 +345,12 @@ tune where the aimbot will land before hiding it again.
 latches an on/off state). The key is resolved from a shared index→virtual-key
 table (`KeyTableVK`) and read with `GetAsyncKeyState` inside `sys_glViewport`; the
 toggle is edge-detected so it flips exactly once per physical press regardless of
-how many times the viewport hook runs that frame.
+how many times the viewport hook runs that frame. The gate deliberately does **not**
+depend on `enabledraw`: that flag is a one-shot (set on the 5th viewport, consumed by
+the next `glEnable`), and since `aim_status_hold` is reset at the top of every
+viewport call, gating on it let a later same-frame viewport call clear the Hold-mode
+status pill without re-setting it. Only the mouse nudge / overlay drawing use
+`enabledraw`; the key-state and status logic run unconditionally.
 
 #### Design note: the abandoned "real hitbox" (real-geometry) aim point
 
