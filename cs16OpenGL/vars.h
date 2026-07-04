@@ -36,6 +36,8 @@ typedef struct { // cvars (of course ;P)
 	int esp_dist_pad;	// ESP Engine sub-option: distance text vertical offset (px)
 	int esp_dist_size;	// ESP Engine sub-option: distance font size (1=small,2=normal,3=large,4=x-large)
 	int esp_team;	// ESP Engine sub-option: which team to draw (0=both,1=CT,2=T)
+	int esp_flags;	// ESP Engine sub-option: C4 / VIP tags on players (from ScoreAttrib)
+	int esp_bomb;	// ESP Engine sub-option: dropped-C4 world marker (from BombDrop)
 	int esp_dbg;	// ESP Engine sub-option: top-left "ENGINE ESP" debug readout text
 	// ---- new ESP Engine sub-options (#2,#3,#4,#5,#6) ----
 	int esp_snap;	// snapline from a fixed anchor to each enemy (0=off,1=bottom,2=top,3=crosshair)
@@ -200,6 +202,20 @@ char	eng_msg_team[33]={0};	// per-slot team from the "TeamInfo" user-message
 								// no fragile signature scan - it is the PRIMARY team
 								// source for ESP coloring and aim side-filtering, ahead
 								// of g_PlayerExtraInfo and the model-name guess.
+char	eng_msg_attrib[33]={0};	// per-slot scoreboard flags from the "ScoreAttrib"
+								// user-message: bit0 = DEAD, bit1 = has C4, bit2 = VIP.
+								// MSG_ALL (sent for every player), so it is a global,
+								// model/build-independent source. Death also feeds the
+								// existing eng_dead_at latch; bits 1/2 drive the C4/VIP tags.
+float	eng_bomb_org[3]	={0};	// world position of the C4 from the last "BombDrop" msg
+int		eng_bomb_flag	=-1;	// -1 = none/cleared, 0 = dropped, 1 = planted(timer)
+DWORD	eng_bomb_at		=0;		// GetTickCount() when eng_bomb_org was last updated
+int		eng_pc4_idx		=0;		// cached cl_entity index of the PLANTED C4 world entity
+								// (models/w_c4.mdl). Unlike the T-only BombDrop message,
+								// this is a normal networked entity, so the marker works
+								// for BOTH teams while the bomb is in PVS. 0 = none.
+float	eng_pc4_org[3]	={0};	// planted-C4 world origin (for the marker + radar dot)
+int		eng_pc4_tick	=0;		// throttle counter for the occasional full entity scan
 
 // ---- UI scaling + menu animation -------------------------------------------
 float	ui_scale		=1.0f;	// text/menu scale vs 1080p baseline (set in BuildFont)

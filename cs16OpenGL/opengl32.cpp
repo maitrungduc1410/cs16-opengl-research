@@ -163,6 +163,8 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "esp_maxdist %i;",&cvar.esp_maxdist);
 					sscanf(str, "esp_fade %i;"	,&cvar.esp_fade);
 					sscanf(str, "esp_team %i;"	,&cvar.esp_team);
+					sscanf(str, "esp_flags %i;"	,&cvar.esp_flags);
+					sscanf(str, "esp_bomb %i;"	,&cvar.esp_bomb);
 					sscanf(str, "esp_dbg %i;"	,&cvar.esp_dbg);
 					sscanf(str, "lambert %i;"	,&cvar.lambert);
 					sscanf(str, "crosshair %i;"	,&cvar.cross);
@@ -247,6 +249,8 @@ void SaveSettings()
 	fprintf(f,"esp_maxdist %i\n",cvar.esp_maxdist);
 	fprintf(f,"esp_fade %i\n",cvar.esp_fade);
 	fprintf(f,"esp_team %i\n",cvar.esp_team);
+	fprintf(f,"esp_flags %i\n",cvar.esp_flags);
+	fprintf(f,"esp_bomb %i\n",cvar.esp_bomb);
 	fprintf(f,"esp_dbg %i\n",cvar.esp_dbg);
 	fprintf(f,"esp_hud %i\n",cvar.esp_hud);
 	fprintf(f,"hud_hp %i\n",cvar.hud_hp);
@@ -330,6 +334,8 @@ void LoadSettings()
 		sscanf(str,"esp_maxdist %i"	,&cvar.esp_maxdist);
 		sscanf(str,"esp_fade %i"	,&cvar.esp_fade);
 		sscanf(str,"esp_team %i"	,&cvar.esp_team);
+		sscanf(str,"esp_flags %i"	,&cvar.esp_flags);
+		sscanf(str,"esp_bomb %i"	,&cvar.esp_bomb);
 		sscanf(str,"esp_dbg %i"		,&cvar.esp_dbg);
 		sscanf(str,"esp_hud %i"		,&cvar.esp_hud);
 		sscanf(str,"hud_hp %i"		,&cvar.hud_hp);
@@ -405,6 +411,8 @@ void HookInit(bool activate)
 		cvar.esp_maxdist=0;
 		cvar.esp_fade=0;
 		cvar.esp_team=0;
+		cvar.esp_flags=0;
+		cvar.esp_bomb=0;
 		cvar.esp_dbg=0;
 		cvar.esp_hud=0;
 		cvar.hud_hp=0;
@@ -536,6 +544,7 @@ void ResetConfig()
 	cvar.esp_box_pad=0; cvar.esp_box_radius=0; cvar.esp_box_width=0;
 	cvar.esp_dist=0; cvar.esp_dist_pad=0; cvar.esp_dist_size=2; cvar.esp_snap=0; cvar.esp_vischeck=0;
 	cvar.esp_arrow=0; cvar.esp_maxdist=0; cvar.esp_fade=0; cvar.esp_team=0;
+	cvar.esp_flags=0; cvar.esp_bomb=0;
 	cvar.esp_dbg=0; cvar.esp_hud=0; cvar.hud_hp=0; cvar.hud_ammo=0;
 	cvar.hud_die=0; cvar.hud_pad=0; cvar.chams=0; cvar.chams_wire=0;
 	cvar.radar=0; cvar.radar_shape=0; cvar.radar_size=0; cvar.radar_zoom=0;
@@ -945,6 +954,8 @@ void DrawMenu(int x, int y)
 		{"Max distance",IT_INT,    &cvar.esp_maxdist, 0,200,5,    0, &cvar.esp_engine, 1},
 		{"Distance fade",IT_TOGGLE,&cvar.esp_fade,    0,0,0,      0, &cvar.esp_engine, 1},
 		{"Show team",   IT_INT,    &cvar.esp_team,    0,2,1,      1, &cvar.esp_engine, 1},
+		{"C4/VIP tags", IT_TOGGLE, &cvar.esp_flags,  0,0,0,      0, &cvar.esp_engine, 1},
+		{"Bomb ESP",    IT_TOGGLE, &cvar.esp_bomb,   0,0,0,      0, &cvar.esp_engine, 1},
 		{"Debug text",  IT_TOGGLE, &cvar.esp_dbg,    0,0,0,      0, &cvar.esp_engine, 1},
 		{"HUD HP/Ammo", IT_TOGGLE, &cvar.esp_hud,    0,0,0,       0, 0,                0},
 		{"HP",          IT_TOGGLE, &cvar.hud_hp,     0,0,0,       0, &cvar.esp_hud,    1},
@@ -977,7 +988,7 @@ void DrawMenu(int x, int y)
 	float dt=g_menu_dt;
 
 	// visible rows only (skip those whose parent cvar is off)
-	int vis[64], nvis=0;
+	int vis[80], nvis=0;
 	for(int i=0;i<N;i++)
 		if(items[i].dep==0 || *(items[i].dep)!=0) vis[nvis++]=i;
 	if(nvis==0) return;
@@ -1265,6 +1276,8 @@ void DrawCheckText(int x,int y) // bad way of doing this
 #define ENT_CURSTATE		0x2B0	// cl_entity_t: entity_state_t curstate
 #define ENT_CURPOS			0x404	// cl_entity_t: current_position (update counter)
 #define ENT_ORIGIN			0xB48	// cl_entity_t: vec3 interpolated origin
+#define ENT_MODEL			(ENT_ORIGIN+0x4C)	// cl_entity_t: model_s* model. Lands right after origin(12)+angles(12)+attachment[4](48)+trivial_accept(4)=0x4C past ENT_ORIGIN (SDK-stable layout). model_s::name is a char[64] at offset 0.
+#define ENG_PC4_SCAN_MAX	1024	// highest entity index we scan for the planted-C4 world entity
 #define ENG_STALE_MS		400		// ms without an update -> treat as dead/gone (fps-independent)
 #define ENG_DEATH_HOLD_MAX_MS	1200	// safety cap on the DeathMsg latch: normally we hold a corpse until EngDead/stale/respawn confirms it, but never longer than this so a missed confirmation can't hide a live player. Kept short because in deathmatch the engine may never report the death (instant respawn keeps the slot alive+streaming), so this cap, not a confirmation, ends the hold.
 #define ENG_RESPAWN_DIST		150.0f	// world units: an origin jump this large while latched means the player respawned (teleported to a spawn point), so release the latch immediately instead of waiting on the engine / safety cap. A corpse never moves this far.
@@ -1550,6 +1563,36 @@ int TeamFromModel(const char *m)
 	return 0;
 }
 
+// True if a model_t::name (at address mdl) contains "w_c4" (case-insensitive) --
+// i.e. this entity is the planted C4 (models/w_c4.mdl). mdl must be readable for
+// at least 64 bytes (the model_s::name field).
+static bool ModelIsC4(DWORD mdl)
+{
+	if(mdl<0x10000 || !IsReadable(mdl,64)) return false;
+	const char *nm=(const char*)mdl;
+	for(int k=0;k<44 && nm[k];k++)
+		if((nm[k]=='w'||nm[k]=='W') && nm[k+1]=='_' &&
+		   (nm[k+2]=='c'||nm[k+2]=='C') && nm[k+3]=='4') return true;
+	return false;
+}
+
+// Locate the planted C4 in the client entity list. It is a non-player "grenade"
+// entity using models/w_c4.mdl and, unlike the (T-only) BombDrop message, a normal
+// networked world entity -- so BOTH teams receive it while it is in PVS. We match on
+// cl_entity_t::model (model_s::name). Returns the entity index, or 0 if not found.
+// Only scans past the player slots (1..32 are handled by the player loop).
+int FindPlantedC4(DWORD fnEnt)
+{
+	if(fnEnt<0x10000) return 0;
+	for(int i=33;i<=ENG_PC4_SCAN_MAX;i++)
+	{
+		DWORD e=(DWORD)((eng_GetEntityByIndex_t)fnEnt)(i);
+		if(!e) continue;
+		if(ModelIsC4(ReadDW(e+ENT_MODEL))) return i;
+	}
+	return 0;
+}
+
 //////////////////////////////////////////////////////////////////////////////////////////////////
 //  OWN HUD  -  health / armor / ammo via user-message hooks
 //
@@ -1580,12 +1623,16 @@ static pfnUserMsgHook um_org_curwpn  = 0;
 static pfnUserMsgHook um_org_death   = 0;
 static pfnUserMsgHook um_org_reset   = 0;
 static pfnUserMsgHook um_org_teaminfo= 0;
+static pfnUserMsgHook um_org_scoreatt= 0;
+static pfnUserMsgHook um_org_bombdrop= 0;
 static DWORD um_node_health  = 0;			// usermsg_t node addresses we patched
 static DWORD um_node_battery = 0;
 static DWORD um_node_curwpn  = 0;
 static DWORD um_node_death   = 0;
 static DWORD um_node_reset   = 0;
 static DWORD um_node_teaminfo= 0;
+static DWORD um_node_scoreatt= 0;
+static DWORD um_node_bombdrop= 0;
 
 int __cdecl Hk_Health(const char *n,int s,void *b)
 {
@@ -1614,6 +1661,8 @@ int __cdecl Hk_DeathMsg(const char *n,int s,void *b)
 int __cdecl Hk_ResetHUD(const char *n,int s,void *b)
 {
 	me_dead=false;
+	eng_bomb_flag=-1;		// new life / round start -> drop any stale C4 marker
+	eng_pc4_idx=0;			// and re-acquire the planted-C4 entity next scan
 	return um_org_reset ? um_org_reset(n,s,b) : 1;
 }
 int __cdecl Hk_Battery(const char *n,int s,void *b)
@@ -1655,6 +1704,44 @@ int __cdecl Hk_TeamInfo(const char *n,int s,void *b)
 		}
 	}
 	return um_org_teaminfo ? um_org_teaminfo(n,s,b) : 1;
+}
+// ScoreAttrib layout (CS 1.6, size 2): byte player-index, byte flags where
+// bit0 = DEAD, bit1 = has C4, bit2 = VIP. The server sends it for every player
+// (it builds the scoreboard), so it is a global, model/build-independent source.
+// We stash the flags for the C4/VIP tags, and feed a fresh death into the same
+// eng_dead_at latch DeathMsg uses - this catches deaths we never saw a DeathMsg
+// for (joined mid-round, or the player died out of our PVS then walked in).
+int __cdecl Hk_ScoreAttrib(const char *n,int s,void *b)
+{
+	if(b && s>=2)
+	{
+		unsigned char *p=(unsigned char*)b;
+		int idx=p[0], flags=p[1];
+		if(idx>=1 && idx<=32)
+		{
+			eng_msg_attrib[idx]=(char)flags;
+			if((flags&1) && eng_dead_at[idx]==0) eng_dead_at[idx]=GetTickCount();	// dead -> latch-hide
+		}
+	}
+	return um_org_scoreatt ? um_org_scoreatt(n,s,b) : 1;
+}
+// BombDrop layout (CS 1.6, size 7): coord x, coord y, coord z, byte flag
+// (0 = dropped, 1 = planted). GoldSrc coords are a 16-bit fixed-point value
+// (short, units*8), little-endian - so each coord is 2 bytes, value = short/8.
+// The server sends the DROPPED position only to alive Terrorists; the PLANTED
+// variant is a (0,0,0) timer-hide, so a zero origin means "clear the marker".
+int __cdecl Hk_BombDrop(const char *n,int s,void *b)
+{
+	if(b && s>=7)
+	{
+		unsigned char *p=(unsigned char*)b;
+		short sx=(short)(p[0]|(p[1]<<8)), sy=(short)(p[2]|(p[3]<<8)), sz=(short)(p[4]|(p[5]<<8));
+		int flag=p[6];
+		float x=sx/8.0f, y=sy/8.0f, z=sz/8.0f;
+		if(x==0.0f && y==0.0f && z==0.0f) eng_bomb_flag=-1;		// (0,0,0) = hide / cleared
+		else { eng_bomb_org[0]=x; eng_bomb_org[1]=y; eng_bomb_org[2]=z; eng_bomb_flag=flag; eng_bomb_at=GetTickCount(); }
+	}
+	return um_org_bombdrop ? um_org_bombdrop(n,s,b) : 1;
 }
 
 // Scan committed PRIVATE (heap) pages for a usermsg node whose szName == name.
@@ -1720,9 +1807,12 @@ void HookOwnMsgs()
 		if(um_node_death   && ReadDW(um_node_death  +UM_PFN)!=(DWORD)Hk_DeathMsg)  ok=false;
 		if(um_node_reset   && ReadDW(um_node_reset  +UM_PFN)!=(DWORD)Hk_ResetHUD)  ok=false;
 		if(um_node_teaminfo&& ReadDW(um_node_teaminfo+UM_PFN)!=(DWORD)Hk_TeamInfo) ok=false;
+		if(um_node_scoreatt&& ReadDW(um_node_scoreatt+UM_PFN)!=(DWORD)Hk_ScoreAttrib) ok=false;
+		if(um_node_bombdrop&& ReadDW(um_node_bombdrop+UM_PFN)!=(DWORD)Hk_BombDrop) ok=false;
 		if(ok) return;
 		msg_hooked=false; eng_msg_tries=0;
 		um_node_health=um_node_battery=um_node_curwpn=um_node_death=um_node_reset=um_node_teaminfo=0;
+		um_node_scoreatt=um_node_bombdrop=0;
 	}
 	// The Health/Battery/CurWeapon nodes only get registered AFTER you connect to a
 	// server (HUD_Init), which can be far more than 60 frames after the HUD is first
@@ -1751,8 +1841,15 @@ void HookOwnMsgs()
 	if(um_node_teaminfo==0)
 	{ DWORD n=FindUserMsgNode("TeamInfo");
 	  if(n){ um_node_teaminfo=n; um_org_teaminfo=(pfnUserMsgHook)ReadDW(n+UM_PFN); PatchPfn(n,(DWORD)Hk_TeamInfo); } }
+	if(um_node_scoreatt==0)
+	{ DWORD n=FindUserMsgNode("ScoreAttrib");
+	  if(n){ um_node_scoreatt=n; um_org_scoreatt=(pfnUserMsgHook)ReadDW(n+UM_PFN); PatchPfn(n,(DWORD)Hk_ScoreAttrib); } }
+	if(um_node_bombdrop==0)
+	{ DWORD n=FindUserMsgNode("BombDrop");
+	  if(n){ um_node_bombdrop=n; um_org_bombdrop=(pfnUserMsgHook)ReadDW(n+UM_PFN); PatchPfn(n,(DWORD)Hk_BombDrop); } }
 
-	if(um_node_health && um_node_battery && um_node_curwpn && um_node_death && um_node_reset && um_node_teaminfo) msg_hooked=true;
+	if(um_node_health && um_node_battery && um_node_curwpn && um_node_death && um_node_reset && um_node_teaminfo
+	   && um_node_scoreatt && um_node_bombdrop) msg_hooked=true;
 }
 
 // Two 10-tick arcs flanking the crosshair: green (left) = health, yellow (right)
@@ -2401,7 +2498,112 @@ void DrawEngineEsp()
 			gTextAlpha=ta;
 		}
 
+		// C4 / VIP tag from ScoreAttrib (bit1 = has C4, bit2 = VIP), drawn at the
+		// box top-right. C4 in orange, VIP in gold; C4 wins if somehow both are set.
+		if(cvar.esp_flags)
+		{
+			unsigned char af=(unsigned char)eng_msg_attrib[idx];
+			if(af & 6)
+			{
+				float ta=gTextAlpha; gTextAlpha=esp_a;
+				const char *tag=(af&2)?"C4":"VIP";
+				float tgc_g=(af&2)?0.55f:0.84f;					// orange vs gold
+				DrawTextSz(x1+3.0f*ui_scale, y0, 1.0f,tgc_g,0.0f, cvar.esp_name_size, "%s", tag);
+				gTextAlpha=ta;
+			}
+		}
+
 		eng_players++;
+	}
+
+	// Dropped-C4 marker (from the BombDrop message). The server only sends the
+	// dropped position to alive Terrorists, so this lights up when you're on T and
+	// the carrier drops/dies; it clears on round restart (ResetHUD) or a (0,0,0) msg.
+	if(cvar.esp_engine && cvar.esp_bomb && eng_bomb_flag>=0)
+	{
+		float bs[3];
+		if(EngWorldToScreen(eng_bomb_org,bs))
+		{
+			float bx=(bs[0]*0.5f+0.5f)*sw, by=sh-(bs[1]*0.5f+0.5f)*sh;
+			if(bx>=0 && by>=0 && bx<sw && by<sh)
+			{
+				float bdx=eng_bomb_org[0]-lo[0], bdy=eng_bomb_org[1]-lo[1], bdz=eng_bomb_org[2]-lo[2];
+				float bdist=(float)sqrt(bdx*bdx+bdy*bdy+bdz*bdz)/39.37f;
+				(*orig_glColor3f)(1.0f,0.55f,0.0f);					// C4 orange
+				FillCircle2D(bx,by,4.0f*ui_scale);
+				DrawText(bx+6.0f*ui_scale, by-6.0f*ui_scale, 1.0f,0.55f,0.0f, "C4 %.0fm", bdist);
+			}
+		}
+		if(radar_on)											// plot the bomb on the radar too
+		{
+			float ddx=eng_bomb_org[0]-lo[0], ddy=eng_bomb_org[1]-lo[1];
+			float rx= ddx*rsin - ddy*rcos, ry= ddx*rcos + ddy*rsin;
+			float zoomU=(float)cvar.radar_zoom; if(zoomU<200.0f) zoomU=200.0f;
+			float sc=rrad/zoomU;
+			float px=rcx+rx*sc, py=rcy-ry*sc;
+			float dd=sqrtf((px-rcx)*(px-rcx)+(py-rcy)*(py-rcy));
+			if(dd>rrad){ px=rcx+(px-rcx)/dd*rrad; py=rcy+(py-rcy)/dd*rrad; }
+			(*orig_glColor3f)(1.0f,0.55f,0.0f);
+			FillCircle2D(px,py,3.0f*ui_scale);
+		}
+	}
+
+	// Planted-C4 marker (world entity) - works for BOTH teams. The planted bomb is a
+	// normal networked "grenade" entity (models/w_c4.mdl), so we find it in the entity
+	// list instead of via the team-scoped BombDrop message. Verify the cached slot
+	// every frame (one lookup); only re-run the full scan every 8th frame when we
+	// don't have it, so the cost is negligible while no bomb is down. Drawn in red to
+	// distinguish the ticking planted bomb from an orange dropped C4.
+	if(cvar.esp_engine && cvar.esp_bomb && fnEnt>=0x10000)
+	{
+		bool have=false;
+		if(eng_pc4_idx)
+		{
+			DWORD e=(DWORD)((eng_GetEntityByIndex_t)fnEnt)(eng_pc4_idx);
+			if(e && ModelIsC4(ReadDW(e+ENT_MODEL)))
+			{
+				float po[3];
+				po[0]=ReadFlt(e+ENT_ORIGIN); po[1]=ReadFlt(e+ENT_ORIGIN+4); po[2]=ReadFlt(e+ENT_ORIGIN+8);
+				if(po[0]==0&&po[1]==0&&po[2]==0)
+				{ DWORD cs=e+ENT_CURSTATE; po[0]=ReadFlt(cs+ES_ORIGIN); po[1]=ReadFlt(cs+ES_ORIGIN+4); po[2]=ReadFlt(cs+ES_ORIGIN+8); }
+				eng_pc4_org[0]=po[0]; eng_pc4_org[1]=po[1]; eng_pc4_org[2]=po[2];
+				have=true;
+			}
+			if(!have) eng_pc4_idx=0;						// defused/exploded/round reset -> re-acquire
+		}
+		if(!have && (++eng_pc4_tick % 8)==0)
+		{
+			int f=FindPlantedC4(fnEnt);
+			if(f) eng_pc4_idx=f;							// drawn from next frame's verify path
+		}
+		if(have)
+		{
+			float bs[3];
+			if(EngWorldToScreen(eng_pc4_org,bs))
+			{
+				float bx=(bs[0]*0.5f+0.5f)*sw, by=sh-(bs[1]*0.5f+0.5f)*sh;
+				if(bx>=0 && by>=0 && bx<sw && by<sh)
+				{
+					float dxb=eng_pc4_org[0]-lo[0], dyb=eng_pc4_org[1]-lo[1], dzb=eng_pc4_org[2]-lo[2];
+					float dm=(float)sqrt(dxb*dxb+dyb*dyb+dzb*dzb)/39.37f;
+					(*orig_glColor3f)(1.0f,0.15f,0.15f);				// planted = red
+					FillCircle2D(bx,by,4.0f*ui_scale);
+					DrawText(bx+6.0f*ui_scale, by-6.0f*ui_scale, 1.0f,0.3f,0.3f, "BOMB %.0fm", dm);
+				}
+			}
+			if(radar_on)
+			{
+				float ddx=eng_pc4_org[0]-lo[0], ddy=eng_pc4_org[1]-lo[1];
+				float rx= ddx*rsin - ddy*rcos, ry= ddx*rcos + ddy*rsin;
+				float zoomU=(float)cvar.radar_zoom; if(zoomU<200.0f) zoomU=200.0f;
+				float sc=rrad/zoomU;
+				float px=rcx+rx*sc, py=rcy-ry*sc;
+				float dd=sqrtf((px-rcx)*(px-rcx)+(py-rcy)*(py-rcy));
+				if(dd>rrad){ px=rcx+(px-rcx)/dd*rrad; py=rcy+(py-rcy)/dd*rrad; }
+				(*orig_glColor3f)(1.0f,0.15f,0.15f);
+				FillCircle2D(px,py,3.0f*ui_scale);
+			}
+		}
 	}
 
 	if(aim_found)

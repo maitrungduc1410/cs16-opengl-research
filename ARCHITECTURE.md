@@ -16,6 +16,7 @@ see [README.md](./README.md). For build instructions see [BUILDING.md](./BUILDIN
   - [Radar](#radar)
   - [Own HUD (HP / Ammo arcs)](#own-hud-hp--ammo-arcs)
   - [Team detection (ESP colors + aim side-filter)](#team-detection-esp-colors--aim-side-filter)
+  - [Player flags & bomb ESP (ScoreAttrib + BombDrop)](#player-flags--bomb-esp-scoreattrib--bombdrop)
   - [Design note: the abandoned spectator warning ("who's watching me")](#design-note-the-abandoned-spectator-warning-whos-watching-me)
   - [Chams](#chams)
   - [Aimbot](#aimbot)
@@ -150,12 +151,12 @@ radius. The radar center is freely positionable via `Move radar` in the menu
 ### Own HUD (HP / Ammo arcs)
 
 GoldSrc sends HP, armor, and weapon clip to the client via **user messages**
-(`Health`, `Battery`, `CurWeapon`, `DeathMsg`, `ResetHUD`, `TeamInfo`). The engine
-keeps a linked list of `usermsg_t` nodes (each holding a name string and a handler
-function pointer). We scan private heap pages for nodes matching those names,
-save the original handler, and overwrite the pointer with our own. Our handler
-reads the value, updates our locals, then calls the original — so the vanilla HUD
-keeps working.
+(`Health`, `Battery`, `CurWeapon`, `DeathMsg`, `ResetHUD`, `TeamInfo`, `ScoreAttrib`,
+`BombDrop`). The engine keeps a linked list of `usermsg_t` nodes (each holding a name
+string and a handler function pointer). We scan private heap pages for nodes matching
+those names, save the original handler, and overwrite the pointer with our own. Our
+handler reads the value, updates our locals, then calls the original — so the vanilla
+HUD keeps working.
 
 Death tracking uses `DeathMsg` (victim index == our index → `me_dead = true`) and
 `ResetHUD` (respawn → `me_dead = false`), independent of the HP value so
@@ -196,6 +197,50 @@ sides** — indistinguishable friend from foe. Hooking `TeamInfo` as the primary
 model- and build-independent source eliminates that failure mode; the old tiers
 remain as fallbacks. The `esp_dbg` readout shows the active source (`team=msg` /
 `extra` / `model`).
+
+---
+
+### Player flags & bomb ESP (ScoreAttrib + BombDrop)
+
+Two more `MSG_ALL`/objective user-messages feed the ESP, hooked with the same
+heap-scan machinery as the team/HP messages.
+
+**`ScoreAttrib` (id 84, size 2) — `byte index, byte flags`.** Flags are bitwise:
+`1 = DEAD`, `2 = has C4`, `4 = VIP`. The server sends it for every player (it builds
+the scoreboard), so it is a global, model/build-independent source. `Hk_ScoreAttrib`:
+- stashes the raw flags in `eng_msg_attrib[idx]`; the **`C4/VIP tags`** ESP option
+  (`esp_flags`) draws a small orange `C4` / gold `VIP` label at the box top-right.
+- feeds a set `DEAD` bit into the *same* `eng_dead_at[]` latch that `DeathMsg` uses.
+  This catches deaths we never received a `DeathMsg` for — e.g. joining mid-round, or
+  a player who died out of our PVS then walks into view — without disturbing the tuned
+  corpse-hide / respawn-release logic.
+
+**`BombDrop` (id 120, size 7) — `coord x, coord y, coord z, byte flag`.** GoldSrc
+coords are little-endian 16-bit fixed point (`short`, units×8), so each is 2 bytes
+with value `= short / 8`; `flag` is `0 = dropped`, `1 = planted`. `Hk_BombDrop` stores
+the world position in `eng_bomb_org`; the **`Bomb ESP`** option (`esp_bomb`) projects
+it with the engine's `WorldToScreen` and draws an orange dot + `C4<dist>` label, plus
+a radar dot when the radar is up. It clears on round restart (`ResetHUD`) or a `(0,0,0)`
+message.
+
+**Scope caveat (by GoldSrc design):** the server only sends the *dropped* C4 position
+via `BombDrop`, and only to **alive Terrorists** — the planted variant is a `(0,0,0)`
+timer-hide, not a real location. So the message-driven marker lights up only when you're
+on T and the carrier drops/dies. The **planted** bomb is covered separately below.
+
+**Planted-C4 marker (world entity) — both teams.** Once the bomb is planted it exists
+as an ordinary networked `grenade` entity using `models/w_c4.mdl`, which every client in
+PVS receives regardless of team. So instead of a team-scoped message we find it in the
+client entity list: `FindPlantedC4` walks entity slots `33..1024`, reads each
+`cl_entity_t::model` (`ENT_MODEL`, which is `ENT_ORIGIN + 0x4C` per the SDK-stable
+layout) and matches `model_s::name` against `w_c4` (`ModelIsC4`). The found index is
+cached in `eng_pc4_idx`; each frame we cheaply re-verify that one slot and read its
+origin, and only re-run the full scan every 8th frame while we *don't* have it (so the
+cost is negligible while no bomb is down). The `Bomb ESP` option (`esp_bomb`) draws it as
+a **red** dot + `BOMB<dist>` label (red to distinguish the ticking planted bomb from the
+orange dropped C4), plus a red radar dot. It clears automatically when the entity stops
+matching (defused / exploded) or on `ResetHUD` (round restart). This works for **both T
+and CT**, closing the CT-side / planted-bomb gap the `BombDrop` message can't cover.
 
 ---
 
