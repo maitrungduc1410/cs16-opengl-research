@@ -1281,6 +1281,7 @@ void DrawCheckText(int x,int y) // bad way of doing this
 #define ENG_STALE_MS		400		// ms without an update -> treat as dead/gone (fps-independent)
 #define ENG_DEATH_HOLD_MAX_MS	1200	// safety cap on the DeathMsg latch: normally we hold a corpse until EngDead/stale/respawn confirms it, but never longer than this so a missed confirmation can't hide a live player. Kept short because in deathmatch the engine may never report the death (instant respawn keeps the slot alive+streaming), so this cap, not a confirmation, ends the hold.
 #define ENG_RESPAWN_DIST		150.0f	// world units: an origin jump this large while latched means the player respawned (teleported to a spawn point), so release the latch immediately instead of waiting on the engine / safety cap. A corpse never moves this far.
+#define ES_MSGNUM			0x00C	// entity_state_t::messagenum (int) - set to the current parse msg# when an entity is in the received snapshot; lets us tell a live entity from a stale/freed cl_entity slot
 #define ES_ORIGIN			0x010	// entity_state_t::origin (vec3)
 #define ES_USEHULL			0x0C8	// entity_state_t::usehull (0 stand, 1 duck)
 #define ES_ONGROUND			0x0D0	// entity_state_t::onground (-1 = airborne, else ground ent idx)
@@ -1576,19 +1577,34 @@ static bool ModelIsC4(DWORD mdl)
 	return false;
 }
 
+// Is this cl_entity live *this snapshot*? A freed/removed entity (defused, exploded,
+// picked up, round reset) keeps its old cl_entity slot -- same model pointer, frozen
+// state -- so a plain model match would keep "finding" a ghost forever. The engine
+// stamps curstate.messagenum with the parse number of the snapshot the entity was in,
+// so an entity whose messagenum matches the reference (the local player, which is
+// always in the latest snapshot) is genuinely present right now.
+static bool EntLive(DWORD e,int refmsg)
+{
+	if(refmsg==0) return false;
+	int m=ReadInt(e+ENT_CURSTATE+ES_MSGNUM);
+	int d=refmsg-m; if(d<0) d=-d;
+	return d<=1;			// same (or one-off) snapshot -> live
+}
+
 // Locate the planted C4 in the client entity list. It is a non-player "grenade"
 // entity using models/w_c4.mdl and, unlike the (T-only) BombDrop message, a normal
 // networked world entity -- so BOTH teams receive it while it is in PVS. We match on
-// cl_entity_t::model (model_s::name). Returns the entity index, or 0 if not found.
+// cl_entity_t::model (model_s::name) AND require the entity to be live this snapshot
+// (EntLive), so a stale ghost slot is never picked up. Returns the entity index, or 0.
 // Only scans past the player slots (1..32 are handled by the player loop).
-int FindPlantedC4(DWORD fnEnt)
+int FindPlantedC4(DWORD fnEnt,int refmsg)
 {
 	if(fnEnt<0x10000) return 0;
 	for(int i=33;i<=ENG_PC4_SCAN_MAX;i++)
 	{
 		DWORD e=(DWORD)((eng_GetEntityByIndex_t)fnEnt)(i);
 		if(!e) continue;
-		if(ModelIsC4(ReadDW(e+ENT_MODEL))) return i;
+		if(ModelIsC4(ReadDW(e+ENT_MODEL)) && EntLive(e,refmsg)) return i;
 	}
 	return 0;
 }
@@ -1625,6 +1641,7 @@ static pfnUserMsgHook um_org_reset   = 0;
 static pfnUserMsgHook um_org_teaminfo= 0;
 static pfnUserMsgHook um_org_scoreatt= 0;
 static pfnUserMsgHook um_org_bombdrop= 0;
+static pfnUserMsgHook um_org_bombpickup= 0;
 static DWORD um_node_health  = 0;			// usermsg_t node addresses we patched
 static DWORD um_node_battery = 0;
 static DWORD um_node_curwpn  = 0;
@@ -1633,6 +1650,7 @@ static DWORD um_node_reset   = 0;
 static DWORD um_node_teaminfo= 0;
 static DWORD um_node_scoreatt= 0;
 static DWORD um_node_bombdrop= 0;
+static DWORD um_node_bombpickup= 0;
 
 int __cdecl Hk_Health(const char *n,int s,void *b)
 {
@@ -1662,7 +1680,7 @@ int __cdecl Hk_ResetHUD(const char *n,int s,void *b)
 {
 	me_dead=false;
 	eng_bomb_flag=-1;		// new life / round start -> drop any stale C4 marker
-	eng_pc4_idx=0;			// and re-acquire the planted-C4 entity next scan
+	eng_pc4_idx=0; eng_pc4_seen=0;	// and re-acquire the planted-C4 entity next scan
 	return um_org_reset ? um_org_reset(n,s,b) : 1;
 }
 int __cdecl Hk_Battery(const char *n,int s,void *b)
@@ -1726,10 +1744,13 @@ int __cdecl Hk_ScoreAttrib(const char *n,int s,void *b)
 	return um_org_scoreatt ? um_org_scoreatt(n,s,b) : 1;
 }
 // BombDrop layout (CS 1.6, size 7): coord x, coord y, coord z, byte flag
-// (0 = dropped, 1 = planted). GoldSrc coords are a 16-bit fixed-point value
-// (short, units*8), little-endian - so each coord is 2 bytes, value = short/8.
-// The server sends the DROPPED position only to alive Terrorists; the PLANTED
-// variant is a (0,0,0) timer-hide, so a zero origin means "clear the marker".
+// (BOMB_FLAG_DROPPED 0, BOMB_FLAG_PLANTED 1). GoldSrc coords are a 16-bit
+// fixed-point value (short, units*8), little-endian - each coord is 2 bytes,
+// value = short/8. The server sends this only to alive Terrorists.
+// This drives the ORANGE "loose C4 on the ground" marker only, so we react to
+// the DROPPED flag exclusively: the PLANTED case (and any zero origin) clears
+// it, because the planted bomb is tracked far more reliably as a world entity
+// (red marker, both teams) instead.
 int __cdecl Hk_BombDrop(const char *n,int s,void *b)
 {
 	if(b && s>=7)
@@ -1738,10 +1759,20 @@ int __cdecl Hk_BombDrop(const char *n,int s,void *b)
 		short sx=(short)(p[0]|(p[1]<<8)), sy=(short)(p[2]|(p[3]<<8)), sz=(short)(p[4]|(p[5]<<8));
 		int flag=p[6];
 		float x=sx/8.0f, y=sy/8.0f, z=sz/8.0f;
-		if(x==0.0f && y==0.0f && z==0.0f) eng_bomb_flag=-1;		// (0,0,0) = hide / cleared
-		else { eng_bomb_org[0]=x; eng_bomb_org[1]=y; eng_bomb_org[2]=z; eng_bomb_flag=flag; eng_bomb_at=GetTickCount(); }
+		if(flag==0 && !(x==0.0f && y==0.0f && z==0.0f))
+		{ eng_bomb_org[0]=x; eng_bomb_org[1]=y; eng_bomb_org[2]=z; eng_bomb_flag=0; eng_bomb_at=GetTickCount(); }
+		else eng_bomb_flag=-1;		// planted / picked up / zero -> no orange dropped marker
 	}
 	return um_org_bombdrop ? um_org_bombdrop(n,s,b) : 1;
+}
+// BombPickup (CS 1.6, size 0): the server broadcasts this to alive Terrorists the
+// moment a dropped C4 is picked up, to remove the radar blip. We mirror that by
+// clearing our orange dropped-C4 marker - without it the marker lingers at the old
+// spot until the next drop.
+int __cdecl Hk_BombPickup(const char *n,int s,void *b)
+{
+	eng_bomb_flag=-1;
+	return um_org_bombpickup ? um_org_bombpickup(n,s,b) : 1;
 }
 
 // Scan committed PRIVATE (heap) pages for a usermsg node whose szName == name.
@@ -1809,10 +1840,11 @@ void HookOwnMsgs()
 		if(um_node_teaminfo&& ReadDW(um_node_teaminfo+UM_PFN)!=(DWORD)Hk_TeamInfo) ok=false;
 		if(um_node_scoreatt&& ReadDW(um_node_scoreatt+UM_PFN)!=(DWORD)Hk_ScoreAttrib) ok=false;
 		if(um_node_bombdrop&& ReadDW(um_node_bombdrop+UM_PFN)!=(DWORD)Hk_BombDrop) ok=false;
+		if(um_node_bombpickup&& ReadDW(um_node_bombpickup+UM_PFN)!=(DWORD)Hk_BombPickup) ok=false;
 		if(ok) return;
 		msg_hooked=false; eng_msg_tries=0;
 		um_node_health=um_node_battery=um_node_curwpn=um_node_death=um_node_reset=um_node_teaminfo=0;
-		um_node_scoreatt=um_node_bombdrop=0;
+		um_node_scoreatt=um_node_bombdrop=um_node_bombpickup=0;
 	}
 	// The Health/Battery/CurWeapon nodes only get registered AFTER you connect to a
 	// server (HUD_Init), which can be far more than 60 frames after the HUD is first
@@ -1847,9 +1879,12 @@ void HookOwnMsgs()
 	if(um_node_bombdrop==0)
 	{ DWORD n=FindUserMsgNode("BombDrop");
 	  if(n){ um_node_bombdrop=n; um_org_bombdrop=(pfnUserMsgHook)ReadDW(n+UM_PFN); PatchPfn(n,(DWORD)Hk_BombDrop); } }
+	if(um_node_bombpickup==0)
+	{ DWORD n=FindUserMsgNode("BombPickup");
+	  if(n){ um_node_bombpickup=n; um_org_bombpickup=(pfnUserMsgHook)ReadDW(n+UM_PFN); PatchPfn(n,(DWORD)Hk_BombPickup); } }
 
 	if(um_node_health && um_node_battery && um_node_curwpn && um_node_death && um_node_reset && um_node_teaminfo
-	   && um_node_scoreatt && um_node_bombdrop) msg_hooked=true;
+	   && um_node_scoreatt && um_node_bombdrop && um_node_bombpickup) msg_hooked=true;
 }
 
 // Two 10-tick arcs flanking the crosshair: green (left) = health, yellow (right)
@@ -2551,30 +2586,40 @@ void DrawEngineEsp()
 	// Planted-C4 marker (world entity) - works for BOTH teams. The planted bomb is a
 	// normal networked "grenade" entity (models/w_c4.mdl), so we find it in the entity
 	// list instead of via the team-scoped BombDrop message. Verify the cached slot
-	// every frame (one lookup); only re-run the full scan every 8th frame when we
-	// don't have it, so the cost is negligible while no bomb is down. Drawn in red to
+	// every frame (one lookup); only re-run the full scan every 8th frame when we don't
+	// have it, so the cost is negligible while no bomb is down. Both the verify and the
+	// scan require the entity to be LIVE this snapshot (EntLive) - otherwise a defused /
+	// exploded bomb's stale cl_entity slot (which keeps its w_c4 model) would be picked
+	// up forever. A short grace window after the last live sighting avoids flicker on a
+	// dropped snapshot; once it lapses the marker clears on its own. Drawn in red to
 	// distinguish the ticking planted bomb from an orange dropped C4.
-	if(cvar.esp_engine && cvar.esp_bomb && fnEnt>=0x10000)
+	if(cvar.esp_engine && cvar.esp_bomb && fnEnt>=0x10000 && local)
 	{
+		int  pc4_ref=ReadInt(local+ENT_CURSTATE+ES_MSGNUM);		// liveness reference
+		DWORD nowb=GetTickCount();
 		bool have=false;
 		if(eng_pc4_idx)
 		{
 			DWORD e=(DWORD)((eng_GetEntityByIndex_t)fnEnt)(eng_pc4_idx);
-			if(e && ModelIsC4(ReadDW(e+ENT_MODEL)))
+			if(e && ModelIsC4(ReadDW(e+ENT_MODEL)) && EntLive(e,pc4_ref))
 			{
 				float po[3];
 				po[0]=ReadFlt(e+ENT_ORIGIN); po[1]=ReadFlt(e+ENT_ORIGIN+4); po[2]=ReadFlt(e+ENT_ORIGIN+8);
 				if(po[0]==0&&po[1]==0&&po[2]==0)
 				{ DWORD cs=e+ENT_CURSTATE; po[0]=ReadFlt(cs+ES_ORIGIN); po[1]=ReadFlt(cs+ES_ORIGIN+4); po[2]=ReadFlt(cs+ES_ORIGIN+8); }
 				eng_pc4_org[0]=po[0]; eng_pc4_org[1]=po[1]; eng_pc4_org[2]=po[2];
-				have=true;
+				eng_pc4_seen=nowb; have=true;
 			}
-			if(!have) eng_pc4_idx=0;						// defused/exploded/round reset -> re-acquire
+			else eng_pc4_idx=0;								// lost it (gone / out of PVS)
 		}
-		if(!have && (++eng_pc4_tick % 8)==0)
+		if(!have)
 		{
-			int f=FindPlantedC4(fnEnt);
-			if(f) eng_pc4_idx=f;							// drawn from next frame's verify path
+			if(eng_pc4_seen && (nowb-eng_pc4_seen)<=ENG_STALE_MS) have=true;	// grace: keep last known briefly
+			else if((++eng_pc4_tick % 8)==0)
+			{
+				int f=FindPlantedC4(fnEnt,pc4_ref);
+				if(f) eng_pc4_idx=f;						// confirmed live -> drawn next frame
+			}
 		}
 		if(have)
 		{

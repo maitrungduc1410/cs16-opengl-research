@@ -152,7 +152,7 @@ radius. The radar center is freely positionable via `Move radar` in the menu
 
 GoldSrc sends HP, armor, and weapon clip to the client via **user messages**
 (`Health`, `Battery`, `CurWeapon`, `DeathMsg`, `ResetHUD`, `TeamInfo`, `ScoreAttrib`,
-`BombDrop`). The engine keeps a linked list of `usermsg_t` nodes (each holding a name
+`BombDrop`, `BombPickup`). The engine keeps a linked list of `usermsg_t` nodes (each holding a name
 string and a handler function pointer). We scan private heap pages for nodes matching
 those names, save the original handler, and overwrite the pointer with our own. Our
 handler reads the value, updates our locals, then calls the original — so the vanilla
@@ -215,32 +215,48 @@ the scoreboard), so it is a global, model/build-independent source. `Hk_ScoreAtt
   a player who died out of our PVS then walks into view — without disturbing the tuned
   corpse-hide / respawn-release logic.
 
-**`BombDrop` (id 120, size 7) — `coord x, coord y, coord z, byte flag`.** GoldSrc
-coords are little-endian 16-bit fixed point (`short`, units×8), so each is 2 bytes
-with value `= short / 8`; `flag` is `0 = dropped`, `1 = planted`. `Hk_BombDrop` stores
-the world position in `eng_bomb_org`; the **`Bomb ESP`** option (`esp_bomb`) projects
-it with the engine's `WorldToScreen` and draws an orange dot + `C4<dist>` label, plus
-a radar dot when the radar is up. It clears on round restart (`ResetHUD`) or a `(0,0,0)`
-message.
+**`BombDrop` (id, size 7) — `coord x, coord y, coord z, byte flag`.** GoldSrc coords
+are little-endian 16-bit fixed point (`short`, units×8), so each is 2 bytes with value
+`= short / 8`; `flag` is `BOMB_FLAG_DROPPED 0` / `BOMB_FLAG_PLANTED 1`. This message
+drives only the **orange "loose C4 on the ground"** marker, so `Hk_BombDrop` reacts to
+the `DROPPED` flag exclusively: it stores the position in `eng_bomb_org`; the **`Bomb
+ESP`** option (`esp_bomb`) projects it with `WorldToScreen` and draws an orange dot +
+`C4<dist>` label, plus a radar dot. A `PLANTED` flag (or a zero origin) *clears* the
+orange marker, because the planted bomb is tracked far more reliably as a world entity
+(red marker, below) — otherwise a plant produced a spurious second orange dot.
 
-**Scope caveat (by GoldSrc design):** the server only sends the *dropped* C4 position
-via `BombDrop`, and only to **alive Terrorists** — the planted variant is a `(0,0,0)`
-timer-hide, not a real location. So the message-driven marker lights up only when you're
-on T and the carrier drops/dies. The **planted** bomb is covered separately below.
+**`BombPickup` (id, size 0).** The server broadcasts this to alive Terrorists the moment
+a dropped C4 is picked up (it's what removes the radar blip). `Hk_BombPickup` mirrors it
+by clearing `eng_bomb_flag` — without this hook the orange dropped marker lingered at the
+old spot until the next drop.
 
-**Planted-C4 marker (world entity) — both teams.** Once the bomb is planted it exists
-as an ordinary networked `grenade` entity using `models/w_c4.mdl`, which every client in
-PVS receives regardless of team. So instead of a team-scoped message we find it in the
-client entity list: `FindPlantedC4` walks entity slots `33..1024`, reads each
-`cl_entity_t::model` (`ENT_MODEL`, which is `ENT_ORIGIN + 0x4C` per the SDK-stable
-layout) and matches `model_s::name` against `w_c4` (`ModelIsC4`). The found index is
-cached in `eng_pc4_idx`; each frame we cheaply re-verify that one slot and read its
-origin, and only re-run the full scan every 8th frame while we *don't* have it (so the
-cost is negligible while no bomb is down). The `Bomb ESP` option (`esp_bomb`) draws it as
-a **red** dot + `BOMB<dist>` label (red to distinguish the ticking planted bomb from the
-orange dropped C4), plus a red radar dot. It clears automatically when the entity stops
-matching (defused / exploded) or on `ResetHUD` (round restart). This works for **both T
-and CT**, closing the CT-side / planted-bomb gap the `BombDrop` message can't cover.
+**Scope caveat (by GoldSrc design):** `BombDrop` is sent only for the *dropped* C4 and
+only to **alive Terrorists**. So the orange marker is inherently T-side. The **planted**
+bomb — the one both teams actually need — is covered by the world-entity marker below.
+
+**Planted-C4 marker (world entity) — both teams.** Once planted, the bomb exists as an
+ordinary networked `grenade` entity using `models/w_c4.mdl` (the *dropped* weaponbox uses
+`w_backpack.mdl` instead, so there's no confusion), which every client in PVS receives
+regardless of team. So instead of a team-scoped message we find it in the client entity
+list: `FindPlantedC4` walks entity slots `33..1024`, reads each `cl_entity_t::model`
+(`ENT_MODEL` = `ENT_ORIGIN + 0x4C` per the SDK-stable layout) and matches `model_s::name`
+against `w_c4` (`ModelIsC4`). The index is cached in `eng_pc4_idx`; each frame we cheaply
+re-verify that one slot and read its origin, and only re-run the full scan every 8th frame
+while we *don't* have it (so cost is negligible while no bomb is down). The `Bomb ESP`
+option (`esp_bomb`) draws it as a **red** dot + `BOMB<dist>` label (red vs the orange
+dropped C4), plus a red radar dot. Works for **both T and CT**.
+
+**Liveness (why the marker actually clears).** A defused/exploded/removed entity keeps its
+`cl_entity` slot — same `w_c4` model pointer, frozen state — so a plain model match would
+re-find that *ghost* forever (the bug that left the red dot up until the next plant). The
+fix is `EntLive`: the engine stamps `curstate.messagenum` (`ES_MSGNUM 0x0C`) with the
+snapshot's parse number, so an entity whose `messagenum` matches the **local player's**
+(always in the latest snapshot) is genuinely present *now*. Both the verify and the scan
+require `EntLive`, so ghosts are rejected. A short grace window (`ENG_STALE_MS`) off the
+last live sighting prevents flicker on a dropped snapshot; once it lapses the marker
+clears itself. Consequence: the red marker tracks the *real* bomb — it disappears within
+~`ENG_STALE_MS` of a defuse/explosion (and while the bomb is out of your PVS), instead of
+sticking around, and `ResetHUD` also wipes it at round start.
 
 ---
 
