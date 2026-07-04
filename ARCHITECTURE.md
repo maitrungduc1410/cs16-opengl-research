@@ -242,12 +242,13 @@ list: `FindPlantedC4` walks entity slots `33..1024`, reads each `cl_entity_t::mo
 (`ENT_MODEL` = `ENT_ORIGIN + 0x4C` per the SDK-stable layout) and matches `model_s::name`
 against `w_c4` (`ModelIsC4`). The index is cached in `eng_pc4_idx`; each frame we cheaply
 re-verify that one slot and read its origin, and only re-run the full scan at most once per
-`ENG_PC4_SCAN_MS` (250 ms) while we *don't* have it. The throttle is **time-based, not
+`ENG_PC4_SCAN_MS` (1000 ms) while we *don't* have it. The throttle is **time-based, not
 frame-based**: each scan calls `IsReadable`/`VirtualQuery` per entity, and a `% 8` frame
 throttle scans *more* per second the higher the framerate — so at high fps `Bomb ESP` was
 visibly dragging fps down while hunting for an unplanted bomb. Time-throttling caps it at
-~4 scans/sec regardless of fps; `ResetHUD` resets the throttle so re-acquire is immediate at
-round start. The `Bomb ESP`
+~1 scan/sec regardless of fps (it only sets how fast the marker pops up after a plant / when
+the bomb re-enters PVS, negligible against a 35-45s timer); `ResetHUD` resets the throttle so
+re-acquire is immediate at round start. The `Bomb ESP`
 option (`esp_bomb`) draws it as a **red** dot + `BOMB<dist>` label (red vs the orange
 dropped C4), plus a red radar dot. Works for **both T and CT**.
 

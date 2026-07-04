@@ -147,6 +147,8 @@ The ESP reads the engine's own entity list for real player names, origins, and t
 | **- Max distance** | Hide ESP beyond this distance in metres (0 = unlimited). |
 | **- Distance fade** | Fade ESP alpha with distance (closer = fully opaque). |
 | **- Show team** | 0 = both teams · 1 = CT only · 2 = T only. |
+| **- C4/VIP tags** | Tag players from the scoreboard `ScoreAttrib` message: an orange `C4` on whoever is carrying the bomb, and a gold `VIP` on the VIP. Works for both teams. |
+| **- Bomb ESP** | World locator for the loose bomb (dot + distance on screen and radar): **orange** `C4 <dist>m` when it's **dropped** on the ground (Terrorist-side only, by engine design), and **red** `BOMB <dist>m` when it's **planted** (both teams). |
 | **- Debug text** | Top-left readout showing player count and team-detection method. |
 
 #### HUD
@@ -353,6 +355,8 @@ ESP đọc trực tiếp danh sách entity của engine để lấy tên thật,
 | **- Max distance** | Ẩn ESP khi xa hơn khoảng cách này (mét) (0 = không giới hạn). |
 | **- Distance fade** | Mờ dần ESP theo khoảng cách (càng gần càng rõ). |
 | **- Show team** | 0 = cả hai phe · 1 = chỉ CT · 2 = chỉ T. |
+| **- C4/VIP tags** | Hiện chữ `C4` màu cam trên người đang cầm bom, và `VIP` màu vàng trên VIP. Hoạt động cho cả hai phe. |
+| **- Bomb ESP** | Định vị quả bom rời trên thế giới (chấm + khoảng cách trên màn hình và radar): màu **cam** `C4 <dist>m` khi bom bị **rớt** dưới đất (chỉ phe Terrorist thấy), và màu **đỏ** `BOMB <dist>m` khi bom đã **được đặt** (cả hai phe). |
 | **- Debug text** | Dòng thông tin góc trên-trái hiện số người chơi và cách nhận diện phe. |
 
 #### HUD
