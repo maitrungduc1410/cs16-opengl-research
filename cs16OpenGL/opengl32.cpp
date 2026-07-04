@@ -1298,6 +1298,7 @@ void DrawCheckText(int x,int y) // bad way of doing this
 #define ENG_PC4_SCAN_MAX	1024	// highest entity index we scan for the planted-C4 world entity
 #define ENG_PC4_SCAN_MS		1000	// min ms between full entity scans while we DON'T have the bomb. Time-based (not frame-based) so the cost is fps-independent: a frame-count throttle scans MORE per second the higher your fps, dragging framerate down exactly when it's highest. Only affects how fast the marker pops up after a plant / when the bomb re-enters PVS - ~1s latency is imperceptible against a 35-45s bomb timer, and once found the cached slot is re-verified every frame.
 #define ENG_STALE_MS		400		// ms without an update -> treat as dead/gone (fps-independent)
+#define ENG_VIS_CACHE_MS	40		// min ms between depth-visibility (glReadPixels) checks PER player. glReadPixels(GL_DEPTH_COMPONENT) forces a GPU pipeline sync, so testing every enemy every frame - and up to 3x/player for aimbot+triggerbot+ESP - made the stall count scale with BOTH framerate and enemy count (combat fps cliff). Visibility barely changes within 40ms, so we cache+share it. Time-based => fps-independent.
 #define ENG_DEATH_HOLD_MAX_MS	1200	// safety cap on the DeathMsg latch: normally we hold a corpse until EngDead/stale/respawn confirms it, but never longer than this so a missed confirmation can't hide a live player. Kept short because in deathmatch the engine may never report the death (instant respawn keeps the slot alive+streaming), so this cap, not a confirmation, ends the hold.
 #define ENG_RESPAWN_DIST		150.0f	// world units: an origin jump this large while latched means the player respawned (teleported to a spawn point), so release the latch immediately instead of waiting on the engine / safety cap. A corpse never moves this far.
 #define ES_MSGNUM			0x00C	// entity_state_t::messagenum (int) - set to the current parse msg# when an entity is in the received snapshot; lets us tell a live entity from a stale/freed cl_entity slot
@@ -2073,6 +2074,21 @@ bool IsWorldVisible(float x,float y,float z,GLdouble *mm_in,GLdouble *pm_in,GLin
 	return (pix>wz-0.0008f);		// tiny epsilon: head usually pokes ~through model surface
 }
 
+// Cached, per-player wrapper around IsWorldVisible. The raw glReadPixels is a GPU
+// stall, so we refresh a given player's visibility at most every ENG_VIS_CACHE_MS
+// (fps-independent) and share the result across the aimbot, triggerbot and ESP
+// dimming - all of which test the same chest point - instead of doing up to three
+// depth readbacks per player per frame. idx is the 1..32 player slot.
+bool PlayerVisibleCached(int idx,float x,float y,float z,GLdouble *mm_in,GLdouble *pm_in,GLint *vp_in)
+{
+	if(idx<1 || idx>32) return IsWorldVisible(x,y,z,mm_in,pm_in,vp_in);	// non-player: no cache slot
+	DWORD now=GetTickCount();
+	if(eng_vis_at[idx] && (now-eng_vis_at[idx])<ENG_VIS_CACHE_MS) return eng_vis_cache[idx];
+	bool v=IsWorldVisible(x,y,z,mm_in,pm_in,vp_in);
+	eng_vis_cache[idx]=v; eng_vis_at[idx]=now;
+	return v;
+}
+
 // Draw ESP for every player in the engine entity list. Called each frame from
 // the wglSwapBuffers hook, in its own 2D pixel-space pass.
 void DrawEngineEsp()
@@ -2388,7 +2404,7 @@ void DrawEngineEsp()
 				{
 					bool v=true;
 					if(!cvar.aimthru)
-						v=IsWorldVisible(o[0],o[1],o[2]+10.0f,mm_w,pm_w,vp);
+						v=PlayerVisibleCached(idx,o[0],o[1],o[2]+10.0f,mm_w,pm_w,vp);
 					if((cvar.aimthru || v) && d2<aim_best_d2)
 					{
 						aim_best_d2=d2; aim_best_sx=ax; aim_best_sy=ay;
@@ -2411,7 +2427,7 @@ void DrawEngineEsp()
 				{
 					bool v=true;
 					if(!cvar.aimthru)
-						v=IsWorldVisible(o[0],o[1],o[2]+10.0f,mm_w,pm_w,vp);
+						v=PlayerVisibleCached(idx,o[0],o[1],o[2]+10.0f,mm_w,pm_w,vp);
 					if(cvar.aimthru || v) trig_hit=true;
 				}
 			}
@@ -2509,7 +2525,7 @@ void DrawEngineEsp()
 		if(cvar.esp_vischeck)
 		{
 			float chest[3]={o[0],o[1],o[2]+10.0f};	// chest height is the most reliable test
-			visible = IsWorldVisible(chest[0],chest[1],chest[2],mm_w,pm_w,vp);
+			visible = PlayerVisibleCached(idx,chest[0],chest[1],chest[2],mm_w,pm_w,vp);
 		}
 		float vr=r, vg=g, vb=b;
 		if(cvar.esp_vischeck && !visible) { vr*=0.4f; vg*=0.4f; vb*=0.4f; }		// dim when hidden

@@ -132,6 +132,16 @@ screen space, then `glReadPixels(GL_DEPTH_COMPONENT)` reads the depth buffer at
 that pixel. If the buffer value is ≥ the projected depth (within a small epsilon),
 the target is unoccluded.
 
+**Why it's cached (`PlayerVisibleCached`).** `glReadPixels` forces a GPU pipeline
+sync, so it's by far the most expensive per-frame op. The aimbot, triggerbot and
+this ESP dimming all test the *same* chest point, so a naive implementation did up
+to **3 readbacks per player per frame** — and the count scaled with *both* enemy
+count and framerate, so combat with the aimbot on dropped fps off a cliff. Instead
+each player slot's result is cached and refreshed at most every `ENG_VIS_CACHE_MS`
+(40 ms, time-based ⇒ fps-independent) and shared by all three consumers. Visibility
+barely changes within 40 ms, so the aimbot stays responsive while the readback rate
+is capped at ~25 Hz/player regardless of framerate.
+
 **Off-screen arrows (`esp_arrow`):** When both head and feet project outside the
 viewport, the yaw from `pfnGetViewAngles` is used to compute a screen-edge
 direction vector. A filled triangle is drawn at the rim pointing toward the enemy.

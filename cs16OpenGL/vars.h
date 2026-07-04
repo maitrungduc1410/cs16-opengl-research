@@ -250,6 +250,16 @@ bool	eng_aim_visible	=true;	// false if blocked by a wall (depth-buffer test)
 bool	g_aim_toggle_on	=false;	// aim_mode==Toggle: latched on/off state
 bool	g_aim_key_prev	=false;	// aim key down last frame (for toggle edge detection)
 
+// ---- depth-visibility cache (shared by aimbot / triggerbot / ESP vischeck) --
+// IsWorldVisible() does a glReadPixels(GL_DEPTH_COMPONENT), a GPU pipeline sync.
+// It used to run once per on-screen enemy per frame (up to 3x/player across the
+// aimbot, triggerbot and ESP dimming), so the stall count scaled with framerate
+// AND enemy count and combat tanked the fps. We cache the result per player slot
+// and refresh it at most every ENG_VIS_CACHE_MS (fps-independent), reused by all
+// three consumers (they all test the same chest point).
+bool	eng_vis_cache[33]={0};	// last depth-visibility result per player slot (1..32)
+DWORD	eng_vis_at[33]   ={0};	// GetTickCount() of that last check (0 = never checked)
+
 // ---- auto-bunnyhop state (cvar.bhop) --------------------------------------
 // eng_on_ground is refreshed each frame by DrawEngineEsp (reads the local
 // player's curstate.onground); sys_glViewport then injects the jump key on the
