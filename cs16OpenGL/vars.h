@@ -215,7 +215,9 @@ int		eng_pc4_idx		=0;		// cached cl_entity index of the PLANTED C4 world entity
 								// this is a normal networked entity, so the marker works
 								// for BOTH teams while the bomb is in PVS. 0 = none.
 float	eng_pc4_org[3]	={0};	// planted-C4 world origin (for the marker + radar dot)
-int		eng_pc4_tick	=0;		// throttle counter for the occasional full entity scan
+DWORD	eng_pc4_scan_at	=0;		// GetTickCount() of the last full entity scan for the planted
+								// C4. Throttled by time (ENG_PC4_SCAN_MS), not frame count, so the
+								// scan cost stays fps-independent instead of rising with framerate.
 DWORD	eng_pc4_seen	=0;		// GetTickCount() of the last frame the planted C4 was
 								// confirmed LIVE. A short grace off this keeps the marker
 								// from flickering on a missed snapshot; once it expires

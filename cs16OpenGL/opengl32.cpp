@@ -1278,6 +1278,7 @@ void DrawCheckText(int x,int y) // bad way of doing this
 #define ENT_ORIGIN			0xB48	// cl_entity_t: vec3 interpolated origin
 #define ENT_MODEL			(ENT_ORIGIN+0x4C)	// cl_entity_t: model_s* model. Lands right after origin(12)+angles(12)+attachment[4](48)+trivial_accept(4)=0x4C past ENT_ORIGIN (SDK-stable layout). model_s::name is a char[64] at offset 0.
 #define ENG_PC4_SCAN_MAX	1024	// highest entity index we scan for the planted-C4 world entity
+#define ENG_PC4_SCAN_MS		250		// min ms between full entity scans while we DON'T have the bomb. Time-based (not frame-based) so the cost is fps-independent: a frame-count throttle scans MORE per second the higher your fps, dragging framerate down exactly when it's highest. 250ms detection latency is imperceptible against a 35-45s bomb timer.
 #define ENG_STALE_MS		400		// ms without an update -> treat as dead/gone (fps-independent)
 #define ENG_DEATH_HOLD_MAX_MS	1200	// safety cap on the DeathMsg latch: normally we hold a corpse until EngDead/stale/respawn confirms it, but never longer than this so a missed confirmation can't hide a live player. Kept short because in deathmatch the engine may never report the death (instant respawn keeps the slot alive+streaming), so this cap, not a confirmation, ends the hold.
 #define ENG_RESPAWN_DIST		150.0f	// world units: an origin jump this large while latched means the player respawned (teleported to a spawn point), so release the latch immediately instead of waiting on the engine / safety cap. A corpse never moves this far.
@@ -1681,6 +1682,7 @@ int __cdecl Hk_ResetHUD(const char *n,int s,void *b)
 	me_dead=false;
 	eng_bomb_flag=-1;		// new life / round start -> drop any stale C4 marker
 	eng_pc4_idx=0; eng_pc4_seen=0;	// and re-acquire the planted-C4 entity next scan
+	eng_pc4_scan_at=0;		// allow that re-acquire scan to run immediately (don't wait out the throttle)
 	return um_org_reset ? um_org_reset(n,s,b) : 1;
 }
 int __cdecl Hk_Battery(const char *n,int s,void *b)
@@ -2615,8 +2617,9 @@ void DrawEngineEsp()
 		if(!have)
 		{
 			if(eng_pc4_seen && (nowb-eng_pc4_seen)<=ENG_STALE_MS) have=true;	// grace: keep last known briefly
-			else if((++eng_pc4_tick % 8)==0)
+			else if(nowb-eng_pc4_scan_at >= ENG_PC4_SCAN_MS)				// time-throttled full scan (fps-independent)
 			{
+				eng_pc4_scan_at=nowb;
 				int f=FindPlantedC4(fnEnt,pc4_ref);
 				if(f) eng_pc4_idx=f;						// confirmed live -> drawn next frame
 			}
