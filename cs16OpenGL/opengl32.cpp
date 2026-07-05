@@ -1276,7 +1276,12 @@ void DrawCheckText(int x,int y) // bad way of doing this
 	if(cvar.perf)
 	{
 		y=y+(int)(13*ui_scale);
-		DrawText(x,y,0.4f,0.9f,1.0f,"PERF MONITOR  (worst-case held since enabled)");
+		DWORD tnow=GetTickCount();
+		if(tnow<g_perf_warm_until)	// still in the post-toggle cooldown: peaks not counting yet
+			DrawText(x,y,1.0f,0.7f,0.3f,"PERF MONITOR  [warming up %.1fs - peaks not counted yet]",
+				(double)(g_perf_warm_until-tnow)/1000.0);
+		else
+			DrawText(x,y,0.4f,0.9f,1.0f,"PERF MONITOR  (worst-case held since enabled)");
 		y=y+(int)(13*ui_scale);
 		perf_t *pf=&g_perf[PERF_FRAME];
 		double fps_now =(pf->last_ms>0.0)?1000.0/pf->last_ms:0.0;
@@ -2111,6 +2116,7 @@ static void PerfCommit(int id,double ms)
 {
 	perf_t *p=&g_perf[id];
 	p->last_ms=ms;
+	if(g_perf_warmup>0) return;		// warm-up: show live ms, but the toggle spike must not count as worst
 	if(ms>p->peak_ms)
 	{
 		p->peak_ms=ms;
@@ -3676,7 +3682,16 @@ void sys_wglSwapBuffers(HDC hDC)
 	// Perf monitor: reset all worst-case records the moment the monitor is turned
 	// on, so a session's peaks start clean (this is the off->on edge).
 	bool perf=(cvar.perf!=0);
-	if(perf && !g_perf_prev_on){ if(g_qpc_freq.QuadPart==0) QueryPerformanceFrequency(&g_qpc_freq); PerfResetPeaks(); }
+	if(perf && !g_perf_prev_on)
+	{
+		if(g_qpc_freq.QuadPart==0) QueryPerformanceFrequency(&g_qpc_freq);
+		PerfResetPeaks();
+		// Discard the stale baseline: the last swap we saw could be from a previous
+		// perf session (many minutes ago), which would make this frame's "Frame" time
+		// span the whole off period => a bogus giant spike. Rebuild it from scratch.
+		g_perf_have_last=false;
+		g_perf_warm_until=GetTickCount()+PERF_WARMUP_MS;	// FPS-independent cooldown before peaks count
+	}
 	g_perf_prev_on=perf;
 
 	LARGE_INTEGER ovA={0},ovB={0},espA={0},espB={0};
@@ -3704,6 +3719,7 @@ void sys_wglSwapBuffers(HDC hDC)
 	{
 		LARGE_INTEGER now; QueryPerformanceCounter(&now);
 		g_perf_players=eng_players;
+		g_perf_warmup=(GetTickCount()<g_perf_warm_until)?1:0;	// still cooling down after the toggle?
 		if(g_perf_have_last) PerfCommit(PERF_FRAME,PerfMs(g_perf_last_swap,now));
 		if(hookactive)
 		{

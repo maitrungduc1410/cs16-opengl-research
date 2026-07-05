@@ -512,7 +512,13 @@ subsystem's spike rarely lands on the overall worst frame.
 `sys_wglSwapBuffers`; `DepthVis` and `HUD` are per-frame accumulators (bracketed in
 `IsWorldVisible` and around `DrawOwnHud`). All commits + resets happen once per swap.
 Everything is behind `if(cvar.perf)`, so the monitor costs nothing (one branch) when
-off, and peaks reset on the off→on edge so each session starts clean.
+off, and peaks reset on the off→on edge so each session starts clean. On that edge we
+also drop the stale frame baseline (`g_perf_have_last=false`) — otherwise the first
+`Frame` delta would span the entire time the monitor was *off* and register a bogus
+multi-hundred-ms spike — and arm a wall-clock warm-up window (`PERF_WARMUP_MS`, default
+2 s, FPS-independent) during which `last_ms` still updates but **peaks are not
+recorded**, so the one-off toggle transient (menu closing, first ESP pass / depth read)
+never counts as the worst.
 
 **Reading it (F11 panel).** Rows show `last | worst | (players, reads, ago)`, colored
 amber ≥3 ms / red ≥8 ms. `DepthVis` isolates the depth-readback stalls; `Frame −

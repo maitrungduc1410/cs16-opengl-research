@@ -327,6 +327,15 @@ LARGE_INTEGER	g_qpc_freq		={0};	// QueryPerformanceFrequency (ticks/sec), lazily
 LARGE_INTEGER	g_perf_last_swap={0};	// QPC at the previous swap (for full frame time)
 bool	g_perf_have_last	=false;	// false until the first swap gives us a baseline
 bool	g_perf_prev_on		=false;	// cvar.perf last frame (to reset peaks on off->on)
+// Wall-clock cooldown (ms) after the monitor is switched on during which PEAK
+// recording is suppressed. The toggle itself (menu just closed, first ESP pass,
+// first depth read, and a stale frame baseline) produces a one-off spike that is
+// NOT representative. Time-based (not frame-based) so it behaves the same at any
+// FPS. We still show live "last" ms during the window, just refuse to let those
+// frames count as the worst.
+#define PERF_WARMUP_MS 2000
+DWORD	g_perf_warm_until=0;	// GetTickCount() up to which peak-recording is suppressed
+int		g_perf_warmup	=0;		// per-frame flag: 1 while still inside the warm-up window
 
 // ---- detection logging / PVS counters (cvar.esp_log) ----------------------
 int		det_cur			=0;		// enemy players received from the server this frame
