@@ -483,3 +483,39 @@ fade-in/out all run from a single `UpdateMenuAnim()` call each frame.
 
 Panel positions (menu, F11, radar) are draggable with the **Move** entries and
 persist in `oglsave.cfg`.
+
+---
+
+### Performance monitor (`cvar.perf`)
+
+A per-section timing model (menu: **Perf monitor**, last toggle) that attributes FPS
+drops to a specific hack subsystem instead of guessing. A pure pass-through proxy DLL
+holds full FPS, so any drop is our per-frame work — and the cost scales with **enemy
+count** (round start / crowded fights), the signature of per-player, per-frame work.
+
+**Data model (`perf_t g_perf[PERF_COUNT]`, `vars.h`).** One row per section, each
+holding `last_ms` (this frame) and an **independent** `peak_ms` (worst since enabled)
+plus the *context frozen at that worst frame*: `peak_players`, `peak_reads`
+(`glReadPixels` count) and `peak_when`. Peaks are tracked per-row because a
+subsystem's spike rarely lands on the overall worst frame.
+
+**Rows:**
+- `Frame` — full frame period (`QueryPerformanceCounter` delta between swaps) ⇒
+  `FPS = 1000 / Frame.ms`; worst `peak_ms` = the lowest FPS.
+- `Overlay` — all of our swap-time drawing (`DrawEngineEsp` + toasts + menu).
+- `EngineEsp` — the per-player ESP + aimbot/triggerbot entity scan.
+- `DepthVis` — time+count of the `glReadPixels(GL_DEPTH_COMPONENT)` occlusion tests
+  (a **subset** of `EngineEsp`; the GPU pipeline stall that scales with enemies).
+- `HUD` — own HP/ammo arcs (`DrawOwnHud`).
+
+**Timing.** `Frame`/`Overlay`/`EngineEsp` are single QPC brackets in
+`sys_wglSwapBuffers`; `DepthVis` and `HUD` are per-frame accumulators (bracketed in
+`IsWorldVisible` and around `DrawOwnHud`). All commits + resets happen once per swap.
+Everything is behind `if(cvar.perf)`, so the monitor costs nothing (one branch) when
+off, and peaks reset on the off→on edge so each session starts clean.
+
+**Reading it (F11 panel).** Rows show `last | worst | (players, reads, ago)`, colored
+amber ≥3 ms / red ≥8 ms. `DepthVis` isolates the depth-readback stalls; `Frame −
+Overlay` is everything *not* our overlay (game render + the immediate-mode model hooks
+such as chams/wall), which you isolate further by A/B-toggling those features and
+watching the number move.

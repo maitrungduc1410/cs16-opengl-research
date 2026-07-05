@@ -77,6 +77,7 @@ typedef struct { // cvars (of course ;P)
 	int	bhop_key;	// bhop hold key (index into the shared key table)
 	int	notify;		// toast notifications when a feature is toggled in the menu
 	int	esp_log;	// detection logging: on-screen per-frame enemy/PVS counters
+	int	perf;		// performance monitor: per-section timing + worst-case readout on F11
 	int	fov;
 	int lambert;
 	int	recoil;
@@ -289,6 +290,43 @@ DWORD	toast_until		=0;		// GetTickCount() when the toast disappears (0 = none)
 char	aim_status_msg[64]	="";	// current aim-status text ("" = none)
 DWORD	aim_status_until	=0;		// GetTickCount() when the timed status disappears (0 = none)
 bool	aim_status_hold		=false;	// true => persistent (Hold mode, key currently down)
+
+// ---- performance monitor (cvar.perf) --------------------------------------
+// A per-section timing model so we can attribute FPS drops to the exact hack
+// subsystem instead of guessing. Each row keeps its own last-frame ms AND its
+// own worst (slowest) ms since the monitor was enabled, PLUS the situation that
+// caused that worst frame (players processed + glReadPixels count + when). Every
+// row's peak is tracked independently, because a subsystem's spike rarely lands
+// on the same frame as the overall worst frame. Everything is gated behind
+// cvar.perf, so it costs nothing (just a branch) when the monitor is off.
+typedef struct {
+	const char *name;		// row label shown on the F11 panel
+	double	last_ms;		// time spent in this section on the most recent frame
+	double	peak_ms;		// worst (slowest) ms for this section since the last reset
+	int		peak_players;	// players processed on the frame that set peak_ms (context)
+	int		peak_reads;		// glReadPixels (GPU stalls) on that frame (context)
+	DWORD	peak_when;		// GetTickCount() of that worst frame (for "N s ago")
+} perf_t;
+
+// Row indices. Frame = the whole frame (=> FPS). Overlay = all of our swap-time
+// drawing. EngineEsp = the per-player ESP + aimbot/trigger scan. DepthVis = the
+// glReadPixels occlusion stalls (a subset of EngineEsp). HUD = own HP/ammo arcs.
+enum { PERF_FRAME=0, PERF_OVERLAY, PERF_ESP, PERF_VIS, PERF_HUD, PERF_COUNT };
+perf_t	g_perf[PERF_COUNT]={
+	{"Frame",     0,0,0,0,0},
+	{"Overlay",   0,0,0,0,0},
+	{"EngineEsp", 0,0,0,0,0},
+	{"DepthVis",  0,0,0,0,0},
+	{"HUD",       0,0,0,0,0},
+};
+int		g_perf_players	=0;		// players processed this frame (context snapshot source)
+int		g_perf_reads	=0;		// glReadPixels issued this frame (DepthVis count + context)
+double	g_perf_acc_vis	=0.0;	// accumulated glReadPixels time this frame (ms)
+double	g_perf_acc_hud	=0.0;	// accumulated own-HUD draw time this frame (ms)
+LARGE_INTEGER	g_qpc_freq		={0};	// QueryPerformanceFrequency (ticks/sec), lazily filled
+LARGE_INTEGER	g_perf_last_swap={0};	// QPC at the previous swap (for full frame time)
+bool	g_perf_have_last	=false;	// false until the first swap gives us a baseline
+bool	g_perf_prev_on		=false;	// cvar.perf last frame (to reset peaks on off->on)
 
 // ---- detection logging / PVS counters (cvar.esp_log) ----------------------
 int		det_cur			=0;		// enemy players received from the server this frame

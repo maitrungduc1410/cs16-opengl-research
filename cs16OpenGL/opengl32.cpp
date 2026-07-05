@@ -126,6 +126,7 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "bhop_key %i;"	,&cvar.bhop_key);
 					sscanf(str, "notify %i;"	,&cvar.notify);
 					sscanf(str, "esp_log %i;"	,&cvar.esp_log);
+					sscanf(str, "perf %i;"		,&cvar.perf);
 					sscanf(str, "aimthru %i;"	,&cvar.aimthru);
 					sscanf(str, "target %i;"	,&cvar.target);
 					sscanf(str, "recoil %i;"	,&cvar.recoil);
@@ -220,6 +221,7 @@ void SaveSettings()
 	fprintf(f,"bhop_key %i\n",cvar.bhop_key);
 	fprintf(f,"notify %i\n",cvar.notify);
 	fprintf(f,"esp_log %i\n",cvar.esp_log);
+	fprintf(f,"perf %i\n",cvar.perf);
 	fprintf(f,"aimthru %i\n",cvar.aimthru);
 	fprintf(f,"target %i\n",cvar.target);
 	fprintf(f,"shoot %i\n",cvar.shoot);
@@ -305,6 +307,7 @@ void LoadSettings()
 		sscanf(str,"bhop_key %i"	,&cvar.bhop_key);
 		sscanf(str,"notify %i"		,&cvar.notify);
 		sscanf(str,"esp_log %i"		,&cvar.esp_log);
+		sscanf(str,"perf %i"		,&cvar.perf);
 		sscanf(str,"aimthru %i"		,&cvar.aimthru);
 		sscanf(str,"target %i"		,&cvar.target);
 		sscanf(str,"shoot %i"		,&cvar.shoot);
@@ -397,6 +400,7 @@ void HookInit(bool activate)
 		cvar.bhop_hold=0;
 		cvar.notify=0;
 		cvar.esp_log=0;
+		cvar.perf=0;
 		cvar.aimthru=0;
 		cvar.esp_engine=0;
 		cvar.esp_name=0;
@@ -539,7 +543,7 @@ void ResetConfig()
 	// 1) zero all gameplay cvars so stale save values can't bleed through
 	cvar.aim=0; cvar.aim_smooth=0; cvar.aim_dot=0; cvar.aim_point=0; cvar.aim_mode=0; cvar.aim_key=0;
 	cvar.trigger=0; cvar.trigger_delay=0;
-	cvar.autofire=0; cvar.autofire_rate=0; cvar.bhop=0; cvar.bhop_hold=0; cvar.bhop_key=0; cvar.notify=0; cvar.esp_log=0;
+	cvar.autofire=0; cvar.autofire_rate=0; cvar.bhop=0; cvar.bhop_hold=0; cvar.bhop_key=0; cvar.notify=0; cvar.esp_log=0; cvar.perf=0;
 	cvar.aimthru=0; cvar.esp_engine=0; cvar.esp_name=0; cvar.esp_name_pad=0; cvar.esp_name_size=2; cvar.esp_box=0;
 	cvar.esp_box_pad=0; cvar.esp_box_radius=0; cvar.esp_box_width=0;
 	cvar.esp_dist=0; cvar.esp_dist_pad=0; cvar.esp_dist_size=2; cvar.esp_snap=0; cvar.esp_vischeck=0;
@@ -977,6 +981,7 @@ void DrawMenu(int x, int y)
 		{"Crosshair",   IT_TOGGLE, &cvar.cross,      0,0,0,       0, 0,                0},
 		{"Notifications",IT_TOGGLE,&cvar.notify,     0,0,0,       0, 0,                0},
 		{"Detect log",  IT_TOGGLE, &cvar.esp_log,    0,0,0,       0, 0,                0},
+		{"Perf monitor",IT_TOGGLE, &cvar.perf,       0,0,0,       0, 0,                0},
 		{"Move hack menu", IT_MOVE,  0,             1,0,0,       0, 0,                0},
 		{"Move F11 panel", IT_MOVE,  0,             2,0,0,       0, 0,                0},
 		{"Reset positions",IT_ACTION,0,             0,0,0,       0, 0,                0},
@@ -1263,6 +1268,39 @@ void DrawCheckText(int x,int y) // bad way of doing this
 	DrawText(x,y,1.0f,1.0f,1.0f,"> peak punch seen: %0.3f   last: %0.2f %0.2f %0.2f",
 		norec_peak,norec_last[0],norec_last[1],norec_last[2]);
 	y=y+(int)(13*ui_scale);
+
+	// ---- Performance monitor readout (cvar.perf) ----
+	// Per-section timings with an independent worst-case ("worst since enabled")
+	// per row, plus the situation that produced that worst frame (players + depth
+	// readbacks + how long ago). Lets us pin an FPS drop on the exact subsystem.
+	if(cvar.perf)
+	{
+		y=y+(int)(13*ui_scale);
+		DrawText(x,y,0.4f,0.9f,1.0f,"PERF MONITOR  (worst-case held since enabled)");
+		y=y+(int)(13*ui_scale);
+		perf_t *pf=&g_perf[PERF_FRAME];
+		double fps_now =(pf->last_ms>0.0)?1000.0/pf->last_ms:0.0;
+		double fps_low =(pf->peak_ms>0.0)?1000.0/pf->peak_ms:0.0;	// slowest frame = lowest fps
+		DrawText(x,y,1.0f,1.0f,1.0f,"FPS now %.0f   worst %.0f   (@ %d players, %d depth-reads)",
+			fps_now,fps_low,pf->peak_players,pf->peak_reads);
+		y=y+(int)(13*ui_scale);
+		DrawText(x,y,0.7f,0.7f,1.0f,"section      last     worst    context (players, reads, ago)");
+		y=y+(int)(13*ui_scale);
+		DWORD now=GetTickCount();
+		for(int i=0;i<PERF_COUNT;i++)
+		{
+			perf_t *p=&g_perf[i];
+			float rr=1.0f,gg=1.0f,bb=1.0f;
+			if(p->peak_ms>=8.0){ rr=1.0f; gg=0.4f; bb=0.4f; }		// >=8ms = red (hitch)
+			else if(p->peak_ms>=3.0){ rr=1.0f; gg=0.85f; bb=0.4f; }	// >=3ms = amber
+			double ago=(p->peak_when!=0)?(double)(now-p->peak_when)/1000.0:0.0;
+			DrawText(x,y,rr,gg,bb,"%-10s %6.2fms %6.2fms   (%d, %d, %.0fs ago)",
+				p->name,p->last_ms,p->peak_ms,p->peak_players,p->peak_reads,ago);
+			y=y+(int)(12*ui_scale);
+		}
+		DrawText(x,y,0.6f,0.6f,0.8f,"DepthVis = glReadPixels GPU stalls (part of EngineEsp). Frame-Overlay = game + chams/wall.");
+		y=y+(int)(13*ui_scale);
+	}
 
 	check_h=(float)(y-startY)+13.0f*ui_scale;	// size next frame's panel to fit the text
 	gTextAlpha=1.0f;							// restore for anything drawn after us
@@ -2060,6 +2098,38 @@ void DrawArrow2D(float cx,float cy,float dx,float dy,float size)
 	(*orig_glEnd)();
 }
 
+// ---- performance monitor helpers (cvar.perf) ------------------------------
+// Milliseconds between two QueryPerformanceCounter samples (0 if freq unknown).
+static double PerfMs(LARGE_INTEGER a,LARGE_INTEGER b)
+{
+	if(g_qpc_freq.QuadPart==0) return 0.0;
+	return (double)(b.QuadPart-a.QuadPart)*1000.0/(double)g_qpc_freq.QuadPart;
+}
+// Record a section's frame time: update last_ms, and if it's a new worst, freeze
+// the context (players/reads) so the peak always carries the situation that caused it.
+static void PerfCommit(int id,double ms)
+{
+	perf_t *p=&g_perf[id];
+	p->last_ms=ms;
+	if(ms>p->peak_ms)
+	{
+		p->peak_ms=ms;
+		p->peak_players=g_perf_players;
+		p->peak_reads=g_perf_reads;
+		p->peak_when=GetTickCount();
+	}
+}
+// Clear all worst-case records (called when the monitor is switched on so each
+// session starts fresh).
+static void PerfResetPeaks()
+{
+	for(int i=0;i<PERF_COUNT;i++)
+	{
+		g_perf[i].peak_ms=0.0; g_perf[i].peak_players=0;
+		g_perf[i].peak_reads=0; g_perf[i].peak_when=0;
+	}
+}
+
 // Depth-buffer visibility test for a 3D world point. Returns true if the point
 // is NOT occluded (i.e. visible from the current camera). The caller passes the
 // camera modelview/projection it snapshotted (mm_w/pm_w) BEFORE switching to the
@@ -2070,7 +2140,17 @@ bool IsWorldVisible(float x,float y,float z,GLdouble *mm_in,GLdouble *pm_in,GLin
 	if(gluProject(x,y,z,mm_in,pm_in,vp_in,&wx,&wy,&wz)!=GL_TRUE) return false;
 	if(wz<=0.0||wz>=1.0) return false;
 	if(wx<0||wy<0||wx>=vp_in[2]||wy>=vp_in[3]) return false;
-	(*orig_glReadPixels)((int)wx,(int)wy,1,1,GL_DEPTH_COMPONENT,GL_FLOAT,&pix);
+	// The glReadPixels below forces a GPU pipeline sync (the FPS-killer we're
+	// hunting), so when the perf monitor is on we time+count exactly this call.
+	if(cvar.perf)
+	{
+		LARGE_INTEGER a,b; QueryPerformanceCounter(&a);
+		(*orig_glReadPixels)((int)wx,(int)wy,1,1,GL_DEPTH_COMPONENT,GL_FLOAT,&pix);
+		QueryPerformanceCounter(&b);
+		g_perf_reads++; g_perf_acc_vis+=PerfMs(a,b);
+	}
+	else
+		(*orig_glReadPixels)((int)wx,(int)wy,1,1,GL_DEPTH_COMPONENT,GL_FLOAT,&pix);
 	return (pix>wz-0.0008f);		// tiny epsilon: head usually pokes ~through model surface
 }
 
@@ -2148,7 +2228,14 @@ void DrawEngineEsp()
 	if(cvar.esp_hud)
 	{
 		HookOwnMsgs();
-		DrawOwnHud(sw,sh);
+		if(cvar.perf)
+		{
+			LARGE_INTEGER a,b; QueryPerformanceCounter(&a);
+			DrawOwnHud(sw,sh);
+			QueryPerformanceCounter(&b); g_perf_acc_hud+=PerfMs(a,b);
+		}
+		else
+			DrawOwnHud(sw,sh);
 	}
 
 	if(!ready || fnLocal<0x10000 || fnEnt<0x10000)
@@ -3586,17 +3673,48 @@ void UpdateAutofire()
 
 void sys_wglSwapBuffers(HDC hDC)
 {
+	// Perf monitor: reset all worst-case records the moment the monitor is turned
+	// on, so a session's peaks start clean (this is the off->on edge).
+	bool perf=(cvar.perf!=0);
+	if(perf && !g_perf_prev_on){ if(g_qpc_freq.QuadPart==0) QueryPerformanceFrequency(&g_qpc_freq); PerfResetPeaks(); }
+	g_perf_prev_on=perf;
+
+	LARGE_INTEGER ovA={0},ovB={0},espA={0},espB={0};
 	if(hookactive)
 	{
 		UpdateAutofire();	// once-per-frame auto-pistol/auto-knife
 		EnsureNoRecoilHook();	// (un)install the V_CalcRefdef detour for no visual recoil
+		if(perf){ QueryPerformanceCounter(&ovA); espA=ovA; }
 		DrawEngineEsp();	// radar + engine ESP + own HUD (bottom overlay layer)
+		if(perf) QueryPerformanceCounter(&espB);
 		DrawToast();		// feature toggle notifications (middle layer)
 		DrawAimStatus();	// pink Hold/Toggle aim-key status (middle layer)
 		DrawOverlayUI();	// hack menu + F11 check (top overlay layer)
+		if(perf) QueryPerformanceCounter(&ovB);
 	}
 	UpdateBhop();			// once-per-frame jump spam (also releases SPACE when bhop/hack is off)
 	viewportcount=0;		// reset viewport count, cuz this is the last function called every frame
+
+	// Perf monitor: commit this frame's section timings. "now" is sampled at the
+	// end of every swap, so Frame = now - previous swap = one full frame period
+	// (game render + our overlay) => FPS = 1000/Frame. All the sub-sections were
+	// measured above / accumulated during the frame (DepthVis + HUD). g_perf_players
+	// / g_perf_reads carry THIS frame's counts so each peak freezes its context.
+	if(perf)
+	{
+		LARGE_INTEGER now; QueryPerformanceCounter(&now);
+		g_perf_players=eng_players;
+		if(g_perf_have_last) PerfCommit(PERF_FRAME,PerfMs(g_perf_last_swap,now));
+		if(hookactive)
+		{
+			PerfCommit(PERF_ESP,PerfMs(espA,espB));
+			PerfCommit(PERF_OVERLAY,PerfMs(ovA,ovB));
+		}
+		PerfCommit(PERF_VIS,g_perf_acc_vis);
+		PerfCommit(PERF_HUD,g_perf_acc_hud);
+		g_perf_last_swap=now; g_perf_have_last=true;
+		g_perf_acc_vis=0.0; g_perf_acc_hud=0.0; g_perf_reads=0;	// reset for next frame
+	}
 	(*orig_wglSwapBuffers) (hDC);
 }
 
