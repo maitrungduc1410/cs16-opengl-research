@@ -99,8 +99,9 @@ Sub-options (indented with `- `) are hidden until their parent feature is turned
 | **- Shoot** | Auto-fire once aimed at a target. |
 | **- Aimthru** | Aim through walls. Off = depth-buffer visibility check required. |
 | **- FOV** | Screen-pixel radius around the crosshair to search for targets. |
-| **- Head dot** | Toggle a dot at the exact point the aimbot aims at (each target-team enemy). Turn it on to tune **Aim point**, then off to hide it. |
-| **- Aim point** | Vertical aim offset from head center (`-50..50`; 0 = center of head, +up / −down). Scaled with stance, so the same value stays at the same spot on the body whether the enemy is standing or crouched. |
+| **- Head dot** | Toggle a dot at the exact point the aimbot aims at (each target-team enemy). Turn it on to tune the two **Aim pt** values, then off to hide it. |
+| **- Aim pt stand** | Vertical aim offset from head center for a **standing** enemy (`-50..50`; 0 = center of head, +up / −down). |
+| **- Aim pt duck** | Same, but for a **crouching** enemy. |
 | **- Aim mode** | When the aimbot assists: **Always** (on whenever Aimbot is enabled), **Hold** (only while the aim key is held), or **Toggle** (the aim key flips it on/off). Hold/Toggle is far more natural and lowers report risk. |
 | **- Aim key** | The activation key used by Hold / Toggle mode. Cycle through Mouse R / Mouse 4 / Mouse 5 / Mouse M / Shift / Ctrl / Alt / E / F / C / V / X. |
 | **Triggerbot** | Auto-fire when the crosshair rests on an enemy. |
@@ -307,8 +308,9 @@ Các tùy chọn con (thụt đầu dòng bằng `- `) chỉ hiện khi tính n�
 | **- Shoot** | Tự động bắn khi đã ngắm trúng mục tiêu. |
 | **- Aimthru** | Ngắm xuyên tường. Tắt = bắt buộc kiểm tra tầm nhìn bằng depth-buffer. |
 | **- FOV** | Bán kính tính bằng pixel quanh tâm ngắm để tìm mục tiêu. |
-| **- Head dot** | Bật/tắt một chấm tại đúng điểm aimbot sẽ ngắm tới. Bật lên để canh chỉnh **Aim point**, xong thì tắt đi để ẩn. |
-| **- Aim point** | Độ lệch ngắm theo chiều dọc so với tâm đầu (`-50..50`; 0 = chính giữa đầu, + lên trên / − xuống dưới). Tự co giãn theo tư thế, nên cùng một giá trị sẽ giữ nguyên vị trí trên thân dù địch đứng hay ngồi. |
+| **- Head dot** | Bật/tắt một chấm tại đúng điểm aimbot sẽ ngắm tới. Bật lên để canh chỉnh hai giá trị **Aim pt**, xong thì tắt đi để ẩn. |
+| **- Aim pt stand** | Độ lệch ngắm theo chiều dọc so với tâm đầu khi địch **đứng** (`-50..50`; 0 = chính giữa đầu, + lên trên / − xuống dưới). |
+| **- Aim pt duck** | Tương tự nhưng cho địch **ngồi**. |
 | **- Aim mode** | Khi nào aimbot hỗ trợ: **Always** (luôn bật khi Aimbot bật), **Hold** (chỉ khi giữ phím ngắm), hoặc **Toggle** (phím ngắm bật/tắt). Hold/Toggle tự nhiên hơn nhiều và giảm nguy cơ bị report. |
 | **- Aim key** | Phím kích hoạt cho chế độ Hold / Toggle. Lần lượt: Mouse R / Mouse 4 / Mouse 5 / Mouse M / Shift / Ctrl / Alt / E / F / C / V / X. |
 | **Triggerbot** | Tự động bắn khi tâm ngắm dừng trên kẻ địch. |

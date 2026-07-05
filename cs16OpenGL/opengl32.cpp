@@ -115,6 +115,7 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "aim_smooth %i;",&cvar.aim_smooth);
 					sscanf(str, "aim_dot %i;"	,&cvar.aim_dot);
 					sscanf(str, "aim_point %i;"	,&cvar.aim_point);
+					sscanf(str, "aim_point_duck %i;",&cvar.aim_point_duck);
 					sscanf(str, "aim_mode %i;"	,&cvar.aim_mode);
 					sscanf(str, "aim_key %i;"	,&cvar.aim_key);
 					sscanf(str, "trigger %i;"	,&cvar.trigger);
@@ -210,6 +211,7 @@ void SaveSettings()
 	fprintf(f,"aim_smooth %i\n",cvar.aim_smooth);
 	fprintf(f,"aim_dot %i\n",cvar.aim_dot);
 	fprintf(f,"aim_point %i\n",cvar.aim_point);
+	fprintf(f,"aim_point_duck %i\n",cvar.aim_point_duck);
 	fprintf(f,"aim_mode %i\n",cvar.aim_mode);
 	fprintf(f,"aim_key %i\n",cvar.aim_key);
 	fprintf(f,"trigger %i\n",cvar.trigger);
@@ -296,6 +298,7 @@ void LoadSettings()
 		sscanf(str,"aim_smooth %i"	,&cvar.aim_smooth);
 		sscanf(str,"aim_dot %i"		,&cvar.aim_dot);
 		sscanf(str,"aim_point %i"	,&cvar.aim_point);
+		sscanf(str,"aim_point_duck %i",&cvar.aim_point_duck);
 		sscanf(str,"aim_mode %i"	,&cvar.aim_mode);
 		sscanf(str,"aim_key %i"		,&cvar.aim_key);
 		sscanf(str,"trigger %i"		,&cvar.trigger);
@@ -392,6 +395,7 @@ void HookInit(bool activate)
 		cvar.aim_smooth=0;
 		cvar.aim_dot=0;
 		cvar.aim_point=0;
+		cvar.aim_point_duck=0;
 		cvar.trigger=0;
 		cvar.trigger_delay=0;
 		cvar.autofire=0;
@@ -541,7 +545,7 @@ void MoveActivePanel(int dx,int dy)
 void ResetConfig()
 {
 	// 1) zero all gameplay cvars so stale save values can't bleed through
-	cvar.aim=0; cvar.aim_smooth=0; cvar.aim_dot=0; cvar.aim_point=0; cvar.aim_mode=0; cvar.aim_key=0;
+	cvar.aim=0; cvar.aim_smooth=0; cvar.aim_dot=0; cvar.aim_point=0; cvar.aim_point_duck=0; cvar.aim_mode=0; cvar.aim_key=0;
 	cvar.trigger=0; cvar.trigger_delay=0;
 	cvar.autofire=0; cvar.autofire_rate=0; cvar.bhop=0; cvar.bhop_hold=0; cvar.bhop_key=0; cvar.notify=0; cvar.esp_log=0; cvar.perf=0;
 	cvar.aimthru=0; cvar.esp_engine=0; cvar.esp_name=0; cvar.esp_name_pad=0; cvar.esp_name_size=2; cvar.esp_box=0;
@@ -926,7 +930,8 @@ void DrawMenu(int x, int y)
 		{"Aimthru",     IT_TOGGLE, &cvar.aimthru,    0,0,0,       0, &cvar.aim,  1},
 		{"FOV",         IT_INT,    &cvar.fov,        0,1000,10,   1, &cvar.aim,  1},
 		{"Head dot",    IT_TOGGLE, &cvar.aim_dot,    0,0,0,       0, &cvar.aim,  1},
-		{"Aim point",   IT_INT,    &cvar.aim_point,  -50,50,1,    0, &cvar.aim,  1},
+		{"Aim pt stand",IT_INT,    &cvar.aim_point,     -50,50,1, 0, &cvar.aim,  1},
+		{"Aim pt duck", IT_INT,    &cvar.aim_point_duck,-50,50,1, 0, &cvar.aim,  1},
 		{"Aim mode",    IT_INT,    &cvar.aim_mode,   0,2,1,       1, &cvar.aim,  1},
 		{"Aim key",     IT_INT,    &cvar.aim_key,    0,KEY_TABLE_COUNT-1,1, 1, &cvar.aim, 1},
 		{"Triggerbot",  IT_TOGGLE, &cvar.trigger,    0,0,0,       0, 0,          0},
@@ -2460,12 +2465,14 @@ void DrawEngineEsp()
 			float hxA=o[0], hyA=o[1];				// head XY
 			float topZ =o[2]+halfhA+zoffA;			// crown / hull top
 			float feetZ=o[2]-halfhA+zoffA;			// feet
-			float aimscale = halfhA/36.0f;			// duck/stand ratio for the user offset
 			// Aim point: the CENTER of the head (the top sits a few units above the
-			// skull, so drop by AIM_HEAD_CENTER), plus the user's vertical offset
-			// cvar.aim_point (positive = aim higher). The offset is scaled by the
-			// duck ratio so "-12 = neck" stays at the neck instead of the thigh.
-			float aimz  = topZ - AIM_HEAD_CENTER + (float)cvar.aim_point*aimscale;
+			// skull, so drop by AIM_HEAD_CENTER), plus the user's vertical offset.
+			// Standing and crouching are tuned SEPARATELY (world units, +=higher):
+			// the duck hull geometry doesn't line up with the stand one, so a single
+			// shared value can't sit on the head in both stances. Pick the offset for
+			// the current stance and apply it directly (no scaling).
+			int aimOff  = (usehullA==1) ? cvar.aim_point_duck : cvar.aim_point;
+			float aimz  = topZ - AIM_HEAD_CENTER + (float)aimOff;
 			float aimA[3] ={hxA,hyA,aimz};
 			float headA[3]={hxA,hyA,topZ-2.0f};		// head top (triggerbot box)
 			float feetA[3]={hxA,hyA,feetZ};
