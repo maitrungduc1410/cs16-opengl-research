@@ -2687,9 +2687,22 @@ void DrawEngineEsp()
 		eng_players++;
 	}
 
+	// Self-heal the dropped-C4 marker: the clearing "BombPickup" message is only sent
+	// to ALIVE Terrorists, so if you're dead/CT when someone grabs the loose bomb you
+	// never get it and the orange marker lingers at the old spot (worst when you die
+	// right after the drop). ScoreAttrib (bit1 = has C4) IS broadcast to everyone since
+	// it builds the scoreboard, so if ANY player currently carries the C4 the loose
+	// bomb no longer exists -> drop the stale marker regardless of BombPickup delivery.
+	if(eng_bomb_flag>=0)
+	{
+		for(int ci=1;ci<=32;ci++)
+			if(eng_msg_attrib[ci]&2){ eng_bomb_flag=-1; break; }	// someone holds the C4 -> not loose
+	}
+
 	// Dropped-C4 marker (from the BombDrop message). The server only sends the
 	// dropped position to alive Terrorists, so this lights up when you're on T and
-	// the carrier drops/dies; it clears on round restart (ResetHUD) or a (0,0,0) msg.
+	// the carrier drops/dies; it clears on round restart (ResetHUD), a (0,0,0) msg,
+	// or the self-heal above once any player is flagged as carrying the C4.
 	if(cvar.esp_engine && cvar.esp_bomb && eng_bomb_flag>=0)
 	{
 		float bs[3];

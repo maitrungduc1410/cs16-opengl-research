@@ -240,6 +240,14 @@ a dropped C4 is picked up (it's what removes the radar blip). `Hk_BombPickup` mi
 by clearing `eng_bomb_flag` — without this hook the orange dropped marker lingered at the
 old spot until the next drop.
 
+**Self-heal against a missed `BombPickup`.** Because `BombPickup` reaches only *alive
+Terrorists*, if you're **dead or CT** when the loose bomb is grabbed you never receive it
+and the orange marker would stick at the old spot forever (most visible when you die right
+after the drop). `DrawEngineEsp` therefore cross-checks a signal that *is* broadcast to
+everyone — `ScoreAttrib` bit1 (`has C4`), the same bit that drives the head tag: if **any**
+player is currently flagged as carrying the C4, the loose bomb no longer exists, so the
+stale `eng_bomb_flag` is cleared regardless of whether `BombPickup` was delivered.
+
 **Scope caveat (by GoldSrc design):** `BombDrop` is sent only for the *dropped* C4 and
 only to **alive Terrorists**. So the orange marker is inherently T-side. The **planted**
 bomb — the one both teams actually need — is covered by the world-entity marker below.
