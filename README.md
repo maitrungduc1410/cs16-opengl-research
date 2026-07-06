@@ -47,7 +47,7 @@ draw calls to implement wallhack, ESP, aimbot, radar, and a set of visual tweaks
 
 ### Installation
 
-1. Open the [`things-you-need-to-get-hack-works`](./things-you-need-to-get-hack-works) folder.
+1. [⬇️ Click here to download `cs16-opengl-hack.zip`](https://github.com/maitrungduc1410/cs16-opengl-research/releases/latest/download/cs16-opengl-hack.zip) or open the [release page](https://github.com/maitrungduc1410/cs16-opengl-research/releases/latest).
 2. Copy **both files** into your Counter-Strike 1.6 main directory
    (the folder that contains `hl.exe` / `cstrike`):
    - `opengl32.dll` — the prebuilt hack
@@ -261,7 +261,7 @@ new features, and documentation on how the hack is built and how it works.
 
 ### Cài đặt
 
-1. Mở thư mục [`things-you-need-to-get-hack-works`](./things-you-need-to-get-hack-works).
+1. [⬇️ Bấm vào đây để tải `cs16-opengl-hack.zip`](https://github.com/maitrungduc1410/cs16-opengl-research/releases/latest/download/cs16-opengl-hack.zip) hoặc mở [trang release](https://github.com/maitrungduc1410/cs16-opengl-research/releases/latest).
 2. Chép **cả hai file** vào thư mục gốc của Counter-Strike 1.6
    (thư mục có chứa `hl.exe` / `cstrike`):
    - `opengl32.dll` — bản hack đã build sẵn

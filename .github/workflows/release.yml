@@ -1,0 +1,75 @@
+name: Release hack files
+
+# Publishes the prebuilt hack (the `things-you-need-to-get-hack-works` folder) as a
+# GitHub Release so the README can link straight to a download and GitHub can track
+# the download count for us.
+#
+# There is intentionally only ONE release, pinned to the fixed tag `latest`. On every
+# run we delete the old release (and its tag) and create a fresh one, so the download
+# URL below never changes and never 404s:
+#
+#   https://github.com/<owner>/<repo>/releases/latest/download/cs16-opengl-hack.zip
+#
+# Note: deleting the release resets GitHub's download counter, so the count shown is
+# "downloads of the current build" (it restarts each time a new build is published).
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "things-you-need-to-get-hack-works/**"
+      - ".github/workflows/release.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+# Never run two releases at once (they both touch the single `latest` tag).
+concurrency:
+  group: single-release
+  cancel-in-progress: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: latest
+      ASSET: cs16-opengl-hack.zip
+      SRC_DIR: things-you-need-to-get-hack-works
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Package hack files
+        run: |
+          cd "$SRC_DIR"
+          zip -r "$GITHUB_WORKSPACE/$ASSET" .
+          cd "$GITHUB_WORKSPACE"
+          echo "Packaged:" && unzip -l "$ASSET"
+
+      - name: Replace the single "latest" release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Keep exactly one release: drop the previous one (and its tag) if it exists.
+          # `|| true` so the very first run (nothing to delete) doesn't fail.
+          gh release delete "$TAG" --yes --cleanup-tag || true
+
+          cat > notes.md <<EOF
+          Prebuilt hack files (\`opengl32.dll\` + \`oglconf.cfg\`) from the \`$SRC_DIR\` folder.
+
+          - **Built from commit:** \`${GITHUB_SHA:0:7}\`
+          - **Published:** $(date -u '+%Y-%m-%d %H:%M UTC')
+
+          **Direct download:** [\`$ASSET\`](https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/$ASSET)
+
+          Unzip into your Counter-Strike 1.6 folder next to \`hl.exe\`. See the README for setup.
+          EOF
+
+          gh release create "$TAG" "$ASSET" \
+            --target "$GITHUB_SHA" \
+            --title "Latest build" \
+            --notes-file notes.md
