@@ -12,14 +12,11 @@ name: Release hack files
 #
 # Note: deleting the release resets GitHub's download counter, so the count shown is
 # "downloads of the current build" (it restarts each time a new build is published).
+#
+# Manual trigger only: run it from the Actions tab ("Run workflow") whenever you want
+# to publish the current contents of the hack folder.
 
 on:
-  push:
-    branches:
-      - master
-    paths:
-      - "things-you-need-to-get-hack-works/**"
-      - ".github/workflows/release.yml"
   workflow_dispatch: {}
 
 permissions:
