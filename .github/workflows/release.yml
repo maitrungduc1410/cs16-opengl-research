@@ -1,42 +1,44 @@
 name: Release hack files
 
 # Publishes the prebuilt hack (the `things-you-need-to-get-hack-works` folder) as a
-# GitHub Release so the README can link straight to a download and GitHub can track
-# the download count for us.
+# versioned GitHub Release so each published build and its download count are kept.
 #
-# There is intentionally only ONE release, pinned to the fixed tag `latest`. On every
-# run we delete the old release (and its tag) and create a fresh one, so the download
-# URL below never changes and never 404s:
+# Run this workflow manually from the Actions tab and enter a unique semantic version
+# such as `v1.2.0`. The version is used as both the Git tag and release name.
 #
-#   https://github.com/<owner>/<repo>/releases/latest/download/cs16-opengl-hack.zip
-#
-# Note: deleting the release resets GitHub's download counter, so the count shown is
-# "downloads of the current build" (it restarts each time a new build is published).
-#
-# Manual trigger only: run it from the Actions tab ("Run workflow") whenever you want
-# to publish the current contents of the hack folder.
-
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (for example: v1.2.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
 
-# Never run two releases at once (they both touch the single `latest` tag).
+# Queue release jobs instead of cancelling an earlier publication.
 concurrency:
-  group: single-release
-  cancel-in-progress: true
+  group: releases
+  cancel-in-progress: false
 
 jobs:
   release:
     runs-on: ubuntu-latest
     env:
-      TAG: latest
+      VERSION: ${{ inputs.version }}
       ASSET: cs16-opengl-hack.zip
       SRC_DIR: things-you-need-to-get-hack-works
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Validate version
+        run: |
+          if [[ ! "$VERSION" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Version must be semantic, for example v1.2.0 or v1.2.0-beta.1"
+            exit 1
+          fi
 
       - name: Package hack files
         run: |
@@ -45,28 +47,30 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           echo "Packaged:" && unzip -l "$ASSET"
 
-      - name: Replace the single "latest" release
+      - name: Create versioned release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          # Keep exactly one release: drop the previous one (and its tag) if it exists.
-          # `|| true` so the very first run (nothing to delete) doesn't fail.
-          gh release delete "$TAG" --yes --cleanup-tag || true
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "::error::Release $VERSION already exists. Enter a new version."
+            exit 1
+          fi
 
           cat > notes.md <<EOF
           Prebuilt hack files (\`opengl32.dll\` + \`oglconf.cfg\`) from the \`$SRC_DIR\` folder.
 
+          - **Version:** \`$VERSION\`
           - **Built from commit:** \`${GITHUB_SHA:0:7}\`
           - **Published:** $(date -u '+%Y-%m-%d %H:%M UTC')
 
-          **Direct download:** [\`$ASSET\`](https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/$ASSET)
+          **Direct download:** [\`$ASSET\`](https://github.com/${GITHUB_REPOSITORY}/releases/download/$VERSION/$ASSET)
 
           Unzip into your Counter-Strike 1.6 folder next to \`hl.exe\`. See the README for setup.
           EOF
 
-          gh release create "$TAG" "$ASSET" \
+          gh release create "$VERSION" "$ASSET" \
             --target "$GITHUB_SHA" \
-            --title "Latest build" \
+            --title "$VERSION" \
             --notes-file notes.md
