@@ -26,18 +26,14 @@ The Visual Studio solution is `cs16OpenGL.slnx` (project: `cs16OpenGL/cs16OpenGL
 
 ### Requirements
 
-- **Visual Studio 2017 or newer** (any edition, including Community) with the
-  **"Desktop development with C++"** workload (MSVC toolset + Windows SDK).
-- You must use the **MSVC** compiler - the code contains `__asm` inline assembly
-  trampolines that only build with MSVC targeting **x86**.
+- **Visual Studio 2017 or newer** (any edition, including Community) with the **"Desktop development with C++"** workload (MSVC toolset + Windows SDK).
+- You must use the **MSVC** compiler - the code contains `__asm` inline assembly trampolines that only build with MSVC targeting **x86**.
 
 ### Steps
 
 1. Open `cs16OpenGL.slnx` in Visual Studio.
 2. Set the active configuration to **`Release`** and platform to **`x86` (Win32)**.
-   > CS 1.6 is a 32-bit process, and the inline assembly only compiles for x86.
-   > All project settings are stored under `Release | Win32`; selecting another
-   > configuration will show empty settings.
+   > CS 1.6 is a 32-bit process, and the inline assembly only compiles for x86. All project settings are stored under `Release | Win32`; selecting another configuration will show empty settings.
 3. **Build → Build Solution** (`Ctrl + Shift + B`). Output: `Release/opengl32.dll`.
 
 The project already has all required settings for `Release | Win32`:
@@ -57,23 +53,15 @@ The project already has all required settings for `Release | Win32`:
 ### Runtime Library note
 
 > [!IMPORTANT]
-> This project builds with **Multi-threaded DLL (`/MD`)** by default. The CRT is
-> linked dynamically, so the target machine must have the matching
-> **Microsoft Visual C++ Redistributable** installed (any machine with Visual
-> Studio already has it).
+> This project builds with **Multi-threaded DLL (`/MD`)** by default. The CRT is linked dynamically, so the target machine must have the matching **Microsoft Visual C++ Redistributable** installed (any machine with Visual Studio already has it).
 >
-> For a **self-contained** DLL with no redistributable dependency, switch to
-> **Multi-threaded (`/MT`)**: *Project Properties → C/C++ → Code Generation →
-> Runtime Library → `/MT`*. The DLL will be larger but runs on a clean Windows
-> machine.
+> For a **self-contained** DLL with no redistributable dependency, switch to **Multi-threaded (`/MT`)**: *Project Properties → C/C++ → Code Generation → Runtime Library → `/MT`*. The DLL will be larger but runs on a clean Windows machine.
 
 ---
 
 ## Build from scratch
 
-This section is for when you only have the **source files** and want to build by
-creating a fresh Visual Studio project from an empty project - instead of opening
-the provided `cs16OpenGL.slnx`. It documents the exact menus, dialogs, and options.
+This section is for when you only have the **source files** and want to build by creating a fresh Visual Studio project from an empty project - instead of opening the provided `cs16OpenGL.slnx`. It documents the exact menus, dialogs, and options.
 
 ---
 
@@ -85,9 +73,7 @@ the provided `cs16OpenGL.slnx`. It documents the exact menus, dialogs, and optio
 | Workload: **Desktop development with C++** | ❌ Visual C++ **Redistributable** alone (just runtime libs, no compiler) |
 
 1. Download **Visual Studio Community** from <https://visualstudio.microsoft.com/downloads/>.
-2. In the installer, on the **Workloads** screen, tick **"Desktop development with C++"**.
-   The defaults are fine - just make sure **"MSVC … build tools (x64/x86)"** and a
-   **Windows SDK** are checked.
+2. In the installer, on the **Workloads** screen, tick **"Desktop development with C++"**. The defaults are fine - just make sure **"MSVC … build tools (x64/x86)"** and a **Windows SDK** are checked.
 3. Install, then confirm you can launch **Visual Studio** (not VS Code).
 
 ---
@@ -117,8 +103,7 @@ In Visual Studio: **Create a new project**.
 
 > [!WARNING]
 > Do **not** pick these templates:
-> - ❌ **Dynamic-Link Library (DLL)** - generates its own `dllmain.cpp` that
->   collides with the `DllMain` already in `opengl32.cpp`.
+> - ❌ **Dynamic-Link Library (DLL)** - generates its own `dllmain.cpp` that collides with the `DllMain` already in `opengl32.cpp`.
 > - ❌ **Console App** - generates a `main()` you don't want.
 
 ---
@@ -126,8 +111,7 @@ In Visual Studio: **Create a new project**.
 ### 3. Add the source files
 
 1. In **Solution Explorer**, right-click the project → **Add → Existing Item…**
-2. Select all five files (`opengl32.cpp`, `OtherOGL.cpp`, `opengl32.h`,
-   `vars.h`, `opengl32.def`) → **Add**.
+2. Select all five files (`opengl32.cpp`, `OtherOGL.cpp`, `opengl32.h`, `vars.h`, `opengl32.def`) → **Add**.
 
 ---
 
@@ -141,19 +125,15 @@ On the top toolbar:
 > [!IMPORTANT]
 > The platform **must be x86 (32-bit)**:
 > - CS 1.6 is a 32-bit process.
-> - `OtherOGL.cpp` contains `__asm { jmp ... }` trampolines that MSVC only
->   compiles for x86. Building x64 fails with *"inline assembler not supported
->   on this target"*.
+> - `OtherOGL.cpp` contains `__asm { jmp ... }` trampolines that MSVC only compiles for x86. Building x64 fails with *"inline assembler not supported on this target"*.
 >
-> If you only see `x64`, open the dropdown → **Configuration Manager** →
-> Platform column → **New… → x86**.
+> If you only see `x64`, open the dropdown → **Configuration Manager** → Platform column → **New… → x86**.
 
 ---
 
 ### 5. Configure Project Properties
 
-Right-click the project → **Properties**. At the top-left set
-**Configuration: Release** and **Platform: Win32** before changing anything.
+Right-click the project → **Properties**. At the top-left set **Configuration: Release** and **Platform: Win32** before changing anything.
 
 #### 5.1 General
 
@@ -168,8 +148,7 @@ Right-click the project → **Properties**. At the top-left set
 |---------|-------|
 | **Character Set** | **Use Multi-Byte Character Set** |
 
-> The code calls ANSI Win32 APIs with `char*`. The default Unicode makes those
-> resolve to wide (`...W`) versions → many `cannot convert 'char*' to 'LPWSTR'` errors.
+> The code calls ANSI Win32 APIs with `char*`. The default Unicode makes those resolve to wide (`...W`) versions → many `cannot convert 'char*' to 'LPWSTR'` errors.
 
 #### 5.3 C/C++ → General
 
@@ -201,12 +180,7 @@ _CRT_SECURE_NO_WARNINGS
 | **Calling Convention** | **`__stdcall` (/Gz)** |
 
 > [!CAUTION]
-> This is the single most important setting. OpenGL functions are `__stdcall`, but
-> the wrapper's function-pointer typedefs don't specify a convention - they inherit
-> the project default. If the default is `__cdecl` (the VS default), every call
-> mismatches the real OpenGL → stack corruption → **game crashes on launch**.
-> Setting `/Gz` fixes this. Variadic functions like `sprintf` automatically stay
-> `__cdecl`, so this is safe.
+> This is the single most important setting. OpenGL functions are `__stdcall`, but the wrapper's function-pointer typedefs don't specify a convention - they inherit the project default. If the default is `__cdecl` (the VS default), every call mismatches the real OpenGL → stack corruption → **game crashes on launch**. Setting `/Gz` fixes this. Variadic functions like `sprintf` automatically stay `__cdecl`, so this is safe.
 
 #### 5.7 C/C++ → Code Generation
 
@@ -214,8 +188,7 @@ _CRT_SECURE_NO_WARNINGS
 |---------|-------|
 | **Runtime Library** | **Multi-threaded DLL (/MD)** or **Multi-threaded (/MT)** |
 
-> `/MD` = smaller DLL, requires the Visual C++ Redistributable on target.
-> `/MT` = larger, fully self-contained, no external dependency.
+> `/MD` = smaller DLL, requires the Visual C++ Redistributable on target. `/MT` = larger, fully self-contained, no external dependency.
 
 #### 5.8 Linker → Input
 
@@ -232,9 +205,7 @@ _CRT_SECURE_NO_WARNINGS
 |---------|-------|
 | **Entry Point** | **leave empty** |
 
-> Leaving it blank uses `_DllMainCRTStartup`, which initializes the CRT and then
-> calls `DllMain`. CRT must be initialized because the hack uses `fopen`, `sscanf`,
-> `sprintf`, etc.
+> Leaving it blank uses `_DllMainCRTStartup`, which initializes the CRT and then calls `DllMain`. CRT must be initialized because the hack uses `fopen`, `sscanf`, `sprintf`, etc.
 
 Click **OK**.
 
@@ -242,8 +213,7 @@ Click **OK**.
 
 ### 6. (Only if needed) remove `glaux`
 
-`glaux.h` no longer ships with the Windows SDK. In this repo the include is already
-commented out. If your copy still has it, comment these lines:
+`glaux.h` no longer ships with the Windows SDK. In this repo the include is already commented out. If your copy still has it, comment these lines:
 
 ```cpp
 //#include <gl/glaux.h>

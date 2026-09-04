@@ -1,10 +1,6 @@
 # cs16-opengl-research
 
-A study of a classic **OpenGL wrapper hack** for Counter-Strike 1.6 (GoldSrc engine),
-based on the discontinued *panzerGL 2.2* multi-mod. The hack ships as a fake
-`opengl32.dll` that the game loads instead of the real one, then intercepts OpenGL
-draw calls to implement wallhack, ESP, aimbot, radar, and a set of visual tweaks
-- all heavily expanded and modernized from the original.
+A study of a classic **OpenGL wrapper hack** for Counter-Strike 1.6 (GoldSrc engine), based on the discontinued *panzerGL 2.2* multi-mod. The hack ships as a fake `opengl32.dll` that the game loads instead of the real one, then intercepts OpenGL draw calls to implement wallhack, ESP, aimbot, radar, and a set of visual tweaks - all heavily expanded and modernized from the original.
 
 <div align="center">
   <img src="./demo.jpg" />
@@ -13,12 +9,7 @@ draw calls to implement wallhack, ESP, aimbot, radar, and a set of visual tweaks
 <video src="https://github.com/user-attachments/assets/13b489dc-080a-48f3-9f50-91764662208b" controls loop muted></video>
 
 > [!NOTE]
-> **This repository is for technical research and educational purposes only.**
-> The goal is to understand how render-layer game hacks work (DLL proxying,
-> OpenGL interception, depth-buffer manipulation, engine entity-list reading).
-> Do **not** use this on online/official servers. Using it against other players
-> violates game terms of service and is not VAC-safe. Test only against bots or
-> on a private/non-Steam server you control. Use at your own risk.
+> **This repository is for technical research and educational purposes only.** The goal is to understand how render-layer game hacks work (DLL proxying, OpenGL interception, depth-buffer manipulation, engine entity-list reading). Do **not** use this on online/official servers. Using it against other players violates game terms of service and is not VAC-safe. Test only against bots or on a private/non-Steam server you control. Use at your own risk.
 
 ---
 
@@ -42,27 +33,22 @@ draw calls to implement wallhack, ESP, aimbot, radar, and a set of visual tweaks
 ## How to use
 
 > [!IMPORTANT]
-> Your **Counter-Strike 1.6 client must be build 4554 or below**. Newer engine
-> builds broke the proxy-DLL technique (and added VAC protections).
+> Your **Counter-Strike 1.6 client must be build 4554 or below**. Newer engine builds broke the proxy-DLL technique (and added VAC protections).
 
 ### Installation
 
 1. [⬇️ Click here to download `cs16-opengl-hack.zip`](https://github.com/maitrungduc1410/cs16-opengl-research/releases/latest/download/cs16-opengl-hack.zip) or open the [release page](https://github.com/maitrungduc1410/cs16-opengl-research/releases/latest).
-2. Copy **both files** into your Counter-Strike 1.6 main directory
-   (the folder that contains `hl.exe` / `cstrike`):
+2. Copy **both files** into your Counter-Strike 1.6 main directory (the folder that contains `hl.exe` / `cstrike`):
    - `opengl32.dll` - the prebuilt hack
    - `oglconf.cfg` - default settings (cvars)
 3. Make sure the game is running in **OpenGL** video mode.
 4. Launch the game, then press `F12` to enable the hack.
 
 > [!TIP]
-> On most laptops (and Mac keyboards running Windows) F-keys require the `Fn`
-> modifier, e.g. `Fn + F12`. The `Insert` key may be mapped to `Fn + Enter`.
+> On most laptops (and Mac keyboards running Windows) F-keys require the `Fn` modifier, e.g. `Fn + F12`. The `Insert` key may be mapped to `Fn + Enter`.
 
 > [!NOTE]
-> If `F11` shows **"Could not load config file"** in red, `oglconf.cfg` is missing
-> from the game directory. Make sure it's next to `opengl32.dll` and that the
-> extension is not hidden (e.g. not `oglconf.cfg.txt`).
+> If `F11` shows **"Could not load config file"** in red, `oglconf.cfg` is missing from the game directory. Make sure it's next to `opengl32.dll` and that the extension is not hidden (e.g. not `oglconf.cfg.txt`).
 
 ---
 
@@ -78,16 +64,13 @@ draw calls to implement wallhack, ESP, aimbot, radar, and a set of visual tweaks
 | `F11` | Toggle the **debug screen** (config paths, resolution, team detection, no-recoil status) |
 | `F10` | **Reset config to defaults** - reloads `oglconf.cfg` and deletes `oglsave.cfg` |
 
-> Every change made in the menu is automatically saved to `oglsave.cfg` and
-> restored the next time the hack loads. `F10` wipes that file and brings
-> everything back to the shipped defaults.
+> Every change made in the menu is automatically saved to `oglsave.cfg` and restored the next time the hack loads. `F10` wipes that file and brings everything back to the shipped defaults.
 
 ---
 
 ### Hack menu options
 
-Open the menu with `Insert`. Use `↑`/`↓` to scroll, `←`/`→` to change a value.
-Sub-options (indented with `- `) are hidden until their parent feature is turned on.
+Open the menu with `Insert`. Use `↑`/`↓` to scroll, `←`/`→` to change a value. Sub-options (indented with `- `) are hidden until their parent feature is turned on.
 
 #### Aimbot
 
@@ -206,77 +189,55 @@ The ESP reads the engine's own entity list for real player names, origins, and t
 
 ### Why do I only see enemies when they get close on some servers?
 
-Because the wallhack can only reveal what the server actually **sends** to your
-client. The engine uses a **PVS (Potentially Visible Set)** table baked into each
-map: from your position, only players in potentially visible areas are transmitted.
-Enemies in non-visible areas are never sent - so the hack has nothing to draw.
+Because the wallhack can only reveal what the server actually **sends** to your client. The engine uses a **PVS (Potentially Visible Set)** table baked into each map: from your position, only players in potentially visible areas are transmitted. Enemies in non-visible areas are never sent - so the hack has nothing to draw.
 
-Servers running a recompiled `de_dust2` **without VIS data** transmit all players
-all the time, so you see everyone from anywhere. Properly compiled maps cull
-aggressively. This is a hard limit of the network layer, not a weakness of the hack.
+Servers running a recompiled `de_dust2` **without VIS data** transmit all players all the time, so you see everyone from anywhere. Properly compiled maps cull aggressively. This is a hard limit of the network layer, not a weakness of the hack.
 
 ### Why does it only work on build 4554?
 
-The engine struct offsets and function-table scanning are tuned for engine build
-4554 (the most common non-Steam build). Later builds changed those offsets and
-added protections. Earlier builds may also work but are untested.
+The engine struct offsets and function-table scanning are tuned for engine build 4554 (the most common non-Steam build). Later builds changed those offsets and added protections. Earlier builds may also work but are untested.
 
 ---
 
 ## Going deeper
 
-- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - detailed internals: how each feature
-  is implemented at the OpenGL / engine level.
-- **[BUILDING.md](./BUILDING.md)** - how to compile the DLL yourself, including
-  a step-by-step guide for creating the Visual Studio project from scratch.
+- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - detailed internals: how each feature is implemented at the OpenGL / engine level.
+- **[BUILDING.md](./BUILDING.md)** - how to compile the DLL yourself, including a step-by-step guide for creating the Visual Studio project from scratch.
 
 ---
 
 ## Credits
 
-- Original *panzerGL 2.2* multi-mod by **james34602**:
-  <https://github.com/james34602/panzerGL22>
+- Original *panzerGL 2.2* multi-mod by **james34602**: <https://github.com/james34602/panzerGL22>
 - Original aimbot & model recognition: *Kenbabutz* (oC Hack source).
 - Blank OpenGL wrapper: *Crusader* (Game-Deception).
 
-This repository is a research fork with a modern Visual Studio project, extensive
-new features, and documentation on how the hack is built and how it works.
+This repository is a research fork with a modern Visual Studio project, extensive new features, and documentation on how the hack is built and how it works.
 
 ---
 
 ## Hướng dẫn sử dụng (Vietnamese)
 
 > [!WARNING]
-> **Source code này chỉ dành cho mục đích nghiên cứu kỹ thuật và học tập.**
-> Mục tiêu là tìm hiểu cách các bản hack ở tầng đồ họa hoạt động (proxy DLL,
-> can thiệp OpenGL, xử lý depth-buffer, đọc danh sách entity của engine).
-> **Đừng** dùng trên server online / chính thức. Dùng để chống lại người chơi
-> khác là vi phạm điều khoản dịch vụ của game và **không** an toàn với VAC.
-> Chỉ test với bot hoặc trên server riêng / non-Steam mà bạn tự quản lý.
-> Tự chịu rủi ro khi sử dụng.
+> **Source code này chỉ dành cho mục đích nghiên cứu kỹ thuật và học tập.** Mục tiêu là tìm hiểu cách các bản hack ở tầng đồ họa hoạt động (proxy DLL, can thiệp OpenGL, xử lý depth-buffer, đọc danh sách entity của engine). **Đừng** dùng trên server online / chính thức. Dùng để chống lại người chơi khác là vi phạm điều khoản dịch vụ của game và **không** an toàn với VAC. Chỉ test với bot hoặc trên server riêng / non-Steam mà bạn tự quản lý. Tự chịu rủi ro khi sử dụng.
 
 > [!IMPORTANT]
-> Bản **Counter-Strike 1.6 của bạn phải là build 4554 trở về trước**. Các bản
-> engine mới hơn đã chặn kỹ thuật proxy-DLL (và thêm cơ chế chống VAC).
+> Bản **Counter-Strike 1.6 của bạn phải là build 4554 trở về trước**. Các bản engine mới hơn đã chặn kỹ thuật proxy-DLL (và thêm cơ chế chống VAC).
 
 ### Cài đặt
 
 1. [⬇️ Bấm vào đây để tải `cs16-opengl-hack.zip`](https://github.com/maitrungduc1410/cs16-opengl-research/releases/latest/download/cs16-opengl-hack.zip) hoặc mở [trang release](https://github.com/maitrungduc1410/cs16-opengl-research/releases/latest).
-2. Chép **cả hai file** vào thư mục gốc của Counter-Strike 1.6
-   (thư mục có chứa `hl.exe` / `cstrike`):
+2. Chép **cả hai file** vào thư mục gốc của Counter-Strike 1.6 (thư mục có chứa `hl.exe` / `cstrike`):
    - `opengl32.dll` - bản hack đã build sẵn
    - `oglconf.cfg` - cấu hình mặc định (cvars)
 3. Đảm bảo game đang chạy ở chế độ video **OpenGL**.
 4. Mở game, sau đó nhấn `F12` để bật hack.
 
 > [!TIP]
-> Trên đa số laptop (và bàn phím Mac chạy Windows), các phím F cần giữ thêm
-> phím `Fn`, ví dụ `Fn + F12`. Phím `Insert` có thể được map thành `Fn + Enter`.
+> Trên đa số laptop (và bàn phím Mac chạy Windows), các phím F cần giữ thêm phím `Fn`, ví dụ `Fn + F12`. Phím `Insert` có thể được map thành `Fn + Enter`.
 
 > [!NOTE]
-> Nếu `F11` hiện dòng **"Could not load config file"** màu đỏ, nghĩa là thiếu
-> file `oglconf.cfg` trong thư mục game. Hãy chắc chắn nó nằm cạnh `opengl32.dll`
-> và phần đuôi mở rộng không bị ẩn (không phải `oglconf.cfg.txt`).
+> Nếu `F11` hiện dòng **"Could not load config file"** màu đỏ, nghĩa là thiếu file `oglconf.cfg` trong thư mục game. Hãy chắc chắn nó nằm cạnh `opengl32.dll` và phần đuôi mở rộng không bị ẩn (không phải `oglconf.cfg.txt`).
 
 ### Phím điều khiển trong game
 
@@ -290,13 +251,11 @@ new features, and documentation on how the hack is built and how it works.
 | `F11` | Bật/tắt **màn hình debug** (đường dẫn cấu hình, độ phân giải, nhận diện team, trạng thái no-recoil) |
 | `F10` | **Khôi phục cấu hình mặc định** - nạp lại `oglconf.cfg` và xóa `oglsave.cfg` |
 
-> Mọi thay đổi trong menu được tự động lưu vào `oglsave.cfg` và khôi phục ở
-> lần mở hack tiếp theo. `F10` sẽ xóa file đó và đưa mọi thứ về mặc định ban đầu.
+> Mọi thay đổi trong menu được tự động lưu vào `oglsave.cfg` và khôi phục ở lần mở hack tiếp theo. `F10` sẽ xóa file đó và đưa mọi thứ về mặc định ban đầu.
 
 ### Các tùy chọn trong menu hack
 
-Mở menu bằng `Insert`. Dùng `↑`/`↓` để cuộn, `←`/`→` để đổi giá trị.
-Các tùy chọn con (thụt đầu dòng bằng `- `) chỉ hiện khi tính năng cha được bật.
+Mở menu bằng `Insert`. Dùng `↑`/`↓` để cuộn, `←`/`→` để đổi giá trị. Các tùy chọn con (thụt đầu dòng bằng `- `) chỉ hiện khi tính năng cha được bật.
 
 #### Aimbot (ngắm tự động)
 
