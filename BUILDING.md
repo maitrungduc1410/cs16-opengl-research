@@ -28,7 +28,7 @@ The Visual Studio solution is `cs16OpenGL.slnx` (project: `cs16OpenGL/cs16OpenGL
 
 - **Visual Studio 2017 or newer** (any edition, including Community) with the
   **"Desktop development with C++"** workload (MSVC toolset + Windows SDK).
-- You must use the **MSVC** compiler — the code contains `__asm` inline assembly
+- You must use the **MSVC** compiler - the code contains `__asm` inline assembly
   trampolines that only build with MSVC targeting **x86**.
 
 ### Steps
@@ -72,7 +72,7 @@ The project already has all required settings for `Release | Win32`:
 ## Build from scratch
 
 This section is for when you only have the **source files** and want to build by
-creating a fresh Visual Studio project from an empty project — instead of opening
+creating a fresh Visual Studio project from an empty project - instead of opening
 the provided `cs16OpenGL.slnx`. It documents the exact menus, dialogs, and options.
 
 ---
@@ -81,12 +81,12 @@ the provided `cs16OpenGL.slnx`. It documents the exact menus, dialogs, and optio
 
 | You need | You do NOT need |
 |----------|-----------------|
-| **Visual Studio** (the IDE) — Community edition is free | ❌ Visual Studio **Code** (different, lightweight editor) |
+| **Visual Studio** (the IDE) - Community edition is free | ❌ Visual Studio **Code** (different, lightweight editor) |
 | Workload: **Desktop development with C++** | ❌ Visual C++ **Redistributable** alone (just runtime libs, no compiler) |
 
 1. Download **Visual Studio Community** from <https://visualstudio.microsoft.com/downloads/>.
 2. In the installer, on the **Workloads** screen, tick **"Desktop development with C++"**.
-   The defaults are fine — just make sure **"MSVC … build tools (x64/x86)"** and a
+   The defaults are fine - just make sure **"MSVC … build tools (x64/x86)"** and a
    **Windows SDK** are checked.
 3. Install, then confirm you can launch **Visual Studio** (not VS Code).
 
@@ -96,11 +96,11 @@ the provided `cs16OpenGL.slnx`. It documents the exact menus, dialogs, and optio
 
 You need these files in one folder:
 
-- `opengl32.cpp` — main hack logic
-- `OtherOGL.cpp` — wrapper boilerplate (loads the real DLL, `__asm` trampolines)
-- `opengl32.h` — function typedefs
-- `vars.h` — global variables / cvars
-- `opengl32.def` — module definition file (re-exports every OpenGL function)
+- `opengl32.cpp` - main hack logic
+- `OtherOGL.cpp` - wrapper boilerplate (loads the real DLL, `__asm` trampolines)
+- `opengl32.h` - function typedefs
+- `vars.h` - global variables / cvars
+- `opengl32.def` - module definition file (re-exports every OpenGL function)
 
 > [!TIP]
 > In this repo they live in [`cs16OpenGL/`](./cs16OpenGL/).
@@ -117,9 +117,9 @@ In Visual Studio: **Create a new project**.
 
 > [!WARNING]
 > Do **not** pick these templates:
-> - ❌ **Dynamic-Link Library (DLL)** — generates its own `dllmain.cpp` that
+> - ❌ **Dynamic-Link Library (DLL)** - generates its own `dllmain.cpp` that
 >   collides with the `DllMain` already in `opengl32.cpp`.
-> - ❌ **Console App** — generates a `main()` you don't want.
+> - ❌ **Console App** - generates a `main()` you don't want.
 
 ---
 
@@ -202,7 +202,7 @@ _CRT_SECURE_NO_WARNINGS
 
 > [!CAUTION]
 > This is the single most important setting. OpenGL functions are `__stdcall`, but
-> the wrapper's function-pointer typedefs don't specify a convention — they inherit
+> the wrapper's function-pointer typedefs don't specify a convention - they inherit
 > the project default. If the default is `__cdecl` (the VS default), every call
 > mismatches the real OpenGL → stack corruption → **game crashes on launch**.
 > Setting `/Gz` fixes this. Variadic functions like `sprintf` automatically stay
@@ -224,7 +224,7 @@ _CRT_SECURE_NO_WARNINGS
 | **Module Definition File** | **`opengl32.def`** |
 | **Additional Dependencies** | `opengl32.lib;glu32.lib;gdi32.lib;user32.lib;winmm.lib` |
 
-> Do **not** add `glaux.lib` — it was removed from modern Windows SDKs.
+> Do **not** add `glaux.lib` - it was removed from modern Windows SDKs.
 
 #### 5.9 Linker → Advanced
 
@@ -265,12 +265,12 @@ Success looks like:
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `cannot convert 'char*' to 'LPWSTR'` (`C2664`) | Unicode character set | Step 5.2 — Multi-Byte |
+| `cannot convert 'char*' to 'LPWSTR'` (`C2664`) | Unicode character set | Step 5.2 - Multi-Byte |
 | `'sscanf'/'strcpy'/... unsafe` (`C4996`) | Deprecation warnings as errors | Step 5.4 + Step 5.3 |
-| `cannot convert 'const char[N]' to 'char*'` | Strict conformance | Step 5.5 — Conformance No |
-| `inline assembler not supported on this target` | Building x64 | Step 4 — switch to x86 |
-| `cannot open 'gl/glaux.h'` | glaux removed from SDK | Step 6 — comment the include |
-| **Builds OK but game crashes on launch** | Wrong calling convention | Step 5.6 — `__stdcall` (/Gz) |
+| `cannot convert 'const char[N]' to 'char*'` | Strict conformance | Step 5.5 - Conformance No |
+| `inline assembler not supported on this target` | Building x64 | Step 4 - switch to x86 |
+| `cannot open 'gl/glaux.h'` | glaux removed from SDK | Step 6 - comment the include |
+| **Builds OK but game crashes on launch** | Wrong calling convention | Step 5.6 - `__stdcall` (/Gz) |
 
 #### Install & run
 

@@ -4,7 +4,7 @@ A study of a classic **OpenGL wrapper hack** for Counter-Strike 1.6 (GoldSrc eng
 based on the discontinued *panzerGL 2.2* multi-mod. The hack ships as a fake
 `opengl32.dll` that the game loads instead of the real one, then intercepts OpenGL
 draw calls to implement wallhack, ESP, aimbot, radar, and a set of visual tweaks
-— all heavily expanded and modernized from the original.
+- all heavily expanded and modernized from the original.
 
 <div align="center">
   <img src="./demo.jpg" />
@@ -50,8 +50,8 @@ draw calls to implement wallhack, ESP, aimbot, radar, and a set of visual tweaks
 1. [⬇️ Click here to download `cs16-opengl-hack.zip`](https://github.com/maitrungduc1410/cs16-opengl-research/releases/latest/download/cs16-opengl-hack.zip) or open the [release page](https://github.com/maitrungduc1410/cs16-opengl-research/releases/latest).
 2. Copy **both files** into your Counter-Strike 1.6 main directory
    (the folder that contains `hl.exe` / `cstrike`):
-   - `opengl32.dll` — the prebuilt hack
-   - `oglconf.cfg` — default settings (cvars)
+   - `opengl32.dll` - the prebuilt hack
+   - `oglconf.cfg` - default settings (cvars)
 3. Make sure the game is running in **OpenGL** video mode.
 4. Launch the game, then press `F12` to enable the hack.
 
@@ -70,13 +70,13 @@ draw calls to implement wallhack, ESP, aimbot, radar, and a set of visual tweaks
 
 | Key | Action |
 |-----|--------|
-| `F12` | Master switch — turn the hack **on / off** |
+| `F12` | Master switch - turn the hack **on / off** |
 | `Insert` | Open / close the **hack menu** |
 | `↑` / `↓` | Navigate menu rows (hold for auto-repeat) |
 | `←` / `→` | Change the selected option's value or toggle it |
 | `↑` / `↓` / `←` / `→` | Move the active panel (when in move mode) |
 | `F11` | Toggle the **debug screen** (config paths, resolution, team detection, no-recoil status) |
-| `F10` | **Reset config to defaults** — reloads `oglconf.cfg` and deletes `oglsave.cfg` |
+| `F10` | **Reset config to defaults** - reloads `oglconf.cfg` and deletes `oglsave.cfg` |
 
 > Every change made in the menu is automatically saved to `oglsave.cfg` and
 > restored the next time the hack loads. `F10` wipes that file and brings
@@ -94,13 +94,13 @@ Sub-options (indented with `- `) are hidden until their parent feature is turned
 | Option | Description |
 |--------|-------------|
 | **Aimbot** | Enable auto-aim. Snaps the mouse toward the nearest enemy head within FOV. |
-| **- Aim smooth** | Smoothing strength (0 = instant snap, 1–10 = progressively slower follow). |
+| **- Aim smooth** | Smoothing strength (0 = instant snap, 1-10 = progressively slower follow). |
 | **- Target** | Which team to aim at (Terrorists / Counter-Terrorists). |
 | **- Shoot** | Auto-fire once aimed at a target. |
 | **- Aimthru** | Aim through walls. Off = depth-buffer visibility check required. |
 | **- FOV** | Screen-pixel radius around the crosshair to search for targets. |
 | **- Head dot** | Toggle a dot at the exact point the aimbot aims at (each target-team enemy). Turn it on to tune the two **Aim pt** values, then off to hide it. |
-| **- Aim pt stand** | Vertical aim offset from head center for a **standing** enemy (`-50..50`; 0 = center of head, +up / −down). |
+| **- Aim pt stand** | Vertical aim offset from head center for a **standing** enemy (`-50..50`; 0 = center of head, +up / -down). |
 | **- Aim pt duck** | Same, but for a **crouching** enemy. |
 | **- Aim mode** | When the aimbot assists: **Always** (on whenever Aimbot is enabled), **Hold** (only while the aim key is held), or **Toggle** (the aim key flips it on/off). Hold/Toggle is far more natural and lowers report risk. |
 | **- Aim key** | The activation key used by Hold / Toggle mode. Cycle through Mouse R / Mouse 4 / Mouse 5 / Mouse M / Shift / Ctrl / Alt / E / F / C / V / X. |
@@ -108,7 +108,7 @@ Sub-options (indented with `- `) are hidden until their parent feature is turned
 | **- Trigger delay** | Milliseconds to wait before firing (humanization). |
 | **Auto-fire** | Spam clicks while holding Mouse1 (auto-pistol / auto-knife). |
 | **- Auto-fire rate** | Milliseconds between injected clicks (lower = faster). |
-| **Bhop** | Auto bunnyhop — injects perfectly-timed jumps the instant you land, so you keep speed up to the engine's bhop cap. Requires jump bound to **SPACE**. |
+| **Bhop** | Auto bunnyhop - injects perfectly-timed jumps the instant you land, so you keep speed up to the engine's bhop cap. Requires jump bound to **SPACE**. |
 | **- Bhop hold** | **Always** (auto-hop whenever Bhop is on) or **Hold** (only while the bhop key is held). |
 | **- Bhop key** | The hold key used by Hold mode (same key list as Aim key; default Mouse 5). |
 
@@ -116,13 +116,13 @@ Sub-options (indented with `- `) are hidden until their parent feature is turned
 
 | Option | Description |
 |--------|-------------|
-| **Recoil** | Mouse-down compensation per shot (0 = off, 1–5 = strength). |
-| **No recoil** | Zeroes the engine's view-punch via a `V_CalcRefdef` detour — no screen kick. |
+| **Recoil** | Mouse-down compensation per shot (0 = off, 1-5 = strength). |
+| **No recoil** | Zeroes the engine's view-punch via a `V_CalcRefdef` detour - no screen kick. |
 | **Wallhack** | 0 = off · 1 = basic (depth test off) · 2 = additive glow · 3 = saturate blend. |
 | **No Sky** | Skip rendering the skybox. |
 | **No Flash** | Reduce flashbang white to near-zero alpha. |
 | **No Smoke** | Skip smoke-grenade geometry. |
-| **Lambert** | Force white on all player vertices (fullbright — stay visible in dark areas). |
+| **Lambert** | Force white on all player vertices (fullbright - stay visible in dark areas). |
 | **Crosshair** | Draw a custom static crosshair at the screen center. |
 
 #### ESP Engine
@@ -174,9 +174,9 @@ The ESP reads the engine's own entity list for real player names, origins, and t
 | Option | Description |
 |--------|-------------|
 | **Radar** | 2D mini-map built from the engine entity list. |
-| **- Move radar** | Enter move mode — arrow keys reposition the radar disc. |
+| **- Move radar** | Enter move mode - arrow keys reposition the radar disc. |
 | **- Dot shape** | 0 = circle · 1 = square. |
-| **- Size** | Disc radius in pre-scale units (30–150). |
+| **- Size** | Disc radius in pre-scale units (30-150). |
 | **- Zoom (units)** | World units that map to the disc edge (smaller = zoomed in). |
 | **- Rotate view** | Rotate the radar so local forward points up. |
 | **- Names** | Show a short player name next to each dot. |
@@ -209,7 +209,7 @@ The ESP reads the engine's own entity list for real player names, origins, and t
 Because the wallhack can only reveal what the server actually **sends** to your
 client. The engine uses a **PVS (Potentially Visible Set)** table baked into each
 map: from your position, only players in potentially visible areas are transmitted.
-Enemies in non-visible areas are never sent — so the hack has nothing to draw.
+Enemies in non-visible areas are never sent - so the hack has nothing to draw.
 
 Servers running a recompiled `de_dust2` **without VIS data** transmit all players
 all the time, so you see everyone from anywhere. Properly compiled maps cull
@@ -225,9 +225,9 @@ added protections. Earlier builds may also work but are untested.
 
 ## Going deeper
 
-- **[ARCHITECTURE.md](./ARCHITECTURE.md)** — detailed internals: how each feature
+- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - detailed internals: how each feature
   is implemented at the OpenGL / engine level.
-- **[BUILDING.md](./BUILDING.md)** — how to compile the DLL yourself, including
+- **[BUILDING.md](./BUILDING.md)** - how to compile the DLL yourself, including
   a step-by-step guide for creating the Visual Studio project from scratch.
 
 ---
@@ -264,8 +264,8 @@ new features, and documentation on how the hack is built and how it works.
 1. [⬇️ Bấm vào đây để tải `cs16-opengl-hack.zip`](https://github.com/maitrungduc1410/cs16-opengl-research/releases/latest/download/cs16-opengl-hack.zip) hoặc mở [trang release](https://github.com/maitrungduc1410/cs16-opengl-research/releases/latest).
 2. Chép **cả hai file** vào thư mục gốc của Counter-Strike 1.6
    (thư mục có chứa `hl.exe` / `cstrike`):
-   - `opengl32.dll` — bản hack đã build sẵn
-   - `oglconf.cfg` — cấu hình mặc định (cvars)
+   - `opengl32.dll` - bản hack đã build sẵn
+   - `oglconf.cfg` - cấu hình mặc định (cvars)
 3. Đảm bảo game đang chạy ở chế độ video **OpenGL**.
 4. Mở game, sau đó nhấn `F12` để bật hack.
 
@@ -282,13 +282,13 @@ new features, and documentation on how the hack is built and how it works.
 
 | Phím | Hành động |
 |------|-----------|
-| `F12` | Công tắc chính — **bật / tắt** toàn bộ hack |
+| `F12` | Công tắc chính - **bật / tắt** toàn bộ hack |
 | `Insert` | Mở / đóng **menu hack** |
 | `↑` / `↓` | Di chuyển giữa các dòng trong menu (giữ để lặp lại) |
 | `←` / `→` | Đổi giá trị hoặc bật/tắt tùy chọn đang chọn |
 | `↑` / `↓` / `←` / `→` | Di chuyển panel đang chọn (khi ở chế độ di chuyển) |
 | `F11` | Bật/tắt **màn hình debug** (đường dẫn cấu hình, độ phân giải, nhận diện team, trạng thái no-recoil) |
-| `F10` | **Khôi phục cấu hình mặc định** — nạp lại `oglconf.cfg` và xóa `oglsave.cfg` |
+| `F10` | **Khôi phục cấu hình mặc định** - nạp lại `oglconf.cfg` và xóa `oglsave.cfg` |
 
 > Mọi thay đổi trong menu được tự động lưu vào `oglsave.cfg` và khôi phục ở
 > lần mở hack tiếp theo. `F10` sẽ xóa file đó và đưa mọi thứ về mặc định ban đầu.
@@ -303,13 +303,13 @@ Các tùy chọn con (thụt đầu dòng bằng `- `) chỉ hiện khi tính n�
 | Tùy chọn | Mô tả |
 |----------|-------|
 | **Aimbot** | Bật ngắm tự động. Kéo chuột về phía đầu của kẻ địch gần nhất trong vùng FOV. |
-| **- Aim smooth** | Độ mượt khi kéo chuột (0 = giật tức thì, 1–10 = càng cao càng chậm/mượt). |
+| **- Aim smooth** | Độ mượt khi kéo chuột (0 = giật tức thì, 1-10 = càng cao càng chậm/mượt). |
 | **- Target** | Ngắm vào phe nào (Terrorists / Counter-Terrorists). |
 | **- Shoot** | Tự động bắn khi đã ngắm trúng mục tiêu. |
 | **- Aimthru** | Ngắm xuyên tường. Tắt = bắt buộc kiểm tra tầm nhìn bằng depth-buffer. |
 | **- FOV** | Bán kính tính bằng pixel quanh tâm ngắm để tìm mục tiêu. |
 | **- Head dot** | Bật/tắt một chấm tại đúng điểm aimbot sẽ ngắm tới. Bật lên để canh chỉnh hai giá trị **Aim pt**, xong thì tắt đi để ẩn. |
-| **- Aim pt stand** | Độ lệch ngắm theo chiều dọc so với tâm đầu khi địch **đứng** (`-50..50`; 0 = chính giữa đầu, + lên trên / − xuống dưới). |
+| **- Aim pt stand** | Độ lệch ngắm theo chiều dọc so với tâm đầu khi địch **đứng** (`-50..50`; 0 = chính giữa đầu, + lên trên / - xuống dưới). |
 | **- Aim pt duck** | Tương tự nhưng cho địch **ngồi**. |
 | **- Aim mode** | Khi nào aimbot hỗ trợ: **Always** (luôn bật khi Aimbot bật), **Hold** (chỉ khi giữ phím ngắm), hoặc **Toggle** (phím ngắm bật/tắt). Hold/Toggle tự nhiên hơn nhiều và giảm nguy cơ bị report. |
 | **- Aim key** | Phím kích hoạt cho chế độ Hold / Toggle. Lần lượt: Mouse R / Mouse 4 / Mouse 5 / Mouse M / Shift / Ctrl / Alt / E / F / C / V / X. |
@@ -317,7 +317,7 @@ Các tùy chọn con (thụt đầu dòng bằng `- `) chỉ hiện khi tính n�
 | **- Trigger delay** | Số mili-giây chờ trước khi bắn (giả lập phản xạ người thật). |
 | **Auto-fire** | Liên tục click khi giữ Mouse1 (auto cho súng lục / dao). |
 | **- Auto-fire rate** | Số mili-giây giữa mỗi lần click giả lập (càng nhỏ càng nhanh). |
-| **Bhop** | Auto bunnyhop — tự nhảy đúng thời điểm ngay khi tiếp đất để giữ tốc độ tới giới hạn bhop của engine. Cần gán phím nhảy là **SPACE**. |
+| **Bhop** | Auto bunnyhop - tự nhảy đúng thời điểm ngay khi tiếp đất để giữ tốc độ tới giới hạn bhop của engine. Cần gán phím nhảy là **SPACE**. |
 | **- Bhop hold** | **Always** (tự nhảy khi Bhop bật) hoặc **Hold** (chỉ khi giữ phím bhop). |
 | **- Bhop key** | Phím giữ dùng cho chế độ Hold (cùng danh sách phím với Aim key; mặc định Mouse 5). |
 
@@ -325,13 +325,13 @@ Các tùy chọn con (thụt đầu dòng bằng `- `) chỉ hiện khi tính n�
 
 | Tùy chọn | Mô tả |
 |----------|-------|
-| **Recoil** | Bù giật chuột xuống mỗi phát bắn (0 = tắt, 1–5 = độ mạnh). |
-| **No recoil** | Triệt tiêu độ giật góc nhìn của engine qua detour `V_CalcRefdef` — không nảy màn hình. |
+| **Recoil** | Bù giật chuột xuống mỗi phát bắn (0 = tắt, 1-5 = độ mạnh). |
+| **No recoil** | Triệt tiêu độ giật góc nhìn của engine qua detour `V_CalcRefdef` - không nảy màn hình. |
 | **Wallhack** | 0 = tắt · 1 = cơ bản (tắt depth test) · 2 = phát sáng cộng dồn · 3 = blend bão hòa. |
 | **No Sky** | Không vẽ bầu trời (skybox). |
 | **No Flash** | Giảm độ trắng của lựu đạn choáng xuống gần như vô hình. |
 | **No Smoke** | Không vẽ khói của lựu đạn khói. |
-| **Lambert** | Ép tất cả vertex của người chơi thành màu trắng (fullbright — vẫn thấy rõ trong chỗ tối). |
+| **Lambert** | Ép tất cả vertex của người chơi thành màu trắng (fullbright - vẫn thấy rõ trong chỗ tối). |
 | **Crosshair** | Vẽ một tâm ngắm tĩnh tùy chỉnh ở giữa màn hình. |
 
 #### ESP Engine
@@ -383,9 +383,9 @@ ESP đọc trực tiếp danh sách entity của engine để lấy tên thật,
 | Tùy chọn | Mô tả |
 |----------|-------|
 | **Radar** | Bản đồ thu nhỏ 2D dựng từ danh sách entity của engine. |
-| **- Move radar** | Vào chế độ di chuyển — dùng phím mũi tên để đặt lại vị trí đĩa radar. |
+| **- Move radar** | Vào chế độ di chuyển - dùng phím mũi tên để đặt lại vị trí đĩa radar. |
 | **- Dot shape** | 0 = hình tròn · 1 = hình vuông. |
-| **- Size** | Bán kính đĩa theo đơn vị trước khi scale (30–150). |
+| **- Size** | Bán kính đĩa theo đơn vị trước khi scale (30-150). |
 | **- Zoom (units)** | Số đơn vị thế giới ứng với mép đĩa (càng nhỏ càng zoom gần). |
 | **- Rotate view** | Xoay radar sao cho hướng trước của bạn luôn lên trên. |
 | **- Names** | Hiện tên rút gọn cạnh mỗi chấm. |
