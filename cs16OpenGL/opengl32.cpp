@@ -59,6 +59,15 @@ float curcolor[4];
 // cvar.aim_point is then added on top to let the user fine-tune the aim height.
 #define AIM_HEAD_CENTER 5.0f
 
+// No Flash: a flashbang is ONE opaque white onset followed by a long translucent
+// fade. We latch on the opaque onset, then keep suppressing the fullscreen fade
+// quads for this long after the last opaque frame so enemies stay visible for the
+// whole flash - not just its bright peak. Standalone translucent fullscreen fades
+// (kill / damage / respawn screens) never latch, so they render normally. Kept a
+// bit longer than a typical fade tail; the only cost of overshoot is a screen fade
+// in the next couple seconds being hidden, while you're recovering anyway.
+#define FLASH_FADE_WINDOW_MS 2500
+
 // hack-menu scrolling: keep the panel a fixed height (MENU_VIS_ROWS rows) and
 // scroll the list when there are more entries; arrows pick the row, the view
 // follows. Holding up/down auto-repeats after REP_DELAY, then every REP_RATE ms.
@@ -1349,6 +1358,7 @@ void DrawCheckText(int x,int y) // bad way of doing this
 #define ENG_VIS_CACHE_MS	40		// min ms between depth-visibility (glReadPixels) checks PER player. glReadPixels(GL_DEPTH_COMPONENT) forces a GPU pipeline sync, so testing every enemy every frame - and up to 3x/player for aimbot+triggerbot+ESP - made the stall count scale with BOTH framerate and enemy count (combat fps cliff). Visibility barely changes within 40ms, so we cache+share it. Time-based => fps-independent.
 #define ENG_DEATH_HOLD_MAX_MS	1200	// safety cap on the DeathMsg latch: normally we hold a corpse until EngDead/stale/respawn confirms it, but never longer than this so a missed confirmation can't hide a live player. Kept short because in deathmatch the engine may never report the death (instant respawn keeps the slot alive+streaming), so this cap, not a confirmation, ends the hold.
 #define ENG_RESPAWN_DIST		150.0f	// world units: an origin jump this large while latched means the player respawned (teleported to a spawn point), so release the latch immediately instead of waiting on the engine / safety cap. A corpse never moves this far.
+#define ENG_AIM_KILL_CD_MS		2500	// ms a just-killed slot is barred from being an aim/trigger target. Longer than the death-latch safety cap (ENG_DEATH_HOLD_MAX_MS) so it bridges the window where a corpse can re-stream after the latch releases; cleared early on a respawn teleport so fast deathmatch respawns are targetable again immediately.
 #define ES_MSGNUM			0x00C	// entity_state_t::messagenum (int) - set to the current parse msg# when an entity is in the received snapshot; lets us tell a live entity from a stale/freed cl_entity slot
 #define ES_ORIGIN			0x010	// entity_state_t::origin (vec3)
 #define ES_SCALE			0x040	// entity_state_t::scale (float) - studio model scale; "midget"/resize servers set this <1 to shrink a player (0 or 1 = normal size)
@@ -1788,7 +1798,14 @@ int __cdecl Hk_DeathMsg(const char *n,int s,void *b)
 		// Instant death signal for ESP + aimbot + triggerbot: the moment ANYONE
 		// dies, stamp the slot so the shared alive-gate drops them this same frame
 		// (no waiting on the laggy scoreboard byte or the 400ms staleness timer).
-		if(victim>0 && victim<=32) eng_dead_at[victim]=GetTickCount();
+		if(victim>0 && victim<=32)
+		{
+			eng_dead_at[victim]=GetTickCount();
+			// arm the aim/trigger cooldown too, so even if the corpse briefly
+			// re-streams after the death-latch safety cap releases, the aimbot
+			// won't snap back onto it instead of the live enemy beside it.
+			eng_kill_time[victim]=eng_dead_at[victim];
+		}
 	}
 	return um_org_death ? um_org_death(n,s,b) : 1;
 }
@@ -1856,7 +1873,11 @@ int __cdecl Hk_ScoreAttrib(const char *n,int s,void *b)
 		if(idx>=1 && idx<=32)
 		{
 			eng_msg_attrib[idx]=(char)flags;
-			if((flags&1) && eng_dead_at[idx]==0) eng_dead_at[idx]=GetTickCount();	// dead -> latch-hide
+			if((flags&1) && eng_dead_at[idx]==0)
+			{
+				eng_dead_at[idx]=GetTickCount();				// dead -> latch-hide
+				eng_kill_time[idx]=eng_dead_at[idx];			// + arm aim/trigger cooldown
+			}
 		}
 	}
 	return um_org_scoreatt ? um_org_scoreatt(n,s,b) : 1;
@@ -2453,11 +2474,20 @@ void DrawEngineEsp()
 			{ eng_dead_org[idx][0]=o[0]; eng_dead_org[idx][1]=o[1]; eng_dead_org[idx][2]=o[2]; eng_dead_org_set[idx]=true; }
 			float jx=o[0]-eng_dead_org[idx][0], jy=o[1]-eng_dead_org[idx][1], jz=o[2]-eng_dead_org[idx][2];
 			bool respawned=(jx*jx+jy*jy+jz*jz)>(ENG_RESPAWN_DIST*ENG_RESPAWN_DIST);
+			if(respawned) eng_kill_time[idx]=0;					// real respawn teleport -> lift the aim cooldown at once (deathmatch)
 			if(EngDead(idx) || stale || respawned || (now-eng_dead_at[idx])>ENG_DEATH_HOLD_MAX_MS)
 			{ eng_dead_at[idx]=0; eng_dead_org_set[idx]=false; }	// released; the normal gate below decides corpse(hide)/respawn(show)
 			else continue;					// still in the post-death gap -> stay hidden
 		}
 		if(EngDead(idx) || stale) continue;
+
+		// just-killed aim/trigger cooldown: eng_kill_time outlives the death latch,
+		// so a corpse that re-streams after the latch's safety cap releases is still
+		// barred from the crosshair here (the live enemy beside it gets picked
+		// instead). It expires on its own timer; a genuine respawn clears it early
+		// up in the latch's respawn-teleport branch above.
+		if(eng_kill_time[idx] && (now-eng_kill_time[idx])>ENG_AIM_KILL_CD_MS)
+			eng_kill_time[idx]=0;
 
 		// team color (shared by the radar dot and the on-screen ESP below).
 		// Three-tier team resolution, most-reliable first:
@@ -2504,7 +2534,10 @@ void DrawEngineEsp()
 
 		// engine-aim + triggerbot candidate checks (independent of ESP being on).
 		// Both target the side selected by cvar.target (mapped to engine team#).
-		if((need_aim || cvar.trigger) && team==want_team)
+		// eng_kill_time gates the WHOLE block (dot + aim pick + trigger): a corpse
+		// in its post-kill cooldown draws no aim dot and can't be locked/fired on,
+		// forcing the aimbot onto the live enemy standing next to it.
+		if((need_aim || cvar.trigger) && team==want_team && eng_kill_time[idx]==0)
 		{
 			int usehullA=ReadInt(ent+ENT_CURSTATE+ES_USEHULL);
 			// Head geometry from the player's REAL extent (see PlayerVExtent):
@@ -2543,6 +2576,27 @@ void DrawEngineEsp()
 			{
 				(*orig_glColor3f)(r,g,b);
 				FillCircle2D(ax, ay, 3.0f*ui_scale);
+
+				// --- TEMP DIAGNOSTIC (Head dot on) -----------------------------
+				// Print the raw size signals the engine reports for THIS player so
+				// we can see which one shrinks for a "lun"/midget model vs a normal
+				// one. Compare a short player against a full-size one and report:
+				//   uh = usehull (0 stand / 1 duck)
+				//   sc = entity_state.scale        (studio model scale; 0/1 = normal)
+				//   eb = entity_state maxs[2]-mins[2]  (server-streamed hull height)
+				//   mb = model_t   maxs[2]-mins[2]     (the model's own bbox height)
+				//    s = the ratio PlayerVExtent resolved (1.00 = fell back to hull)
+				float dsc =ReadFlt(ent+ENT_CURSTATE+ES_SCALE);
+				float dmin=ReadFlt(ent+ENT_CURSTATE+ES_MINS+8);
+				float dmax=ReadFlt(ent+ENT_CURSTATE+ES_MAXS+8);
+				DWORD dmdl=ReadDW(ent+ENT_MODEL);
+				float dmb =0.0f;
+				if(dmdl && IsReadable(dmdl+0x68,4))
+					dmb=ReadFlt(dmdl+0x60+8)-ReadFlt(dmdl+0x54+8);	// model_t maxs[2]-mins[2]
+				DrawText(ax+6.0f*ui_scale, ay-6.0f*ui_scale, 1.0f,1.0f,0.3f,
+					"uh%d sc%.2f eb%.0f mb%.0f s%.2f",
+					usehullA, dsc, dmax-dmin, dmb, sclA);
+				// --- END TEMP DIAGNOSTIC ---------------------------------------
 			}
 
 			// --- aimbot: nearest aim point to the crosshair within FOV ---
@@ -2977,15 +3031,15 @@ void sys_glBegin (GLenum mode)
 			float mx=flashcol[0];
 			if(flashcol[1]>mx) mx=flashcol[1];
 			if(flashcol[2]>mx) mx=flashcol[2];
-			// A genuine blinding flash -- white OR a modded/tinted one -- is drawn as
-			// a near-OPAQUE fullscreen overlay (high alpha). A kill-confirm / damage /
-			// respawn screen fade is the SAME bright untextured fullscreen quad but
-			// TRANSLUCENT (low alpha), so the old "bright + untextured + fullscreen"
-			// test misread it as a flash and popped "YOU HAVE BEEN FLASHED!" on every
-			// kill. Adding the alpha gate keeps real flashes (they're opaque) while
-			// letting these see-through fades render normally and stay silent.
-			bFlash=(mx>=0.5f) && (flashcol[3]>=0.60f) && !(*orig_glIsEnabled)(GL_TEXTURE_2D);
-			if(bFlash) flashVN=0;	// start buffering this (untextured) quad's vertices
+			// ARM on any bright untextured quad and remember its alpha; sys_glEnd
+			// then decides what to do. We deliberately DON'T gate arming on alpha
+			// here anymore: a real flashbang's fade TAIL is translucent (low alpha)
+			// yet must still be suppressed, otherwise it leaves a milky wash that
+			// hides enemy models for the rest of the flash even though the screen
+			// isn't fully white. The onset-vs-fade / flash-vs-killfade decision is
+			// made in sys_glEnd from flashArmA + the flash latch.
+			bFlash=(mx>=0.5f) && !(*orig_glIsEnabled)(GL_TEXTURE_2D);
+			if(bFlash){ flashVN=0; flashArmA=flashcol[3]; }	// start buffering this (untextured) quad's vertices
 		}
 		if(cvar.scope)
 		{
@@ -3178,8 +3232,26 @@ void sys_glEnd (void)
 				fullscreen=true;
 		}
 		if(fullscreen)
-			gotflashed=true;	// drop the overlay entirely + show the FLASHED text
-		else	// not a flash -> draw the buffered quad untouched
+		{
+			DWORD nowf=GetTickCount();
+			if(flashArmA>=0.60f)
+			{
+				// Opaque fullscreen overlay = a real flashbang onset/peak. Latch the
+				// time, drop the quad, and show the FLASHED text.
+				flash_latch_at=nowf;
+				gotflashed=true;
+			}
+			else if(flash_latch_at && (nowf-flash_latch_at)<FLASH_FADE_WINDOW_MS)
+			{
+				// Translucent fullscreen quad soon after an opaque flash frame = the
+				// fade TAIL of that same flash -> keep suppressing so enemies stay
+				// visible until the flash fully clears (don't re-show the FLASHED text
+				// for the tail; the onset already armed its 1s timer).
+			}
+			else	// standalone translucent fullscreen fade (kill/damage/respawn) -> draw it
+				for(int i=0;i<flashVN;i++) (*orig_glVertex2f)(flashVX[i],flashVY[i]);
+		}
+		else	// not fullscreen -> a bright HUD quad, draw it untouched
 			for(int i=0;i<flashVN;i++) (*orig_glVertex2f)(flashVX[i],flashVY[i]);
 		bFlash=false; flashVN=0;
 	}

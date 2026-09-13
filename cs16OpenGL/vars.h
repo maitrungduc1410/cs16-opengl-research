@@ -137,6 +137,8 @@ bool bFlash=false;	// flags . . .
 int   flashVN=0;	// number of buffered vertices for the current armed quad
 float flashVX[5];	// buffered vertex x (a quad is 4; 5th slot guards overflow)
 float flashVY[5];	// buffered vertex y
+float flashArmA=0.0f;	// alpha of the currently-armed quad (captured at glBegin); glEnd uses it to tell a flash ONSET (opaque) from its translucent fade TAIL
+DWORD flash_latch_at=0;	// GetTickCount() of the last OPAQUE fullscreen flash frame. A flashbang is one opaque onset followed by a long translucent fade; we latch on the onset then keep suppressing the low-alpha tail while inside the window, so enemies stay visible for the WHOLE flash instead of only its bright peak. Standalone translucent fades (kill/damage/respawn screens) never set this, so they render normally.
 bool bSmoke=false;
 bool bScope=false;
 bool bWall=false;
@@ -179,6 +181,7 @@ DWORD	eng_lastchange[33]={0};	// GetTickCount() when current_position last chang
 DWORD	eng_dead_at[33]={0};	// GetTickCount() when DeathMsg latched this slot dead (0=not latched). Hides ESP+aim instantly and KEEPS it hidden until EngDead/stale/respawn confirms, then is cleared to hand back to the normal gate (so a respawn re-shows).
 float	eng_dead_org[33][3]={0};// origin captured on the first latched (death) frame: the death spot, used to detect a respawn teleport so a fast respawn isn't held hidden to the safety cap
 bool	eng_dead_org_set[33]={false};// has eng_dead_org been captured for this latch yet?
+DWORD	eng_kill_time[33]={0};	// GetTickCount() when this slot was last KILLED (DeathMsg/ScoreAttrib). Outlives the eng_dead_at latch: it's an aim/trigger target cooldown so a corpse that briefly re-streams (after the death-latch safety cap releases) can't re-grab the crosshair while the enemy beside it is ignored. Expires on its own timer, or is cleared early by the death-latch's respawn-teleport detection so a fast (deathmatch) respawn is targetable again at once. 0 = no cooldown.
 
 // ---- own HUD: health / armor / ammo (via user-message hooks) ---------------
 // We patch the engine's "Health"/"Battery"/"CurWeapon" user-message handlers so
