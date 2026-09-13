@@ -1351,6 +1351,9 @@ void DrawCheckText(int x,int y) // bad way of doing this
 #define ENG_RESPAWN_DIST		150.0f	// world units: an origin jump this large while latched means the player respawned (teleported to a spawn point), so release the latch immediately instead of waiting on the engine / safety cap. A corpse never moves this far.
 #define ES_MSGNUM			0x00C	// entity_state_t::messagenum (int) - set to the current parse msg# when an entity is in the received snapshot; lets us tell a live entity from a stale/freed cl_entity slot
 #define ES_ORIGIN			0x010	// entity_state_t::origin (vec3)
+#define ES_SCALE			0x040	// entity_state_t::scale (float) - studio model scale; "midget"/resize servers set this <1 to shrink a player (0 or 1 = normal size)
+#define ES_MINS				0x07C	// entity_state_t::mins (vec3) - real per-entity hull min; reflects a resized (short) player when the server streams it
+#define ES_MAXS				0x088	// entity_state_t::maxs (vec3) - real per-entity hull max; maxs[2] is the true crown height for THIS player
 #define ES_USEHULL			0x0C8	// entity_state_t::usehull (0 stand, 1 duck)
 #define ES_ONGROUND			0x0D0	// entity_state_t::onground (-1 = airborne, else ground ent idx)
 
@@ -1397,6 +1400,52 @@ int   ReadInt  (DWORD a){ return IsReadable(a,4)?*(int*)a:0; }
 float ReadFlt  (DWORD a){ return IsReadable(a,4)?*(float*)a:0.0f; }
 short ReadShort(DWORD a){ return IsReadable(a,2)?*(short*)a:0; }
 BYTE  ReadByte (DWORD a){ return IsReadable(a,1)?*(BYTE*)a:0; }
+
+// Resolve a player's REAL vertical extent so short ("midget"/resize-server)
+// models aim/box correctly. The fixed pmove hull (72u standing / 36u ducking)
+// assumes a full-size player, so on a shrunk model the computed crown floats
+// far above the real head - that's the "dot sits above the head" bug. We try,
+// in order of trust:
+//   1) the per-entity box the server streams (entity_state.mins/maxs) - the
+//      ground truth for THIS player, whatever its size, and it auto-tracks any
+//      server's degree of shortness with zero tuning.
+//   2) the studio model scale (entity_state.scale) - used when the box isn't
+//      streamed but the server shrank the model via pev_scale.
+//   3) the standard hull constants - normal servers, i.e. today's behavior.
+// Returns crown (topZ) and feet (feetZ) in world Z plus 's' = real/nominal
+// height ratio, so callers can scale the head-center drop AND the user's world-
+// unit offsets and stay glued to the head at any size (s==1 => unchanged).
+static void PlayerVExtent(DWORD ent, float oz, int usehull,
+                          float *topZ, float *feetZ, float *s)
+{
+	float nomHalf = (usehull==1)?18.0f:36.0f;	// nominal pmove hull half-height
+	float nomZoff = (usehull==1)?6.0f :0.0f;
+	float nomH    = nomHalf*2.0f;				// 72 stand / 36 duck
+
+	float minz=ReadFlt(ent+ENT_CURSTATE+ES_MINS+8);	// mins[2]
+	float maxz=ReadFlt(ent+ENT_CURSTATE+ES_MAXS+8);	// maxs[2]
+	float boxH=maxz-minz;
+	if(boxH>=8.0f && boxH<=100.0f)				// sane per-player box streamed?
+	{
+		*topZ =oz+maxz;
+		*feetZ=oz+minz;
+		*s    =boxH/nomH;
+		return;
+	}
+
+	float sc=ReadFlt(ent+ENT_CURSTATE+ES_SCALE);	// studio model scale
+	if(sc>0.1f && sc<4.0f && (sc<0.95f || sc>1.05f))	// meaningfully non-1
+	{
+		*topZ =oz+( nomHalf+nomZoff)*sc;
+		*feetZ=oz+(-nomHalf+nomZoff)*sc;
+		*s    =sc;
+		return;
+	}
+
+	*topZ =oz+nomHalf+nomZoff;					// standard full-size hull
+	*feetZ=oz-nomHalf+nomZoff;
+	*s    =1.0f;
+}
 
 bool ModuleRange(const char *name,DWORD &base,DWORD &end)	// [base,end) via PE header
 {
@@ -2458,21 +2507,23 @@ void DrawEngineEsp()
 		if((need_aim || cvar.trigger) && team==want_team)
 		{
 			int usehullA=ReadInt(ent+ENT_CURSTATE+ES_USEHULL);
-			float halfhA=(usehullA==1)?18.0f:36.0f;
-			float zoffA =(usehullA==1)?6.0f :0.0f;
-			// Head geometry from the engine hull: XY = origin, top = origin + hull
-			// half-height, feet = origin - hull half-height.
+			// Head geometry from the player's REAL extent (see PlayerVExtent):
+			// XY = origin, top = crown, feet = feet. Short models report a lower
+			// crown, so the aim point follows the real head instead of floating
+			// above it. sclA = real/nominal height ratio (1.0 on normal servers).
 			float hxA=o[0], hyA=o[1];				// head XY
-			float topZ =o[2]+halfhA+zoffA;			// crown / hull top
-			float feetZ=o[2]-halfhA+zoffA;			// feet
+			float topZ, feetZ, sclA;
+			PlayerVExtent(ent, o[2], usehullA, &topZ, &feetZ, &sclA);
 			// Aim point: the CENTER of the head (the top sits a few units above the
 			// skull, so drop by AIM_HEAD_CENTER), plus the user's vertical offset.
 			// Standing and crouching are tuned SEPARATELY (world units, +=higher):
 			// the duck hull geometry doesn't line up with the stand one, so a single
-			// shared value can't sit on the head in both stances. Pick the offset for
-			// the current stance and apply it directly (no scaling).
+			// shared value can't sit on the head in both stances. Both the head-center
+			// drop and the user offset are scaled by sclA so the point stays on the
+			// head at any model size - a value tuned on full-size players shrinks
+			// proportionally for short ones (sclA==1 => identical to before).
 			int aimOff  = (usehullA==1) ? cvar.aim_point_duck : cvar.aim_point;
-			float aimz  = topZ - AIM_HEAD_CENTER + (float)aimOff;
+			float aimz  = topZ - AIM_HEAD_CENTER*sclA + (float)aimOff*sclA;
 			float aimA[3] ={hxA,hyA,aimz};
 			float headA[3]={hxA,hyA,topZ-2.0f};		// head top (triggerbot box)
 			float feetA[3]={hxA,hyA,feetZ};
@@ -2543,11 +2594,13 @@ void DrawEngineEsp()
 		if(cvar.esp_maxdist>0 && distM>(float)cvar.esp_maxdist) continue;
 
 		int usehull=ReadInt(ent+ENT_CURSTATE+ES_USEHULL);
-		float halfh=(usehull==1)?18.0f:36.0f;	// duck vs stand half-height (units)
-		float zoff =(usehull==1)?6.0f :0.0f;
+		// Real extent so the box wraps short/resized players (see PlayerVExtent).
+		float boxTop, boxFeet, boxScl;
+		PlayerVExtent(ent, o[2], usehull, &boxTop, &boxFeet, &boxScl);
+		(void)boxScl;							// box only needs top/feet, not the ratio
 
-		float feet[3]={o[0],o[1],o[2]-halfh+zoff};
-		float head[3]={o[0],o[1],o[2]+halfh+zoff};
+		float feet[3]={o[0],o[1],boxFeet};
+		float head[3]={o[0],o[1],boxTop};
 		float sfeet[3],shead[3];
 		bool on_feet = EngWorldToScreen(feet,sfeet);
 		bool on_head = EngWorldToScreen(head,shead);
