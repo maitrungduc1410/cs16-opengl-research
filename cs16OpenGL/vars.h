@@ -181,7 +181,9 @@ DWORD	eng_lastchange[33]={0};	// GetTickCount() when current_position last chang
 DWORD	eng_dead_at[33]={0};	// GetTickCount() when DeathMsg latched this slot dead (0=not latched). Hides ESP+aim instantly and KEEPS it hidden until EngDead/stale/respawn confirms, then is cleared to hand back to the normal gate (so a respawn re-shows).
 float	eng_dead_org[33][3]={0};// origin captured on the first latched (death) frame: the death spot, used to detect a respawn teleport so a fast respawn isn't held hidden to the safety cap
 bool	eng_dead_org_set[33]={false};// has eng_dead_org been captured for this latch yet?
-DWORD	eng_kill_time[33]={0};	// GetTickCount() when this slot was last KILLED (DeathMsg/ScoreAttrib). Outlives the eng_dead_at latch: it's an aim/trigger target cooldown so a corpse that briefly re-streams (after the death-latch safety cap releases) can't re-grab the crosshair while the enemy beside it is ignored. Expires on its own timer, or is cleared early by the death-latch's respawn-teleport detection so a fast (deathmatch) respawn is targetable again at once. 0 = no cooldown.
+DWORD	eng_kill_time[33]={0};	// GetTickCount() when this slot was last KILLED (DeathMsg/ScoreAttrib). Outlives the eng_dead_at latch: while set, the slot is fully hidden (name/box/radar/dot/aim/trigger) so a corpse that lingers/re-streams for several seconds after the death latch releases can't be seen or grabbed by the aimbot - a live enemy among several bodies stays easy to pick. Cleared only when the player RESPAWNS (origin teleport away from the death spot) or after a generous safety cap. 0 = alive/visible.
+float	eng_kill_org[33][3]={0};	// death spot captured (eagerly, paired with eng_dead_org at the moment of death) for the kill cooldown's respawn-teleport test. Persists past the death latch.
+bool	eng_kill_org_set[33]={false};// has eng_kill_org been captured for the current cooldown yet?
 
 // ---- own HUD: health / armor / ammo (via user-message hooks) ---------------
 // We patch the engine's "Health"/"Battery"/"CurWeapon" user-message handlers so

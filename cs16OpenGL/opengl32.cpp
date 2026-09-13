@@ -1358,7 +1358,7 @@ void DrawCheckText(int x,int y) // bad way of doing this
 #define ENG_VIS_CACHE_MS	40		// min ms between depth-visibility (glReadPixels) checks PER player. glReadPixels(GL_DEPTH_COMPONENT) forces a GPU pipeline sync, so testing every enemy every frame - and up to 3x/player for aimbot+triggerbot+ESP - made the stall count scale with BOTH framerate and enemy count (combat fps cliff). Visibility barely changes within 40ms, so we cache+share it. Time-based => fps-independent.
 #define ENG_DEATH_HOLD_MAX_MS	1200	// safety cap on the DeathMsg latch: normally we hold a corpse until EngDead/stale/respawn confirms it, but never longer than this so a missed confirmation can't hide a live player. Kept short because in deathmatch the engine may never report the death (instant respawn keeps the slot alive+streaming), so this cap, not a confirmation, ends the hold.
 #define ENG_RESPAWN_DIST		150.0f	// world units: an origin jump this large while latched means the player respawned (teleported to a spawn point), so release the latch immediately instead of waiting on the engine / safety cap. A corpse never moves this far.
-#define ENG_AIM_KILL_CD_MS		2500	// ms a just-killed slot is barred from being an aim/trigger target. Longer than the death-latch safety cap (ENG_DEATH_HOLD_MAX_MS) so it bridges the window where a corpse can re-stream after the latch releases; cleared early on a respawn teleport so fast deathmatch respawns are targetable again immediately.
+#define ENG_KILL_HIDE_CAP_MS	12000	// safety cap (ms) on the just-killed full-hide: normally a killed slot stays hidden until it RESPAWNS (origin teleport), which on round-based maps is the next round; this backstop just guarantees a slot can't be stuck hidden forever if we somehow never see the respawn teleport. Comfortably longer than how long a corpse keeps streaming (~5s), so the body has gone stale well before it lapses.
 #define ES_MSGNUM			0x00C	// entity_state_t::messagenum (int) - set to the current parse msg# when an entity is in the received snapshot; lets us tell a live entity from a stale/freed cl_entity slot
 #define ES_ORIGIN			0x010	// entity_state_t::origin (vec3)
 #define ES_SCALE			0x040	// entity_state_t::scale (float) - studio model scale; "midget"/resize servers set this <1 to shrink a player (0 or 1 = normal size)
@@ -1801,10 +1801,10 @@ int __cdecl Hk_DeathMsg(const char *n,int s,void *b)
 		if(victim>0 && victim<=32)
 		{
 			eng_dead_at[victim]=GetTickCount();
-			// arm the aim/trigger cooldown too, so even if the corpse briefly
-			// re-streams after the death-latch safety cap releases, the aimbot
-			// won't snap back onto it instead of the live enemy beside it.
-			eng_kill_time[victim]=eng_dead_at[victim];
+			// arm the full-hide kill cooldown too, so once the death latch releases
+			// the corpse stays gone (name/box/dot/aim) until the player respawns,
+			// instead of re-appearing and re-grabbing the aimbot off a live enemy.
+			eng_kill_time[victim]=eng_dead_at[victim]; eng_kill_org_set[victim]=false;
 		}
 	}
 	return um_org_death ? um_org_death(n,s,b) : 1;
@@ -1876,7 +1876,7 @@ int __cdecl Hk_ScoreAttrib(const char *n,int s,void *b)
 			if((flags&1) && eng_dead_at[idx]==0)
 			{
 				eng_dead_at[idx]=GetTickCount();				// dead -> latch-hide
-				eng_kill_time[idx]=eng_dead_at[idx];			// + arm aim/trigger cooldown
+				eng_kill_time[idx]=eng_dead_at[idx]; eng_kill_org_set[idx]=false;	// + arm full-hide kill cooldown
 			}
 		}
 	}
@@ -2471,23 +2471,41 @@ void DrawEngineEsp()
 		if(eng_dead_at[idx])
 		{
 			if(!eng_dead_org_set[idx])		// remember the death spot on the first latched frame
-			{ eng_dead_org[idx][0]=o[0]; eng_dead_org[idx][1]=o[1]; eng_dead_org[idx][2]=o[2]; eng_dead_org_set[idx]=true; }
+			{
+				eng_dead_org[idx][0]=o[0]; eng_dead_org[idx][1]=o[1]; eng_dead_org[idx][2]=o[2]; eng_dead_org_set[idx]=true;
+				// capture the same spot for the full-hide kill cooldown (eager, so its
+				// respawn-teleport test has a correct reference even after this latch releases)
+				eng_kill_org[idx][0]=o[0]; eng_kill_org[idx][1]=o[1]; eng_kill_org[idx][2]=o[2]; eng_kill_org_set[idx]=true;
+			}
 			float jx=o[0]-eng_dead_org[idx][0], jy=o[1]-eng_dead_org[idx][1], jz=o[2]-eng_dead_org[idx][2];
 			bool respawned=(jx*jx+jy*jy+jz*jz)>(ENG_RESPAWN_DIST*ENG_RESPAWN_DIST);
-			if(respawned) eng_kill_time[idx]=0;					// real respawn teleport -> lift the aim cooldown at once (deathmatch)
+			if(respawned) { eng_kill_time[idx]=0; eng_kill_org_set[idx]=false; }	// respawn teleport during the latch -> lift the hide at once
 			if(EngDead(idx) || stale || respawned || (now-eng_dead_at[idx])>ENG_DEATH_HOLD_MAX_MS)
 			{ eng_dead_at[idx]=0; eng_dead_org_set[idx]=false; }	// released; the normal gate below decides corpse(hide)/respawn(show)
 			else continue;					// still in the post-death gap -> stay hidden
 		}
 		if(EngDead(idx) || stale) continue;
 
-		// just-killed aim/trigger cooldown: eng_kill_time outlives the death latch,
-		// so a corpse that re-streams after the latch's safety cap releases is still
-		// barred from the crosshair here (the live enemy beside it gets picked
-		// instead). It expires on its own timer; a genuine respawn clears it early
-		// up in the latch's respawn-teleport branch above.
-		if(eng_kill_time[idx] && (now-eng_kill_time[idx])>ENG_AIM_KILL_CD_MS)
-			eng_kill_time[idx]=0;
+		// just-killed FULL HIDE: a killed slot stays completely hidden (name, box,
+		// radar, aim dot, aimbot, triggerbot) until the player RESPAWNS - detected as
+		// an origin teleport away from the captured death spot - or a generous safety
+		// cap lapses. This is what makes a corpse vanish for good so that, with several
+		// bodies piled up, the one live enemy is the only thing left to aim at. It's
+		// independent of the death latch above (which only hides briefly then hands
+		// back to the normal gate, letting a lingering corpse re-appear).
+		if(eng_kill_time[idx])
+		{
+			if(!eng_kill_org_set[idx])		// death seen out of PVS -> capture on first sighting
+			{ eng_kill_org[idx][0]=o[0]; eng_kill_org[idx][1]=o[1]; eng_kill_org[idx][2]=o[2]; eng_kill_org_set[idx]=true; }
+			else
+			{
+				float kx=o[0]-eng_kill_org[idx][0], ky=o[1]-eng_kill_org[idx][1], kz=o[2]-eng_kill_org[idx][2];
+				bool kteleport=(kx*kx+ky*ky+kz*kz)>(ENG_RESPAWN_DIST*ENG_RESPAWN_DIST);
+				if(kteleport || (now-eng_kill_time[idx])>ENG_KILL_HIDE_CAP_MS)
+				{ eng_kill_time[idx]=0; eng_kill_org_set[idx]=false; }
+			}
+			if(eng_kill_time[idx]) continue;	// still dead (not respawned) -> stay fully hidden
+		}
 
 		// team color (shared by the radar dot and the on-screen ESP below).
 		// Three-tier team resolution, most-reliable first:
@@ -2534,10 +2552,7 @@ void DrawEngineEsp()
 
 		// engine-aim + triggerbot candidate checks (independent of ESP being on).
 		// Both target the side selected by cvar.target (mapped to engine team#).
-		// eng_kill_time gates the WHOLE block (dot + aim pick + trigger): a corpse
-		// in its post-kill cooldown draws no aim dot and can't be locked/fired on,
-		// forcing the aimbot onto the live enemy standing next to it.
-		if((need_aim || cvar.trigger) && team==want_team && eng_kill_time[idx]==0)
+		if((need_aim || cvar.trigger) && team==want_team)
 		{
 			int usehullA=ReadInt(ent+ENT_CURSTATE+ES_USEHULL);
 			// Head geometry from the player's REAL extent (see PlayerVExtent):
