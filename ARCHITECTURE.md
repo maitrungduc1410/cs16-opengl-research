@@ -180,7 +180,7 @@ How it was meant to work: each slot's observer state lives in its `entity_state_
 
 ### Chams
 
-`sys_glShadeModel(GL_SMOOTH)` fires at the start of every player model. When `cvar.chams` is on:
+`sys_glShadeModel(GL_SMOOTH)` fires at the start of every player model. The extra `glGetFloatv` / tex toggle / `player.get` arming is **gated on `cvar.chams`** — when chams is off the hook is forward-only (the previous un-gated path charged every player vertex a `glEnable(TEXTURE_2D)` even with chams off). When `cvar.chams` is on:
 - **Solid chams:** `glColor3f(1, 0.15, 0.95)` (magenta) overrides the texture color in every `sys_glVertex3f` call during the model.
 - **Wireframe chams (`chams_wire`):** `glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)` draws only edges. Restored to `GL_FILL` in `sys_glPopMatrix`.
 
@@ -278,8 +278,8 @@ A per-section timing model (menu: **Perf monitor**, last toggle) that attributes
 - `DepthVis` - time+count of the `glReadPixels(GL_DEPTH_COMPONENT)` occlusion tests (a **subset** of `EngineEsp`; the GPU pipeline stall that scales with enemies).
 - `HUD` - own HP/ammo arcs (`DrawOwnHud`; subset of EngineEsp).
 - `Wall` / `Smoke` / `Flash` / `Scope` - extra work inside `sys_glBegin`/`sys_glEnd` for those features (the per-primitive `glGetFloatv` / state changes that run during the game's own render).
-- `Shade` - extra work in `sys_glShadeModel` (`glGetFloatv` + tex disable/enable on **every** shade-model change, even when chams is off).
-- `Vertex` - extra work on player-model `glVertex3f` (chams/lambert) + chams restore in `glPopMatrix`. World `glVertex3fv` is **counted**, not timed (QPC per vertex would dwarf the work).
+- `Shade` - extra work in `sys_glShadeModel` (`glGetFloatv` + tex disable/enable). **Gated on `cvar.chams`** — 0 when chams is off.
+- `Vertex` - extra work on player-model `glVertex3f` (chams color / lambert) + chams restore in `glPopMatrix`. 0 when both are off. World `glVertex3fv` is **counted**, not timed (QPC per vertex would dwarf the work).
 - `Viewport` - aim/trigger/key extra in `sys_glViewport`.
 - `Enable` - extra work in `sys_glEnable` (custom crosshair, flashed text).
 - `Game/other` - `Frame - Overlay - (Wall..Enable)`: the engine itself + proxy-DLL call tax + anything still unbracketed.

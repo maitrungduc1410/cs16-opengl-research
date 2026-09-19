@@ -3039,7 +3039,7 @@ void sys_glBegin (GLenum mode)
 	}
 	if (mode==GL_QUADS)
 	{
-		bSky=true;
+		if(cvar.sky) bSky=true;		// only latch when No Sky is on (feeds sys_glClear)
 		if(cvar.perf) g_perf_n_quad++;
 		if(cvar.smoke)
 		{
@@ -3119,8 +3119,12 @@ void sys_glBlendFunc (GLenum sfactor,  GLenum dfactor)
 
 void sys_glClear (GLbitfield mask)
 {
-	if ((mask==GL_DEPTH_BUFFER_BIT) && bSky)	// clear buffer if nosky is 1 otherwise sky is fucked
-	{											// also nescessary if u add e.g. asus wh
+	// Extra color+depth wipe is only for No Sky (otherwise the next sky-quad
+	// clear would leave a hole). Must NOT run when nosky is off: bSky is still
+	// latched on every GL_QUADS, and an unsolicited extra glClear is free GPU
+	// work the user never asked for.
+	if (cvar.sky && (mask==GL_DEPTH_BUFFER_BIT) && bSky)
+	{
 		(*orig_glClearColor)(0.0f, 0.0f, 0.0f, 0.0f);
 		mask = GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT;
 		(*orig_glClear)(mask);
@@ -3379,8 +3383,12 @@ void sys_glShadeModel (GLenum mode)
 {
 	(*orig_glShadeModel) (mode);
 
-	// This extra GetFloatv + tex disable/enable runs on EVERY shade-model change,
-	// even when chams is off. Timed as Shade so we can see that constant tax.
+	// Chams-only. The GetFloatv + tex disable/enable used to run on EVERY
+	// shade-model change even with chams off (~0.06 ms + it armed player.get,
+	// which then made sys_glVertex3f glEnable(TEXTURE_2D) on every player
+	// vertex — the Vertex 1-2 ms we measured). Forward-only when chams is off.
+	if(!cvar.chams) return;
+
 	LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
 	GLfloat color[4];
 	(*orig_glGetFloatv)(GL_CURRENT_COLOR, color);
@@ -3393,7 +3401,7 @@ void sys_glShadeModel (GLenum mode)
 	if ((mode==GL_SMOOTH) && !(player.get))
 	{
 		player.get=true;
-		if (cvar.chams && cvar.chams_wire)		// wireframe ("spider") chams; restored in glPopMatrix
+		if (cvar.chams_wire)					// wireframe ("spider") chams; restored in glPopMatrix
 		{
 			(*orig_glPolygonMode)(GL_FRONT_AND_BACK, GL_LINE);
 			(*orig_glLineWidth)(1.0f);
@@ -3461,22 +3469,17 @@ void sys_glVertex2f (GLfloat x,  GLfloat y)
 void sys_glVertex3f (GLfloat x,  GLfloat y,  GLfloat z)
 {
 	if(cvar.perf) g_perf_n_v3f++;
-	// Only time the extra GL work (chams/lambert). QPC on every vertex would
-	// cost more than the work itself - the volume is in the call counter.
-	if (player.get)								// inside a player model (set by sys_glShadeModel)
+	// player.get is only armed when chams is on (see sys_glShadeModel). The old
+	// else-branch glEnable(TEXTURE_2D) on every player vertex with chams OFF
+	// was the Vertex 1-2 ms tax; it is gone. Lambert is its own cvar.
+	if (player.get && cvar.chams)				// flat silhouette / colored wireframe model
 	{
 		LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
-		if (cvar.chams)							// flat silhouette / colored wireframe model
-		{
-			(*orig_glDisable)(GL_TEXTURE_2D);
-			(*orig_glColor3f)(1.0f, 0.15f, 0.95f);	// chams color (magenta, easy to spot)
-		}
-		else
-			(*orig_glEnable)(GL_TEXTURE_2D);
+		(*orig_glDisable)(GL_TEXTURE_2D);
+		(*orig_glColor3f)(1.0f, 0.15f, 0.95f);	// chams color (magenta, easy to spot)
 		if(cvar.perf) PerfAccAdd(&g_perf_acc_vertex,t0);
 	}
-
-	if (cvar.lambert && !(player.get && cvar.chams))	// chams color overrides lambert on models
+	else if (cvar.lambert)						// fullbright world; chams color wins on models
 	{
 		LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
 		glColor3f(1.0f, 1.0f, 1.0f);
@@ -3823,6 +3826,8 @@ void UpdateBhop()
 		want = (cvar.bhop_hold==0) ||									// Always
 		       ((GetAsyncKeyState(KeyTableVK(cvar.bhop_key))&0x8000)!=0);	// Hold key
 	g_bhop_want=want;	// expose for the debug readout
+
+	if(!want && !g_bhop_down) return;	// bhop off and SPACE not held by us -> nothing to do
 
 	BYTE sc=(BYTE)MapVirtualKey(VK_SPACE,MAPVK_VK_TO_VSC);	// SPACE hardware scan code (0x39)
 
