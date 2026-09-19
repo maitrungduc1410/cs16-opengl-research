@@ -2591,27 +2591,6 @@ void DrawEngineEsp()
 			{
 				(*orig_glColor3f)(r,g,b);
 				FillCircle2D(ax, ay, 3.0f*ui_scale);
-
-				// --- TEMP DIAGNOSTIC (Head dot on) -----------------------------
-				// Print the raw size signals the engine reports for THIS player so
-				// we can see which one shrinks for a "lun"/midget model vs a normal
-				// one. Compare a short player against a full-size one and report:
-				//   uh = usehull (0 stand / 1 duck)
-				//   sc = entity_state.scale        (studio model scale; 0/1 = normal)
-				//   eb = entity_state maxs[2]-mins[2]  (server-streamed hull height)
-				//   mb = model_t   maxs[2]-mins[2]     (the model's own bbox height)
-				//    s = the ratio PlayerVExtent resolved (1.00 = fell back to hull)
-				float dsc =ReadFlt(ent+ENT_CURSTATE+ES_SCALE);
-				float dmin=ReadFlt(ent+ENT_CURSTATE+ES_MINS+8);
-				float dmax=ReadFlt(ent+ENT_CURSTATE+ES_MAXS+8);
-				DWORD dmdl=ReadDW(ent+ENT_MODEL);
-				float dmb =0.0f;
-				if(dmdl && IsReadable(dmdl+0x68,4))
-					dmb=ReadFlt(dmdl+0x60+8)-ReadFlt(dmdl+0x54+8);	// model_t maxs[2]-mins[2]
-				DrawText(ax+6.0f*ui_scale, ay-6.0f*ui_scale, 1.0f,1.0f,0.3f,
-					"uh%d sc%.2f eb%.0f mb%.0f s%.2f",
-					usehullA, dsc, dmax-dmin, dmb, sclA);
-				// --- END TEMP DIAGNOSTIC ---------------------------------------
 			}
 
 			// --- aimbot: nearest aim point to the crosshair within FOV ---
