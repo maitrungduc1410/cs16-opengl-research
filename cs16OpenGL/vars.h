@@ -314,21 +314,59 @@ typedef struct {
 	DWORD	peak_when;		// GetTickCount() of that worst frame (for "N s ago")
 } perf_t;
 
-// Row indices. Frame = the whole frame (=> FPS). Overlay = all of our swap-time
-// drawing. EngineEsp = the per-player ESP + aimbot/trigger scan. DepthVis = the
-// glReadPixels occlusion stalls (a subset of EngineEsp). HUD = own HP/ammo arcs.
-enum { PERF_FRAME=0, PERF_OVERLAY, PERF_ESP, PERF_VIS, PERF_HUD, PERF_COUNT };
+// Row indices. Frame / Overlay / EngineEsp / DepthVis / HUD are swap-time or
+// their subsets. Wall / Smoke / Flash / Scope / Shade / Vertex / Viewport /
+// Enable are EXTRA work inside the immediate-mode GL hooks that run during the
+// game's own render (the previously unmeasured part of Frame). Game/other is
+// Frame minus Overlay minus those hook extras: the engine itself + proxy tax
+// + anything we still don't bracket.
+enum {
+	PERF_FRAME=0, PERF_OVERLAY, PERF_ESP, PERF_VIS, PERF_HUD,
+	PERF_WALL, PERF_SMOKE, PERF_FLASH, PERF_SCOPE,
+	PERF_SHADE, PERF_VERTEX, PERF_VIEWPORT, PERF_ENABLE,
+	PERF_OTHER, PERF_COUNT
+};
 perf_t	g_perf[PERF_COUNT]={
-	{"Frame",     0,0,0,0,0},
-	{"Overlay",   0,0,0,0,0},
-	{"EngineEsp", 0,0,0,0,0},
-	{"DepthVis",  0,0,0,0,0},
-	{"HUD",       0,0,0,0,0},
+	{"Frame",      0,0,0,0,0},
+	{"Overlay",    0,0,0,0,0},
+	{"EngineEsp",  0,0,0,0,0},
+	{"DepthVis",   0,0,0,0,0},
+	{"HUD",        0,0,0,0,0},
+	{"Wall",       0,0,0,0,0},
+	{"Smoke",      0,0,0,0,0},
+	{"Flash",      0,0,0,0,0},
+	{"Scope",      0,0,0,0,0},
+	{"Shade",      0,0,0,0,0},
+	{"Vertex",     0,0,0,0,0},
+	{"Viewport",   0,0,0,0,0},
+	{"Enable",     0,0,0,0,0},
+	{"Game/other", 0,0,0,0,0},
 };
 int		g_perf_players	=0;		// players processed this frame (context snapshot source)
 int		g_perf_reads	=0;		// glReadPixels issued this frame (DepthVis count + context)
-double	g_perf_acc_vis	=0.0;	// accumulated glReadPixels time this frame (ms)
-double	g_perf_acc_hud	=0.0;	// accumulated own-HUD draw time this frame (ms)
+double	g_perf_acc_vis		=0.0;	// accumulated glReadPixels time this frame (ms)
+double	g_perf_acc_hud		=0.0;	// accumulated own-HUD draw time this frame (ms)
+double	g_perf_acc_wall		=0.0;	// wallhack extra (glBegin depth/blend + pop restore)
+double	g_perf_acc_smoke	=0.0;	// anti-smoke extra (glGetFloatv detect on GL_QUADS)
+double	g_perf_acc_flash	=0.0;	// anti-flash extra (detect + buffer + sys_glEnd decide)
+double	g_perf_acc_scope	=0.0;	// scope-remove extra (glGetFloatv on GL_QUADS)
+double	g_perf_acc_shade	=0.0;	// sys_glShadeModel extra (ALWAYS GetFloatv+tex toggle)
+double	g_perf_acc_vertex	=0.0;	// chams/lambert extra on glVertex3f + chams pop restore
+double	g_perf_acc_viewport	=0.0;	// aim/trigger/key extra in sys_glViewport
+double	g_perf_acc_enable	=0.0;	// sys_glEnable extra (crosshair, flashed text)
+// Per-frame call volume (so a 2ms Smoke row can be read as "N GetFloatv on M quads").
+// Snapshot of the worst Frame is frozen in g_perf_calls_peak.
+int		g_perf_n_begin	=0;		// sys_glBegin calls
+int		g_perf_n_quad	=0;		// of those, mode==GL_QUADS (smoke/flash/scope sit here)
+int		g_perf_n_getf	=0;		// orig_glGetFloatv we issued (the per-primitive suspect)
+int		g_perf_n_shade	=0;		// sys_glShadeModel extra passes
+int		g_perf_n_v3f	=0;		// sys_glVertex3f
+int		g_perf_n_v3fv	=0;		// sys_glVertex3fv
+int		g_perf_n_vp		=0;		// sys_glViewport
+int		g_perf_n_smokekill=0;	// vertices dropped by anti-smoke
+typedef struct { int begin,quad,getf,shade,v3f,v3fv,vp,smokekill; } perf_calls_t;
+perf_calls_t	g_perf_calls		={0,0,0,0,0,0,0,0};	// this frame (copied at commit)
+perf_calls_t	g_perf_calls_peak	={0,0,0,0,0,0,0,0};	// frozen on the worst Frame
 LARGE_INTEGER	g_qpc_freq		={0};	// QueryPerformanceFrequency (ticks/sec), lazily filled
 LARGE_INTEGER	g_perf_last_swap={0};	// QPC at the previous swap (for full frame time)
 bool	g_perf_have_last	=false;	// false until the first swap gives us a baseline

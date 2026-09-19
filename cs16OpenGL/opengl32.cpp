@@ -1238,7 +1238,7 @@ void DrawCheckText(int x,int y) // bad way of doing this
 	// dark translucent panel behind the F11 check screen for readability
 	{
 		float padL=10.0f*ui_scale, padT=14.0f*ui_scale;	// more top room so text isn't flush
-		float pl=(float)x-padL, pt=(float)y-padT, pr=(float)x+540.0f*ui_scale, pb=(float)y+check_h+padL;
+		float pl=(float)x-padL, pt=(float)y-padT, pr=(float)x+600.0f*ui_scale, pb=(float)y+check_h+padL;
 		float rad=8.0f*ui_scale;						// soft rounded corners
 		(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
 		(*orig_glDisable)(GL_TEXTURE_2D);
@@ -1303,7 +1303,7 @@ void DrawCheckText(int x,int y) // bad way of doing this
 		DrawText(x,y,1.0f,1.0f,1.0f,"FPS now %.0f   worst %.0f   (@ %d players, %d depth-reads)",
 			fps_now,fps_low,pf->peak_players,pf->peak_reads);
 		y=y+(int)(13*ui_scale);
-		DrawText(x,y,0.7f,0.7f,1.0f,"section      last     worst    context (players, reads, ago)");
+		DrawText(x,y,0.7f,0.7f,1.0f,"section       last     worst    context (players, reads, ago)");
 		y=y+(int)(13*ui_scale);
 		DWORD now=GetTickCount();
 		for(int i=0;i<PERF_COUNT;i++)
@@ -1313,11 +1313,26 @@ void DrawCheckText(int x,int y) // bad way of doing this
 			if(p->peak_ms>=8.0){ rr=1.0f; gg=0.4f; bb=0.4f; }		// >=8ms = red (hitch)
 			else if(p->peak_ms>=3.0){ rr=1.0f; gg=0.85f; bb=0.4f; }	// >=3ms = amber
 			double ago=(p->peak_when!=0)?(double)(now-p->peak_when)/1000.0:0.0;
-			DrawText(x,y,rr,gg,bb,"%-10s %6.2fms %6.2fms   (%d, %d, %.0fs ago)",
+			DrawText(x,y,rr,gg,bb,"%-11s %6.2fms %6.2fms   (%d, %d, %.0fs ago)",
 				p->name,p->last_ms,p->peak_ms,p->peak_players,p->peak_reads,ago);
 			y=y+(int)(12*ui_scale);
 		}
-		DrawText(x,y,0.6f,0.6f,0.8f,"DepthVis = glReadPixels GPU stalls (part of EngineEsp). Frame-Overlay = game + chams/wall.");
+		y=y+(int)(4*ui_scale);
+		DrawText(x,y,0.7f,0.85f,1.0f,"calls last: begin=%d quad=%d getf=%d shade=%d",
+			g_perf_calls.begin,g_perf_calls.quad,g_perf_calls.getf,g_perf_calls.shade);
+		y=y+(int)(12*ui_scale);
+		DrawText(x,y,0.7f,0.85f,1.0f,"            v3f=%d v3fv=%d vp=%d smokeDrop=%d",
+			g_perf_calls.v3f,g_perf_calls.v3fv,g_perf_calls.vp,g_perf_calls.smokekill);
+		y=y+(int)(12*ui_scale);
+		DrawText(x,y,0.55f,0.55f,0.75f,"calls @worst Frame: begin=%d quad=%d getf=%d shade=%d v3fv=%d",
+			g_perf_calls_peak.begin,g_perf_calls_peak.quad,g_perf_calls_peak.getf,
+			g_perf_calls_peak.shade,g_perf_calls_peak.v3fv);
+		y=y+(int)(12*ui_scale);
+		DrawText(x,y,0.55f,0.55f,0.75f,"Wall..Enable = extra work in GL hooks during the game render.");
+		y=y+(int)(12*ui_scale);
+		DrawText(x,y,0.55f,0.55f,0.75f,"Game/other = Frame - Overlay - those hooks (engine + proxy tax).");
+		y=y+(int)(12*ui_scale);
+		DrawText(x,y,0.55f,0.55f,0.75f,"DepthVis/HUD sit inside EngineEsp; EngineEsp sits inside Overlay.");
 		y=y+(int)(13*ui_scale);
 	}
 
@@ -2185,6 +2200,25 @@ static double PerfMs(LARGE_INTEGER a,LARGE_INTEGER b)
 	if(g_qpc_freq.QuadPart==0) return 0.0;
 	return (double)(b.QuadPart-a.QuadPart)*1000.0/(double)g_qpc_freq.QuadPart;
 }
+// Add elapsed-since-`a` onto a per-frame accumulator. Used for the hot GL hooks
+// that fire many times per frame (we only bracket the EXTRA work, never the
+// orig_* call, and we never QPC every vertex - that would dwarf the work).
+static void PerfAccAdd(double *acc, LARGE_INTEGER a)
+{
+	if(g_qpc_freq.QuadPart==0) QueryPerformanceFrequency(&g_qpc_freq);
+	LARGE_INTEGER b; QueryPerformanceCounter(&b);
+	*acc += PerfMs(a,b);
+}
+static void PerfResetAcc()
+{
+	g_perf_acc_vis=0.0; g_perf_acc_hud=0.0;
+	g_perf_acc_wall=0.0; g_perf_acc_smoke=0.0; g_perf_acc_flash=0.0;
+	g_perf_acc_scope=0.0; g_perf_acc_shade=0.0; g_perf_acc_vertex=0.0;
+	g_perf_acc_viewport=0.0; g_perf_acc_enable=0.0;
+	g_perf_reads=0;
+	g_perf_n_begin=0; g_perf_n_quad=0; g_perf_n_getf=0; g_perf_n_shade=0;
+	g_perf_n_v3f=0; g_perf_n_v3fv=0; g_perf_n_vp=0; g_perf_n_smokekill=0;
+}
 // Record a section's frame time: update last_ms, and if it's a new worst, freeze
 // the context (players/reads) so the peak always carries the situation that caused it.
 static void PerfCommit(int id,double ms)
@@ -2209,6 +2243,7 @@ static void PerfResetPeaks()
 		g_perf[i].peak_ms=0.0; g_perf[i].peak_players=0;
 		g_perf[i].peak_reads=0; g_perf[i].peak_when=0;
 	}
+	memset(&g_perf_calls_peak,0,sizeof(g_perf_calls_peak));
 }
 
 // Depth-buffer visibility test for a 3D world point. Returns true if the point
@@ -2976,40 +3011,54 @@ void sys_glBegin (GLenum mode)
 
 	if ((cvar.wall==1) && (bWall) && (mode==GL_TRIANGLE_FAN || mode==GL_TRIANGLE_STRIP))
 	{
+		LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
 		(*orig_glDisable)(GL_DEPTH_TEST);
+		if(cvar.perf) PerfAccAdd(&g_perf_acc_wall,t0);
 	}
 	else if((cvar.wall==2) && (bWall))
 	{
+		LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
 		(*orig_glGetFloatv)(GL_CURRENT_COLOR, curcolor);
+		if(cvar.perf) g_perf_n_getf++;
 		(*orig_glDisable)(GL_DEPTH_TEST);
 		(*orig_glEnable)(GL_BLEND);
 		(*orig_glBlendFunc)(GL_SRC_ALPHA, GL_ONE);
 		(*orig_glColor4f)(curcolor[0], curcolor[1], curcolor[2], 255.0);
+		if(cvar.perf) PerfAccAdd(&g_perf_acc_wall,t0);
 	}
 	else if((cvar.wall==3) && (bWall))
 	{
+		LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
 		(*orig_glGetFloatv)(GL_CURRENT_COLOR, curcolor);
+		if(cvar.perf) g_perf_n_getf++;
 		(*orig_glDisable)(GL_DEPTH_TEST);
 		(*orig_glEnable)(GL_BLEND);
 		(*orig_glBlendFunc)(GL_SRC_ALPHA, GL_SRC_ALPHA_SATURATE);
 		(*orig_glColor4f)(curcolor[0], curcolor[1], curcolor[2], 1.0);
+		if(cvar.perf) PerfAccAdd(&g_perf_acc_wall,t0);
 	}
 	if (mode==GL_QUADS)
 	{
 		bSky=true;
+		if(cvar.perf) g_perf_n_quad++;
 		if(cvar.smoke)
 		{
+			LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
 			GLfloat smokecol[4];
 			(*orig_glGetFloatv)(GL_CURRENT_COLOR, smokecol);
+			if(cvar.perf) g_perf_n_getf++;
 			if((smokecol[0]==smokecol[1]) && (smokecol[0]==smokecol[2]) && (smokecol[0]!=0.0) && (smokecol[0]!=1.0))
 				bSmoke=true;
 			else 
 				bSmoke=false;
+			if(cvar.perf) PerfAccAdd(&g_perf_acc_smoke,t0);
 		}
 		if(cvar.flash)
 		{
+			LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
 			GLfloat flashcol[4];
 			(*orig_glGetFloatv)(GL_CURRENT_COLOR, flashcol);
+			if(cvar.perf) g_perf_n_getf++;
 			// The stock flashbang is a pure-white fullscreen quad, but modded
 			// servers tint it (pink/green/random each round), so requiring exact
 			// white missed those entirely. A flash is really just a BRIGHT, UNTEXTURED
@@ -3034,22 +3083,27 @@ void sys_glBegin (GLenum mode)
 			// made in sys_glEnd from flashArmA + the flash latch.
 			bFlash=(mx>=0.5f) && !(*orig_glIsEnabled)(GL_TEXTURE_2D);
 			if(bFlash){ flashVN=0; flashArmA=flashcol[3]; }	// start buffering this (untextured) quad's vertices
+			if(cvar.perf) PerfAccAdd(&g_perf_acc_flash,t0);
 		}
 		if(cvar.scope)
 		{
+			LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
 			GLfloat scopecol[4];
 			(*orig_glGetFloatv)(GL_CURRENT_COLOR, scopecol);
+			if(cvar.perf) g_perf_n_getf++;
 			if(scopecol[0]==1.0f && scopecol[1]==1.0f && scopecol[2]==1.0f && scopecol[3]==1.0f)
 			{
 				(*orig_glEnable)(GL_BLEND);
 				(*orig_glColor4f)(scopecol[0],scopecol[1],scopecol[2],0.0f);
 				(*orig_glDisable)(GL_BLEND);
 			}
+			if(cvar.perf) PerfAccAdd(&g_perf_acc_scope,t0);
 		}
 	}
 	else
 		bSky=false;
 
+	if(cvar.perf) g_perf_n_begin++;
 	(*orig_glBegin) (mode);
 }
 
@@ -3151,6 +3205,7 @@ void sys_glEnable (GLenum cap)
 
 	if(enabledraw && hookactive)	// if viewport is called 5th time (avoid fps drop)
 	{
+		LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
 		enabledraw=false;
 
 		// put all text stuff here:
@@ -3164,10 +3219,12 @@ void sys_glEnable (GLenum cap)
 			else 
 				gotflashed=false;
 		}
+		if(cvar.perf) PerfAccAdd(&g_perf_acc_enable,t0);
 	}
 
 	if ((cvar.cross) && (!ch))
 	{
+		LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
 		(*orig_glPushMatrix)(); 
 		(*orig_glLoadIdentity)(); 
 		(*orig_glDisable)(GL_TEXTURE_2D);
@@ -3196,6 +3253,7 @@ void sys_glEnable (GLenum cap)
 		(*orig_glDisable)(GL_BLEND);
 		(*orig_glEnable)(GL_TEXTURE_2D); 
 		(*orig_glPopMatrix)();
+		if(cvar.perf) PerfAccAdd(&g_perf_acc_enable,t0);
 	}
 
 	ch=true;
@@ -3207,6 +3265,7 @@ void sys_glEnd (void)
 {
 	if(bFlash && cvar.flash)
 	{
+		LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
 		// We buffered a bright GL_QUADS quad. Suppress it ONLY if it really covers
 		// the whole screen corner-to-corner (the flashbang blind). Anything smaller
 		// is a HUD/UI element and gets drawn exactly as the engine intended.
@@ -3248,6 +3307,7 @@ void sys_glEnd (void)
 		else	// not fullscreen -> a bright HUD quad, draw it untouched
 			for(int i=0;i<flashVN;i++) (*orig_glVertex2f)(flashVX[i],flashVY[i]);
 		bFlash=false; flashVN=0;
+		if(cvar.perf) PerfAccAdd(&g_perf_acc_flash,t0);
 	}
 	(*orig_glEnd) ();
 }
@@ -3269,8 +3329,10 @@ void sys_glPopMatrix (void)
 		player.get=false;
 		if (cvar.chams)							// undo chams render state after each model
 		{										// (so the world keeps its fill + textures)
+			LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
 			(*orig_glPolygonMode)(GL_FRONT_AND_BACK, GL_FILL);
 			(*orig_glEnable)(GL_TEXTURE_2D);
+			if(cvar.perf) PerfAccAdd(&g_perf_acc_vertex,t0);
 		}
 	}
 
@@ -3317,8 +3379,12 @@ void sys_glShadeModel (GLenum mode)
 {
 	(*orig_glShadeModel) (mode);
 
+	// This extra GetFloatv + tex disable/enable runs on EVERY shade-model change,
+	// even when chams is off. Timed as Shade so we can see that constant tax.
+	LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
 	GLfloat color[4];
 	(*orig_glGetFloatv)(GL_CURRENT_COLOR, color);
+	if(cvar.perf){ g_perf_n_getf++; g_perf_n_shade++; }
 	(*orig_glDisable)(GL_TEXTURE_2D);
 
 	// A player model starts drawing on its first GL_SMOOTH. We only use this to
@@ -3336,6 +3402,7 @@ void sys_glShadeModel (GLenum mode)
 
 	(*orig_glEnable)(GL_TEXTURE_2D);
 	(*orig_glColor4f)(color[0],color[1],color[2],color[3]);
+	if(cvar.perf) PerfAccAdd(&g_perf_acc_shade,t0);
 }
 
 void sys_glTexCoord2f (GLfloat s,  GLfloat t)
@@ -3393,8 +3460,12 @@ void sys_glVertex2f (GLfloat x,  GLfloat y)
 
 void sys_glVertex3f (GLfloat x,  GLfloat y,  GLfloat z)
 {
+	if(cvar.perf) g_perf_n_v3f++;
+	// Only time the extra GL work (chams/lambert). QPC on every vertex would
+	// cost more than the work itself - the volume is in the call counter.
 	if (player.get)								// inside a player model (set by sys_glShadeModel)
 	{
+		LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
 		if (cvar.chams)							// flat silhouette / colored wireframe model
 		{
 			(*orig_glDisable)(GL_TEXTURE_2D);
@@ -3402,10 +3473,15 @@ void sys_glVertex3f (GLfloat x,  GLfloat y,  GLfloat z)
 		}
 		else
 			(*orig_glEnable)(GL_TEXTURE_2D);
+		if(cvar.perf) PerfAccAdd(&g_perf_acc_vertex,t0);
 	}
 
 	if (cvar.lambert && !(player.get && cvar.chams))	// chams color overrides lambert on models
+	{
+		LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
 		glColor3f(1.0f, 1.0f, 1.0f);
+		if(cvar.perf) PerfAccAdd(&g_perf_acc_vertex,t0);
+	}
 
 	(*orig_glVertex3f) (x, y, z);
 }
@@ -3413,9 +3489,11 @@ void sys_glVertex3f (GLfloat x,  GLfloat y,  GLfloat z)
 void sys_glVertex3fv (const GLfloat *v)
 {
 	modelviewport=true;
+	if(cvar.perf) g_perf_n_v3fv++;
 
 	if(bSmoke && cvar.smoke) // leave this function if hl draws smoke
 	{
+		if(cvar.perf) g_perf_n_smokekill++;
 		return;
 	}
 	if (cvar.sky)			// ... or sky, if the cvars are enabled
@@ -3431,6 +3509,9 @@ void sys_glVertex3fv (const GLfloat *v)
 
 void sys_glViewport (GLint x,  GLint y,  GLsizei width,  GLsizei height)
 {
+	LARGE_INTEGER tVp; int timedVp=0;
+	if(cvar.perf){ QueryPerformanceCounter(&tVp); timedVp=1; g_perf_n_vp++; }
+
 	viewportcount++;
 	if(viewportcount >= 5)
 		enabledraw=true;	// enable drawing of text when viewport is called 5th time
@@ -3537,6 +3618,7 @@ void sys_glViewport (GLint x,  GLint y,  GLsizei width,  GLsizei height)
 		HandleKey(VK_UP);
 		HandleKey(VK_DOWN);
 	}
+	if(timedVp) PerfAccAdd(&g_perf_acc_viewport,tVp);
 	(*orig_glViewport) (x, y, width, height);
 }
 
@@ -3859,16 +3941,44 @@ void sys_wglSwapBuffers(HDC hDC)
 		LARGE_INTEGER now; QueryPerformanceCounter(&now);
 		g_perf_players=eng_players;
 		g_perf_warmup=(GetTickCount()<g_perf_warm_until)?1:0;	// still cooling down after the toggle?
-		if(g_perf_have_last) PerfCommit(PERF_FRAME,PerfMs(g_perf_last_swap,now));
+		double frame_ms=g_perf_have_last?PerfMs(g_perf_last_swap,now):0.0;
+		double overlay_ms=hookactive?PerfMs(ovA,ovB):0.0;
+		double esp_ms=hookactive?PerfMs(espA,espB):0.0;
+		double prim_ms=g_perf_acc_wall+g_perf_acc_smoke+g_perf_acc_flash+g_perf_acc_scope
+			+g_perf_acc_shade+g_perf_acc_vertex+g_perf_acc_viewport+g_perf_acc_enable;
+		double other_ms=frame_ms-overlay_ms-prim_ms;
+		if(other_ms<0.0) other_ms=0.0;	// QPC noise / overlap can go slightly negative
+		double prev_frame_peak=g_perf[PERF_FRAME].peak_ms;
+		if(g_perf_have_last) PerfCommit(PERF_FRAME,frame_ms);
 		if(hookactive)
 		{
-			PerfCommit(PERF_ESP,PerfMs(espA,espB));
-			PerfCommit(PERF_OVERLAY,PerfMs(ovA,ovB));
+			PerfCommit(PERF_ESP,esp_ms);
+			PerfCommit(PERF_OVERLAY,overlay_ms);
+		}
+		else
+		{
+			PerfCommit(PERF_ESP,0.0);
+			PerfCommit(PERF_OVERLAY,0.0);
 		}
 		PerfCommit(PERF_VIS,g_perf_acc_vis);
 		PerfCommit(PERF_HUD,g_perf_acc_hud);
+		PerfCommit(PERF_WALL,g_perf_acc_wall);
+		PerfCommit(PERF_SMOKE,g_perf_acc_smoke);
+		PerfCommit(PERF_FLASH,g_perf_acc_flash);
+		PerfCommit(PERF_SCOPE,g_perf_acc_scope);
+		PerfCommit(PERF_SHADE,g_perf_acc_shade);
+		PerfCommit(PERF_VERTEX,g_perf_acc_vertex);
+		PerfCommit(PERF_VIEWPORT,g_perf_acc_viewport);
+		PerfCommit(PERF_ENABLE,g_perf_acc_enable);
+		if(g_perf_have_last) PerfCommit(PERF_OTHER,other_ms);
+		g_perf_calls.begin=g_perf_n_begin; g_perf_calls.quad=g_perf_n_quad;
+		g_perf_calls.getf=g_perf_n_getf; g_perf_calls.shade=g_perf_n_shade;
+		g_perf_calls.v3f=g_perf_n_v3f; g_perf_calls.v3fv=g_perf_n_v3fv;
+		g_perf_calls.vp=g_perf_n_vp; g_perf_calls.smokekill=g_perf_n_smokekill;
+		if(!g_perf_warmup && g_perf_have_last && g_perf[PERF_FRAME].peak_ms>prev_frame_peak)
+			g_perf_calls_peak=g_perf_calls;
 		g_perf_last_swap=now; g_perf_have_last=true;
-		g_perf_acc_vis=0.0; g_perf_acc_hud=0.0; g_perf_reads=0;	// reset for next frame
+		PerfResetAcc();
 	}
 	(*orig_wglSwapBuffers) (hDC);
 }
