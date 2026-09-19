@@ -106,6 +106,12 @@ Instead of guessing players from vertex counts, the ESP reads the GoldSrc engine
 - Team via a three-tier resolution (see *Team detection* below): the `TeamInfo` user-message first, then `g_PlayerExtraInfo`, then a model-name guess
 - Alive / stale via `current_position` update counter + 400 ms timeout
 
+**Hot-path cuts.** The loop is still 1..32 (slots are not 16 T / 16 CT), but:
+- `Show team` (`cvar.esp_team`): `Both` / `CT` / `T` / `Enemies`. `Enemies` is relative to your current side (follows a team switch). When a slot is not the aim `Target` side, not needed for radar, and not selected by this filter, it is skipped *before* `GetPlayerInfo`. Early-out uses the live `TeamInfo` table (`eng_msg_team[]`), not a frame counter — a join / team-switch / quit updates the next time that user-message arrives (usually the same or next frame). Aim + head-dot always use the `Target` side, independent of this filter.
+- Empty slots are rejected via `GetEntityByIndex` + `player` flag, not `GetPlayerInfo`.
+- `cl_entity` reads after a one-shot span-check skip `VirtualQuery` (`EInt`/`EFlt`, cached per slot).
+- The 3D MVP snapshot (`glGetDoublev`) is skipped when nothing will depth-test (`aimthru` on and `esp_vischeck` off).
+
 **WorldToScreen:** via `pTriAPI` slot 12 (`WorldToScreen`), the engine's own projection - no manual matrix math needed.
 
 **Visibility check (`esp_vischeck`):** `gluProject` maps the enemy chest to screen space, then `glReadPixels(GL_DEPTH_COMPONENT)` reads the depth buffer at that pixel. If the buffer value is ≥ the projected depth (within a small epsilon), the target is unoccluded.
@@ -134,7 +140,7 @@ The HP and ammo arcs are drawn as 10-tick `GL_LINES` segments arranged in two sy
 
 ### Team detection (ESP colors + aim side-filter)
 
-The ESP colors each player by team - **red = T, blue = CT, green = unknown** - and the aimbot/triggerbot only engage the side selected in the menu. Getting the team right is therefore load-bearing. Team is resolved in three tiers, most-reliable first (`DrawEngineEsp`):
+The ESP colors each player by team - **red = T, blue = CT, green = unknown** - and the aimbot/triggerbot only engage the side selected in the menu (`Target`). On-screen names/boxes follow `Show team` (`Both` / `CT` / `T` / `Enemies`). Getting the team right is therefore load-bearing. Team is resolved in three tiers, most-reliable first (`DrawEngineEsp`):
 
 1. **`TeamInfo` user-message (primary).** The server broadcasts `TeamInfo <playerIndex> <"TERRORIST"|"CT"|"SPECTATOR"|"UNASSIGNED">` to every client whenever anyone joins or switches team - it is exactly the source the scoreboard is built from. We hook it with the same heap-scan machinery as the HP messages (`Hk_TeamInfo` → `eng_msg_team[idx]`, `1 = T`, `2 = CT`). Because it is keyed on player index rather than the model, it is correct for **any** model, including custom ones, and message names are stable across every build so it needs no signature scan.
 2. **`g_PlayerExtraInfo` (`EngTeam`).** Reads `teamnumber` out of `client.dll`'s extra-info array, located by a byte-pattern scan. Used only when tier 1 hasn't supplied a team yet and the scan actually resolved on this build.

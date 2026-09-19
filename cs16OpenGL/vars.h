@@ -35,7 +35,7 @@ typedef struct { // cvars (of course ;P)
 	int esp_dist;	// ESP Engine sub-option: distance text
 	int esp_dist_pad;	// ESP Engine sub-option: distance text vertical offset (px)
 	int esp_dist_size;	// ESP Engine sub-option: distance font size (1=small,2=normal,3=large,4=x-large)
-	int esp_team;	// ESP Engine sub-option: which team to draw (0=both,1=CT,2=T)
+	int esp_team;	// ESP Engine: 0=both, 1=CT, 2=T, 3=enemies (relative to your side)
 	int esp_flags;	// ESP Engine sub-option: C4 / VIP tags on players (from ScoreAttrib)
 	int esp_bomb;	// ESP Engine sub-option: dropped-C4 world marker (from BombDrop)
 	int esp_dbg;	// ESP Engine sub-option: top-left "ENGINE ESP" debug readout text

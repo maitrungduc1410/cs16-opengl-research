@@ -973,7 +973,7 @@ void DrawMenu(int x, int y)
 		{"Off-screen arrow",IT_TOGGLE,&cvar.esp_arrow,0,0,0,      0, &cvar.esp_engine, 1},
 		{"Max distance",IT_INT,    &cvar.esp_maxdist, 0,200,5,    0, &cvar.esp_engine, 1},
 		{"Distance fade",IT_TOGGLE,&cvar.esp_fade,    0,0,0,      0, &cvar.esp_engine, 1},
-		{"Show team",   IT_INT,    &cvar.esp_team,    0,2,1,      1, &cvar.esp_engine, 1},
+		{"Show team",   IT_INT,    &cvar.esp_team,    0,3,1,      1, &cvar.esp_engine, 1},
 		{"C4/VIP tags", IT_TOGGLE, &cvar.esp_flags,  0,0,0,      0, &cvar.esp_engine, 1},
 		{"Bomb ESP",    IT_TOGGLE, &cvar.esp_bomb,   0,0,0,      0, &cvar.esp_engine, 1},
 		{"Debug text",  IT_TOGGLE, &cvar.esp_dbg,    0,0,0,      0, &cvar.esp_engine, 1},
@@ -1156,8 +1156,8 @@ void DrawMenu(int x, int y)
 			}
 			else if(it->p==&cvar.esp_team)
 			{
-				static const char *et[3]={"Both","CT","T"};
-				int v=*(int*)it->p; if(v<0)v=0; if(v>2)v=2;
+				static const char *et[4]={"Both","CT","T","Enemies"};
+				int v=*(int*)it->p; if(v<0)v=0; if(v>3)v=3;
 				sprintf(buf,"%s%s: %s", pre,it->label,et[v]);
 			}
 			else if(it->p==&cvar.esp_snap)
@@ -1426,6 +1426,24 @@ float ReadFlt  (DWORD a){ return IsReadable(a,4)?*(float*)a:0.0f; }
 short ReadShort(DWORD a){ return IsReadable(a,2)?*(short*)a:0; }
 BYTE  ReadByte (DWORD a){ return IsReadable(a,1)?*(BYTE*)a:0; }
 
+// Fast reads for a cl_entity we already span-checked (no VirtualQuery).
+// ENT_ORIGIN is 0xB48; +0x50 covers origin + model pointer.
+#define ENT_SPAN  (ENT_ORIGIN+0x50)
+static int   EInt(DWORD a){ return *(int*)a; }
+static float EFlt(DWORD a){ return *(float*)a; }
+// Cache a successful span-check per slot so empty/live entities don't pay
+// VirtualQuery every frame (the pointer is stable for the life of the slot).
+static bool EntSpanOk(int idx, DWORD ent)
+{
+	static DWORD chk_ent[33]={0};
+	static bool  chk_ok[33]={0};
+	if(idx<1||idx>32||!ent) return false;
+	if(chk_ent[idx]==ent && chk_ok[idx]) return true;
+	bool ok=IsReadable(ent,ENT_SPAN);
+	if(ok){ chk_ent[idx]=ent; chk_ok[idx]=true; }
+	return ok;
+}
+
 // Resolve a player's REAL vertical extent so short ("midget"/resize-server)
 // models aim/box correctly. The fixed pmove hull (72u standing / 36u ducking)
 // assumes a full-size player, so on a shrunk model the computed crown floats
@@ -1447,8 +1465,8 @@ static void PlayerVExtent(DWORD ent, float oz, int usehull,
 	float nomZoff = (usehull==1)?6.0f :0.0f;
 	float nomH    = nomHalf*2.0f;				// 72 stand / 36 duck
 
-	float minz=ReadFlt(ent+ENT_CURSTATE+ES_MINS+8);	// mins[2]
-	float maxz=ReadFlt(ent+ENT_CURSTATE+ES_MAXS+8);	// maxs[2]
+	float minz=EFlt(ent+ENT_CURSTATE+ES_MINS+8);	// mins[2] (ent already span-checked)
+	float maxz=EFlt(ent+ENT_CURSTATE+ES_MAXS+8);	// maxs[2]
 	float boxH=maxz-minz;
 	if(boxH>=8.0f && boxH<=100.0f)				// sane per-player box streamed?
 	{
@@ -1458,7 +1476,7 @@ static void PlayerVExtent(DWORD ent, float oz, int usehull,
 		return;
 	}
 
-	float sc=ReadFlt(ent+ENT_CURSTATE+ES_SCALE);	// studio model scale
+	float sc=EFlt(ent+ENT_CURSTATE+ES_SCALE);	// studio model scale
 	if(sc>0.1f && sc<4.0f && (sc<0.95f || sc>1.05f))	// meaningfully non-1
 	{
 		*topZ =oz+( nomHalf+nomZoff)*sc;
@@ -1604,6 +1622,17 @@ int EngTeam(int idx)
 {
 	if(!eng_have_extra || idx<0 || idx>32) return 0;
 	return ReadShort(eng_extrainfo+idx*EXTRA_STRIDE+EXTRA_TEAMNUMBER);
+}
+
+// On-screen ESP filter (cvar.esp_team): 0=both, 1=CT, 2=T, 3=enemies
+// (everyone who is not your current side). Unknown local team => show all
+// in Enemies mode so a spectator / pre-TeamInfo frame isn't blank.
+static bool EspWantsTeam(int team)
+{
+	if(cvar.esp_team==1) return team==2;
+	if(cvar.esp_team==2) return team==1;
+	if(cvar.esp_team==3) return (eng_local_team==0) || (team!=eng_local_team);
+	return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -2306,10 +2335,16 @@ void DrawEngineEsp()
 
 	// Snapshot the engine's 3D MVP BEFORE we switch to 2D ortho, so the
 	// per-player depth-buffer visibility test (esp_vischeck) can still
-	// project world->screen using the actual game camera.
+	// project world->screen using the actual game camera. Skip when nothing
+	// will call IsWorldVisible (aimthru on + vischeck off is the common case).
 	GLdouble mm_w[16], pm_w[16];
-	(*orig_glGetDoublev)(GL_MODELVIEW_MATRIX,mm_w);
-	(*orig_glGetDoublev)(GL_PROJECTION_MATRIX,pm_w);
+	bool need_vis = (cvar.esp_vischeck!=0)
+		|| ((need_aim || cvar.trigger) && !cvar.aimthru);
+	if(need_vis)
+	{
+		(*orig_glGetDoublev)(GL_MODELVIEW_MATRIX,mm_w);
+		(*orig_glGetDoublev)(GL_PROJECTION_MATRIX,pm_w);
+	}
 
 	bool ready=EngineResolve();
 
@@ -2371,16 +2406,30 @@ void DrawEngineEsp()
 	DWORD local=(DWORD)((eng_GetLocalPlayer_t)fnLocal)();
 	if(local)
 	{
-		lo[0]=ReadFlt(local+ENT_ORIGIN);
-		lo[1]=ReadFlt(local+ENT_ORIGIN+4);
-		lo[2]=ReadFlt(local+ENT_ORIGIN+8);
-		eng_local_idx =ReadInt(local+ENT_INDEX);
-		eng_local_team=EngTeam(eng_local_idx);
-		// auto-bhop: read the local player's ground state from curstate.onground
-		// (-1 = airborne; any other value = standing on an entity). sys_glViewport
+		int og=-1;
+		if(IsReadable(local,ENT_SPAN))
+		{
+			lo[0]=EFlt(local+ENT_ORIGIN);
+			lo[1]=EFlt(local+ENT_ORIGIN+4);
+			lo[2]=EFlt(local+ENT_ORIGIN+8);
+			eng_local_idx =EInt(local+ENT_INDEX);
+			og=EInt(local+ENT_CURSTATE+ES_ONGROUND);
+		}
+		else
+		{
+			lo[0]=ReadFlt(local+ENT_ORIGIN);
+			lo[1]=ReadFlt(local+ENT_ORIGIN+4);
+			lo[2]=ReadFlt(local+ENT_ORIGIN+8);
+			eng_local_idx =ReadInt(local+ENT_INDEX);
+			og=ReadInt(local+ENT_CURSTATE+ES_ONGROUND);
+		}
+		// auto-bhop: onground from curstate (-1 = airborne). sys_glViewport
 		// consumes this on the next frame to time the jump injection.
-		int og=ReadInt(local+ENT_CURSTATE+ES_ONGROUND);
 		eng_on_ground=(og!=-1)?1:0;
+		// TeamInfo first (no VirtualQuery); ExtraInfo only if the message hasn't landed.
+		eng_local_team=0;
+		if(eng_local_idx>=1 && eng_local_idx<=32) eng_local_team=eng_msg_team[eng_local_idx];
+		if(!eng_local_team) eng_local_team=EngTeam(eng_local_idx);
 
 		// Bhop diagnostics (ESP debug toggle). want=1 means UpdateBhop is actively
 		// spamming; pulses increments on every injected SPACE press. If want=1 and
@@ -2450,40 +2499,54 @@ void DrawEngineEsp()
 	int want_team = (cvar.target==0)?1:2;			// engine team# of the targeted side (1=T,2=CT)
 	int  det_seen = 0;								// enemy players received this frame (PVS counter)
 	bool trig_hit = false;							// crosshair on an enemy this frame (triggerbot)
+	DWORD now=GetTickCount();						// once per frame; death/stale use wall-clock
+	bool need_esp_name = (cvar.esp_engine && cvar.esp_name);
+	bool need_radar_name = (radar_on && cvar.radar_names);
 
 	for(int idx=1; idx<=32; idx++)
 	{
 		if(idx==eng_local_idx) continue;
 
+		// Known teammate (TeamInfo already landed) and they are not the aim
+		// target side: skip before GetPlayerInfo / entity reads. Radar still
+		// wants teammate dots, so it keeps the full path. Unknown team (0)
+		// always falls through so a new joiner isn't invisible for a frame.
+		int cached_team=eng_msg_team[idx];
+		if(cached_team && cached_team!=want_team && !radar_on && !EspWantsTeam(cached_team)) continue;
+
+		// Empty slots: GetEntityByIndex + player flag, not GetPlayerInfo+VQ.
+		DWORD ent=(DWORD)((eng_GetEntityByIndex_t)fnEnt)(idx);
+		if(!ent || !EntSpanOk(idx,ent) || EInt(ent+ENT_PLAYER)==0) continue;
+
 		char namebuf[64]="";
 		char modelbuf[64]="";
-		if(fnInfo>=0x10000)
+		// Name/model only when we will draw them, or when team is still unknown
+		// (need the spectator flag + model fallback). Known T/CT are not specs.
+		bool want_name = need_esp_name || need_radar_name;
+		bool want_model = (cached_team==0);
+		if(fnInfo>=0x10000 && (want_name || want_model))
 		{
 			hud_player_info_t info; memset(&info,0,sizeof(info));
 			((eng_GetPlayerInfo_t)fnInfo)(idx,&info);
 			if(info.name==0 || !IsReadable((DWORD)info.name,1)) continue;	// empty slot
 			if(info.spectator) continue;	// spectators aren't ESP/aim targets
-			strncpy(namebuf,info.name,63); namebuf[63]=0;
-			if(info.model && IsReadable((DWORD)info.model,1))
+			if(want_name){ strncpy(namebuf,info.name,63); namebuf[63]=0; }
+			if(want_model && info.model && IsReadable((DWORD)info.model,1))
 			{ strncpy(modelbuf,info.model,63); modelbuf[63]=0; }
 		}
 
-		DWORD ent=(DWORD)((eng_GetEntityByIndex_t)fnEnt)(idx);
-		if(!ent || ReadInt(ent+ENT_PLAYER)==0) continue;
-
 		// alive/stale check: current_position keeps incrementing while a player
 		// receives network updates; it freezes on death / disconnect / round-end.
-		int cur=ReadInt(ent+ENT_CURPOS);
-		DWORD now=GetTickCount();
+		int cur=EInt(ent+ENT_CURPOS);
 		if(cur!=eng_lastcurpos[idx]) { eng_lastcurpos[idx]=cur; eng_lastchange[idx]=now; }
 		bool stale=(now-eng_lastchange[idx])>ENG_STALE_MS;	// time-based: same at 60 or 240 fps
 		// origin first -- the death latch's respawn check needs it too.
 		float o[3];
-		o[0]=ReadFlt(ent+ENT_ORIGIN); o[1]=ReadFlt(ent+ENT_ORIGIN+4); o[2]=ReadFlt(ent+ENT_ORIGIN+8);
+		o[0]=EFlt(ent+ENT_ORIGIN); o[1]=EFlt(ent+ENT_ORIGIN+4); o[2]=EFlt(ent+ENT_ORIGIN+8);
 		if(o[0]==0&&o[1]==0&&o[2]==0)	// fallback: entity_state origin
 		{
 			DWORD cs=ent+ENT_CURSTATE;
-			o[0]=ReadFlt(cs+ES_ORIGIN); o[1]=ReadFlt(cs+ES_ORIGIN+4); o[2]=ReadFlt(cs+ES_ORIGIN+8);
+			o[0]=EFlt(cs+ES_ORIGIN); o[1]=EFlt(cs+ES_ORIGIN+4); o[2]=EFlt(cs+ES_ORIGIN+8);
 			if(o[0]==0&&o[1]==0&&o[2]==0) continue;
 		}
 
@@ -2589,7 +2652,7 @@ void DrawEngineEsp()
 		// Both target the side selected by cvar.target (mapped to engine team#).
 		if((need_aim || cvar.trigger) && team==want_team)
 		{
-			int usehullA=ReadInt(ent+ENT_CURSTATE+ES_USEHULL);
+			int usehullA=EInt(ent+ENT_CURSTATE+ES_USEHULL);
 			// Head geometry from the player's REAL extent (see PlayerVExtent):
 			// XY = origin, top = crown, feet = feet. Short models report a lower
 			// crown, so the aim point follows the real head instead of floating
@@ -2669,14 +2732,13 @@ void DrawEngineEsp()
 
 		if(!cvar.esp_engine) continue;			// radar-only run: skip the on-screen ESP
 
-		// team filter: 0=both, 1=CT only (team 2), 2=T only (team 1)
-		if(cvar.esp_team==1 && team!=2) continue;
-		if(cvar.esp_team==2 && team!=1) continue;
+		// Show team: Both / CT / T / Enemies. Aim + dot already use want_team.
+		if(!EspWantsTeam(team)) continue;
 
 		// max-distance filter: skip if too far (0 = unlimited)
 		if(cvar.esp_maxdist>0 && distM>(float)cvar.esp_maxdist) continue;
 
-		int usehull=ReadInt(ent+ENT_CURSTATE+ES_USEHULL);
+		int usehull=EInt(ent+ENT_CURSTATE+ES_USEHULL);
 		// Real extent so the box wraps short/resized players (see PlayerVExtent).
 		float boxTop, boxFeet, boxScl;
 		PlayerVExtent(ent, o[2], usehull, &boxTop, &boxFeet, &boxScl);
