@@ -254,6 +254,9 @@ bool	eng_aim_have	=false;	// did we pick a target this frame?
 float	eng_aim_sx		=0.0f;	// target screen x (px, 0..vp[2])
 float	eng_aim_sy		=0.0f;	// target screen y (px, 0..vp[3])
 bool	eng_aim_visible	=true;	// false if blocked by a wall (depth-buffer test)
+char	eng_bone_ok[33]	={0};	// 1 = this frame's studio draw posed a head hitbox for the slot
+float	eng_bone_head[33][3]={0};	// world-space head-hitbox center, captured during ShadeModel
+bool	eng_studio_ok	=false;	// IEngineStudio resolved (F11 / debug)
 bool	g_aim_toggle_on	=false;	// aim_mode==Toggle: latched on/off state
 bool	g_aim_key_prev	=false;	// aim key down last frame (for toggle edge detection)
 

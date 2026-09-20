@@ -1282,6 +1282,11 @@ void DrawCheckText(int x,int y) // bad way of doing this
 	DrawText(x,y,1.0f,1.0f,1.0f,"> peak punch seen: %0.3f   last: %0.2f %0.2f %0.2f",
 		norec_peak,norec_last[0],norec_last[1],norec_last[2]);
 	y=y+(int)(13*ui_scale);
+	if(eng_studio_ok)
+		DrawText(x,y,0.5f,1.0f,0.5f,"Studio head: ON  IEngineStudio @ 0x%08X",g_studio);
+	else
+		DrawText(x,y,1.0f,0.85f,0.4f,"Studio head: waiting (hull fallback until IEngineStudio resolves)");
+	y=y+(int)(13*ui_scale);
 
 	// ---- Performance monitor readout (cvar.perf) ----
 	// Per-section timings with an independent worst-case ("worst since enabled")
@@ -1609,6 +1614,219 @@ bool EngineResolve()	// resolve & cache the engine table; true when usable
 }
 
 DWORD EngFn(int slot){ return ReadDW(eng_table+slot*4); }
+
+// ---------------------------------------------------------------------------
+//  Studio head capture (IEngineStudio).
+//
+//  GoldSrc already runs StudioSetupBones when it draws a player. We only READ
+//  the posed bone matrix + HITGROUP_HEAD hitbox at glPopMatrix (end of model) —
+//  no second pose, no per-vertex work. Aim uses that point the same frame
+//  (SwapBuffers); slots that were not drawn (wall / PVS) keep the hull fallback.
+// ---------------------------------------------------------------------------
+#define STU_MOD_EXTRADATA	4	// engine_studio_api_t slot
+#define STU_GETCURRENTENT	6
+#define STU_GETBONEXFORM	16
+#define STUDIO_HDR_NUMBONES	140
+#define STUDIO_HDR_BONEIDX	144
+#define STUDIO_HDR_NUMHB	156
+#define STUDIO_HDR_HBIDX	160
+#define STUDIO_BONE_SIZE	112
+#define STUDIO_HITBOX_SIZE	32
+#define HITGROUP_HEAD		1
+
+typedef void* (__cdecl *stu_GetCurrentEntity_t)(void);
+typedef void* (__cdecl *stu_ModExtradata_t)(void *mod);
+typedef void* (__cdecl *stu_GetBoneTransform_t)(void);
+
+static DWORD g_studio=0;			// &IEngineStudio in client.dll
+static int   g_studio_tries=0;
+static int   g_bt_deref=0;			// 0=unknown, 1=direct, 2=one extra deref
+
+static bool StuPtrInHw(DWORD p,DWORD hw_base,DWORD hw_end)
+{
+	return p>=hw_base && p<hw_end;
+}
+
+static bool LooksLikeStudioAPI(DWORD addr,DWORD hw_base,DWORD hw_end)
+{
+	if(!IsReadable(addr,20*4)) return false;
+	if(eng_table && addr==eng_table) return false;
+	int hits=0;
+	for(int i=0;i<20;i++)
+	{
+		DWORD v=*(DWORD*)(addr+i*4);
+		if(StuPtrInHw(v,hw_base,hw_end)) hits++;
+	}
+	if(hits<18) return false;
+	// cl_enginefunc_t is also a run of hw.dll pointers; reject it if slot 51
+	// matches the engine table's GetLocalPlayer.
+	if(eng_table && IsReadable(addr+51*4,4))
+	{
+		DWORD s51=*(DWORD*)(addr+51*4);
+		DWORD e51=ReadDW(eng_table+ENG_SLOT_GETLOCALPLAYER*4);
+		if(s51 && s51==e51) return false;
+	}
+	return true;
+}
+
+static DWORD FindStudioAPI()
+{
+	DWORD cl_base,cl_end,hw_base,hw_end;
+	if(!ModuleRange("client.dll",cl_base,cl_end)) return 0;
+	if(!ModuleRange("hw.dll",hw_base,hw_end))
+		if(!ModuleRange("sw.dll",hw_base,hw_end)) return 0;
+
+	HMODULE cli=GetModuleHandleA("client.dll");
+	BYTE *fn=cli?(BYTE*)GetProcAddress(cli,"HUD_GetStudioModelInterface"):0;
+	if(fn && IsReadable((DWORD)fn,8) && fn[0]==0xE9)		// export thunk
+		fn=fn+5+*(int*)(fn+1);
+	if(fn && IsReadable((DWORD)fn,256))
+	{
+		for(int i=0;i<240;i++)
+		{
+			BYTE op=fn[i];
+			if(op!=0x68 && op!=0xBF && op!=0xB8 && op!=0xA3) continue;
+			if(!IsReadable((DWORD)(fn+i+1),4)) continue;
+			DWORD imm=*(DWORD*)(fn+i+1);
+			if(imm>=cl_base && imm<cl_end && LooksLikeStudioAPI(imm,hw_base,hw_end))
+				return imm;
+		}
+	}
+
+	// Fallback: writable client sections (IEngineStudio is a copied pointer table).
+	IMAGE_DOS_HEADER *dos=(IMAGE_DOS_HEADER*)cl_base;
+	IMAGE_NT_HEADERS *nt=(IMAGE_NT_HEADERS*)(cl_base+dos->e_lfanew);
+	IMAGE_SECTION_HEADER *sec=IMAGE_FIRST_SECTION(nt);
+	for(int s=0;s<nt->FileHeader.NumberOfSections;s++)
+	{
+		if(!(sec[s].Characteristics & IMAGE_SCN_MEM_WRITE)) continue;
+		DWORD a=cl_base+sec[s].VirtualAddress;
+		DWORD e=a+sec[s].Misc.VirtualSize;
+		if(e>cl_end) e=cl_end;
+		for(DWORD scan=a; scan+20*4<=e; scan+=4)
+			if(LooksLikeStudioAPI(scan,hw_base,hw_end))
+				return scan;
+	}
+	return 0;
+}
+
+static bool StudioResolve()
+{
+	if(g_studio) return true;
+	if((g_studio_tries++ & 63)!=1 && g_studio_tries>2) return false;
+	g_studio=FindStudioAPI();
+	eng_studio_ok=(g_studio!=0);
+	return g_studio!=0;
+}
+
+static bool BoneXformPoint(void *bt,int bone,float lx,float ly,float lz,float *out)
+{
+	if(!bt || bone<0 || bone>=128) return false;
+	DWORD base=(DWORD)bt;
+	if(g_bt_deref==2 && IsReadable(base,4))
+		base=*(DWORD*)base;
+	if(!IsReadable(base+(DWORD)bone*48,48)) return false;
+	float *m=(float*)(base+(DWORD)bone*48);
+	out[0]=m[0]*lx+m[1]*ly+m[2]*lz+m[3];
+	out[1]=m[4]*lx+m[5]*ly+m[6]*lz+m[7];
+	out[2]=m[8]*lx+m[9]*ly+m[10]*lz+m[11];
+	return true;
+}
+
+// Called from sys_glShadeModel(GL_SMOOTH) once per studio model. Cheap reject
+// if this isn't a player body (weapon / prop / already captured this frame).
+static void CaptureStudioHead()
+{
+	if(!cvar.aim && !cvar.trigger) return;
+	if(!StudioResolve()) return;
+
+	stu_GetCurrentEntity_t getEnt=(stu_GetCurrentEntity_t)ReadDW(g_studio+STU_GETCURRENTENT*4);
+	if((DWORD)getEnt<0x10000) return;
+	DWORD ent=(DWORD)getEnt();
+	if(!ent || !IsReadable(ent,ENT_SPAN)) return;
+	if(EInt(ent+ENT_PLAYER)==0) return;
+	int idx=EInt(ent+ENT_INDEX);
+	if(idx<1||idx>32) return;
+	if(eng_bone_ok[idx]) return;		// body already captured; skip weapon pass
+
+	DWORD model=ReadDW(ent+ENT_MODEL);
+	if(model<0x10000 || !IsReadable(model,4)) return;
+
+	stu_ModExtradata_t extra=(stu_ModExtradata_t)ReadDW(g_studio+STU_MOD_EXTRADATA*4);
+	if((DWORD)extra<0x10000) return;
+	DWORD hdr=(DWORD)extra((void*)model);
+	if(!hdr || !IsReadable(hdr,164)) return;
+
+	static DWORD cache_hdr=0;
+	static int   cache_bone=-1;
+	static float cache_l[3]={0,0,0};
+	int bone=cache_bone;
+	float lx=cache_l[0], ly=cache_l[1], lz=cache_l[2];
+	if(hdr!=cache_hdr || cache_bone<0)
+	{
+		bone=-1;
+		int numhb=*(int*)(hdr+STUDIO_HDR_NUMHB);
+		int hbidx=*(int*)(hdr+STUDIO_HDR_HBIDX);
+		if(numhb>0 && numhb<=128 && hbidx>0 && IsReadable(hdr+(DWORD)hbidx,(DWORD)numhb*STUDIO_HITBOX_SIZE))
+		{
+			for(int i=0;i<numhb;i++)
+			{
+				DWORD b=hdr+(DWORD)hbidx+(DWORD)i*STUDIO_HITBOX_SIZE;
+				if(*(int*)(b+4)!=HITGROUP_HEAD) continue;
+				bone=*(int*)b;
+				float *mn=(float*)(b+8), *mx=(float*)(b+20);
+				lx=0.5f*(mn[0]+mx[0]); ly=0.5f*(mn[1]+mx[1]); lz=0.5f*(mn[2]+mx[2]);
+				break;
+			}
+		}
+		if(bone<0)
+		{
+			int nb=*(int*)(hdr+STUDIO_HDR_NUMBONES);
+			int bo=*(int*)(hdr+STUDIO_HDR_BONEIDX);
+			if(nb>0 && nb<256 && bo>0 && IsReadable(hdr+(DWORD)bo,(DWORD)nb*STUDIO_BONE_SIZE))
+			{
+				for(int i=0;i<nb;i++)
+				{
+					const char *nm=(const char*)(hdr+(DWORD)bo+(DWORD)i*STUDIO_BONE_SIZE);
+					if(!IsReadable((DWORD)nm,10)) continue;
+					// "Bip01 Head" / any bone name ending in "Head"
+					int n=0; while(n<31 && nm[n]) n++;
+					if(n>=4 && nm[n-4]=='H' && nm[n-3]=='e' && nm[n-2]=='a' && nm[n-1]=='d')
+					{ bone=i; lx=ly=lz=0; break; }
+				}
+			}
+		}
+		if(bone<0) return;				// weapon / prop: no head
+		cache_hdr=hdr; cache_bone=bone; cache_l[0]=lx; cache_l[1]=ly; cache_l[2]=lz;
+	}
+
+	stu_GetBoneTransform_t getBT=(stu_GetBoneTransform_t)ReadDW(g_studio+STU_GETBONEXFORM*4);
+	if((DWORD)getBT<0x10000) return;
+	void *bt=getBT();
+	if(!bt) return;
+
+	float w[3];
+	if(!BoneXformPoint(bt,bone,lx,ly,lz,w))
+	{
+		if(g_bt_deref==0 && IsReadable((DWORD)bt,4))
+		{
+			g_bt_deref=2;
+			if(!BoneXformPoint(bt,bone,lx,ly,lz,w)) { g_bt_deref=0; return; }
+		}
+		else return;
+	}
+	else if(g_bt_deref==0) g_bt_deref=1;
+
+	float ox=EFlt(ent+ENT_ORIGIN), oy=EFlt(ent+ENT_ORIGIN+4), oz=EFlt(ent+ENT_ORIGIN+8);
+	float dx=w[0]-ox, dy=w[1]-oy, dz=w[2]-oz;
+	if(dx*dx+dy*dy+dz*dz>80.0f*80.0f) return;	// garbage / wrong matrix style
+	if(dz<-10.0f || dz>72.0f) return;
+
+	eng_bone_head[idx][0]=w[0];
+	eng_bone_head[idx][1]=w[1];
+	eng_bone_head[idx][2]=w[2];
+	eng_bone_ok[idx]=1;
+}
 
 bool EngWorldToScreen(float *world,float *screen)
 {
@@ -2675,27 +2893,26 @@ void DrawEngineEsp()
 		if((need_aim || cvar.trigger) && team==want_team)
 		{
 			int usehullA=EInt(ent+ENT_CURSTATE+ES_USEHULL);
-			// Head geometry from the player's REAL extent (see PlayerVExtent):
-			// XY = hull origin (the point pt stand / pt duck were tuned on).
-			// Do NOT add a yaw push: interpolated player yaw is often 0 or
-			// 90° off the look direction, so a "forward" offset lands beside
-			// the helmet when they face you or duck. Do NOT use studio
-			// attachments: on CS 1.6 players attachment[0] is the weapon
-			// muzzle. top = crown, feet = feet. sclA = real/nominal height
-			// ratio (1.0 on normal servers).
-			float hxA=o[0], hyA=o[1];
+			// Head: prefer the studio HITGROUP_HEAD hitbox posed this frame
+			// (CaptureStudioHead). That tracks yaw / duck / look-down. Do NOT
+			// add pt stand/duck on top — those are hull-tuned and would pull
+			// the bone point off the skull. Fallback = hull origin + extent
+			// (the old setup) when the model was not drawn (wall / PVS).
 			float topZ, feetZ, sclA;
 			PlayerVExtent(ent, o[2], usehullA, &topZ, &feetZ, &sclA);
-			// Aim point: the CENTER of the head (the top sits a few units above the
-			// skull, so drop by AIM_HEAD_CENTER), plus the user's vertical offset.
-			// Standing and crouching are tuned SEPARATELY (world units, +=higher):
-			// the duck hull geometry doesn't line up with the stand one, so a single
-			// shared value can't sit on the head in both stances. Both the head-center
-			// drop and the user offset are scaled by sclA so the point stays on the
-			// head at any model size - a value tuned on full-size players shrinks
-			// proportionally for short ones (sclA==1 => identical to before).
-			int aimOff  = (usehullA==1) ? cvar.aim_point_duck : cvar.aim_point;
-			float aimz  = topZ - AIM_HEAD_CENTER*sclA + (float)aimOff*sclA;
+			float hxA, hyA, aimz;
+			if(eng_bone_ok[idx])
+			{
+				hxA=eng_bone_head[idx][0];
+				hyA=eng_bone_head[idx][1];
+				aimz=eng_bone_head[idx][2];
+			}
+			else
+			{
+				hxA=o[0]; hyA=o[1];
+				int aimOff=(usehullA==1)?cvar.aim_point_duck:cvar.aim_point;
+				aimz=topZ-AIM_HEAD_CENTER*sclA+(float)aimOff*sclA;
+			}
 			float aimA[3] ={hxA,hyA,aimz};
 			float headA[3]={hxA,hyA,topZ-2.0f};		// head top (triggerbot box)
 			float feetA[3]={hxA,hyA,feetZ};
@@ -3416,6 +3633,11 @@ void sys_glOrtho (GLdouble left,  GLdouble right,  GLdouble bottom,  GLdouble to
 
 void sys_glPopMatrix (void)
 {
+	// After the model's vertices: bones are posed for THIS entity. Doing it
+	// at ShadeModel(GL_SMOOTH) risked reading the previous model's matrices.
+	// CaptureStudioHead self-gates (aim off / not a player / already have a head).
+	CaptureStudioHead();
+
 	if (player.get) // player was drawn
 	{
 		player.get=false;
@@ -4015,6 +4237,7 @@ void sys_wglSwapBuffers(HDC hDC)
 		EnsureNoRecoilHook();	// (un)install the V_CalcRefdef detour for no visual recoil
 		if(perf){ QueryPerformanceCounter(&ovA); espA=ovA; }
 		DrawEngineEsp();	// radar + engine ESP + own HUD (bottom overlay layer)
+		memset(eng_bone_ok,0,sizeof(eng_bone_ok));	// next frame's ShadeModel refills
 		if(perf) QueryPerformanceCounter(&espB);
 		DrawToast();		// feature toggle notifications (middle layer)
 		DrawAimStatus();	// pink Hold/Toggle aim-key status (middle layer)
