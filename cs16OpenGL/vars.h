@@ -254,7 +254,7 @@ float	eng_aim_sx		=0.0f;	// target screen x (px, 0..vp[2])
 float	eng_aim_sy		=0.0f;	// target screen y (px, 0..vp[3])
 bool	eng_aim_visible	=true;	// false if blocked by a wall (depth-buffer test)
 char	eng_hb_ok[33]	={0};	// 1 = this frame's studio draw posed hitboxes for the slot
-char	eng_hb_mask[33]	={0};	// bit0=head bit1=chest bit2=stomach bit3=legs
+char	eng_hb_mask[33]	={0};	// bit0=head bit1=chest bit2=stomach bit3=thigh bit4=feet
 float	eng_hb_head[33][3]={0};
 float	eng_hb_chest[33][3]={0};
 float	eng_hb_stom[33][3]={0};

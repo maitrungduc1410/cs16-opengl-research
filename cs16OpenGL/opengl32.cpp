@@ -1646,7 +1646,8 @@ DWORD EngFn(int slot){ return ReadDW(eng_table+slot*4); }
 #define HB_HEAD				1
 #define HB_CHEST			2
 #define HB_STOMACH			4
-#define HB_LEGS				8
+#define HB_THIGH			8
+#define HB_FEET				16
 #define AIMHB_HEAD			0
 #define AIMHB_NECK			1
 #define AIMHB_CHEST			2
@@ -1753,11 +1754,13 @@ static bool BoneXformPoint(void *bt,int bone,float lx,float ly,float lz,float *o
 	return true;
 }
 
-typedef struct { int bone; float c[3], mn[3], mx[3]; } stu_hbc_t;
+#define STU_HB_MAX 32
+typedef struct { int bone, group; float c[3], mn[3], mx[3]; } stu_hbc_t;
 
 static void StuHbRead(DWORD b, stu_hbc_t *o)
 {
 	o->bone=*(int*)b;
+	o->group=*(int*)(b+4);
 	float *mn=(float*)(b+8), *mx=(float*)(b+20);
 	o->mn[0]=mn[0]; o->mn[1]=mn[1]; o->mn[2]=mn[2];
 	o->mx[0]=mx[0]; o->mx[1]=mx[1]; o->mx[2]=mx[2];
@@ -1767,8 +1770,8 @@ static void StuHbRead(DWORD b, stu_hbc_t *o)
 static bool StuNearOrigin(const float *w, float ox, float oy, float oz)
 {
 	float dx=w[0]-ox, dy=w[1]-oy, dz=w[2]-oz;
-	if(dx*dx+dy*dy+dz*dz>80.0f*80.0f) return false;
-	if(dz<-40.0f || dz>72.0f) return false;
+	if(dx*dx+dy*dy+dz*dz>90.0f*90.0f) return false;
+	if(dz<-52.0f || dz>80.0f) return false;
 	return true;
 }
 
@@ -1785,6 +1788,13 @@ static bool StuXformLo(void *bt, const stu_hbc_t *h, float *lo)
 		if(w[2]<minz){ minz=w[2]; lo[0]=w[0]; lo[1]=w[1]; lo[2]=w[2]; got=1; }
 	}
 	return got!=0;
+}
+
+static void Vec3Set(float *d, float x, float y, float z){ d[0]=x; d[1]=y; d[2]=z; }
+static void Vec3Cpy(float *d, const float *s){ d[0]=s[0]; d[1]=s[1]; d[2]=s[2]; }
+static void Vec3Lerp(const float *a, const float *b, float t, float *o)
+{
+	o[0]=a[0]+(b[0]-a[0])*t; o[1]=a[1]+(b[1]-a[1])*t; o[2]=a[2]+(b[2]-a[2])*t;
 }
 
 // Called from sys_glPopMatrix once the model has been posed. Cheap reject
@@ -1812,61 +1822,21 @@ static void CaptureStudioHead()
 	if(!hdr || !IsReadable(hdr,164)) return;
 
 	static DWORD cache_hdr=0;
-	static stu_hbc_t cache_head, cache_chest, cache_stom, cache_lleg, cache_rleg;
-	static int cache_have=0;
+	static stu_hbc_t cache_hb[STU_HB_MAX];
+	static int cache_nhb=0;
 	if(hdr!=cache_hdr)
 	{
-		memset(&cache_head,0,sizeof(cache_head));
-		memset(&cache_chest,0,sizeof(cache_chest));
-		memset(&cache_stom,0,sizeof(cache_stom));
-		memset(&cache_lleg,0,sizeof(cache_lleg));
-		memset(&cache_rleg,0,sizeof(cache_rleg));
-		cache_have=0; cache_hdr=hdr;
+		cache_hdr=hdr; cache_nhb=0;
 		int numhb=*(int*)(hdr+STUDIO_HDR_NUMHB);
 		int hbidx=*(int*)(hdr+STUDIO_HDR_HBIDX);
 		if(numhb>0 && numhb<=128 && hbidx>0 && IsReadable(hdr+(DWORD)hbidx,(DWORD)numhb*STUDIO_HITBOX_SIZE))
 		{
+			if(numhb>STU_HB_MAX) numhb=STU_HB_MAX;
 			for(int i=0;i<numhb;i++)
-			{
-				DWORD b=hdr+(DWORD)hbidx+(DWORD)i*STUDIO_HITBOX_SIZE;
-				int g=*(int*)(b+4);
-				if(g==HITGROUP_HEAD && !(cache_have&HB_HEAD))
-				{ StuHbRead(b,&cache_head); cache_have|=HB_HEAD; }
-				else if(g==HITGROUP_CHEST && !(cache_have&HB_CHEST))
-				{ StuHbRead(b,&cache_chest); cache_have|=HB_CHEST; }
-				else if(g==HITGROUP_STOMACH && !(cache_have&HB_STOMACH))
-				{ StuHbRead(b,&cache_stom); cache_have|=HB_STOMACH; }
-				else if(g==HITGROUP_LLEG && cache_lleg.bone==0 && cache_lleg.c[0]==0 && cache_lleg.c[1]==0)
-				{ StuHbRead(b,&cache_lleg); cache_have|=HB_LEGS; }
-				else if(g==HITGROUP_RLEG && cache_rleg.bone==0 && cache_rleg.c[0]==0 && cache_rleg.c[1]==0)
-				{ StuHbRead(b,&cache_rleg); cache_have|=HB_LEGS; }
-			}
-		}
-		if(!(cache_have&HB_HEAD))
-		{
-			int nb=*(int*)(hdr+STUDIO_HDR_NUMBONES);
-			int bo=*(int*)(hdr+STUDIO_HDR_BONEIDX);
-			if(nb>0 && nb<256 && bo>0 && IsReadable(hdr+(DWORD)bo,(DWORD)nb*STUDIO_BONE_SIZE))
-			{
-				for(int i=0;i<nb;i++)
-				{
-					const char *nm=(const char*)(hdr+(DWORD)bo+(DWORD)i*STUDIO_BONE_SIZE);
-					if(!IsReadable((DWORD)nm,10)) continue;
-					int n=0; while(n<31 && nm[n]) n++;
-					if(n>=4 && nm[n-4]=='H' && nm[n-3]=='e' && nm[n-2]=='a' && nm[n-1]=='d')
-					{
-						cache_head.bone=i;
-						cache_head.c[0]=cache_head.c[1]=cache_head.c[2]=0;
-						cache_head.mn[0]=cache_head.mn[1]=cache_head.mn[2]=0;
-						cache_head.mx[0]=cache_head.mx[1]=cache_head.mx[2]=0;
-						cache_have|=HB_HEAD;
-						break;
-					}
-				}
-			}
+				StuHbRead(hdr+(DWORD)hbidx+(DWORD)i*STUDIO_HITBOX_SIZE, &cache_hb[cache_nhb++]);
 		}
 	}
-	if(!cache_have) return;				// weapon / prop: no body hitboxes
+	if(cache_nhb<=0) return;			// weapon / prop: no hitboxes
 
 	stu_GetBoneTransform_t getBT=(stu_GetBoneTransform_t)ReadDW(g_studio+STU_GETBONEXFORM*4);
 	if((DWORD)getBT<0x10000) return;
@@ -1876,90 +1846,89 @@ static void CaptureStudioHead()
 	if(g_bt_deref==0)
 	{
 		float probe[3];
-		int pb=(cache_have&HB_HEAD)?cache_head.bone:0;
-		if(BoneXformPoint(bt,pb,0,0,0,probe)) g_bt_deref=1;
+		if(BoneXformPoint(bt,cache_hb[0].bone,0,0,0,probe)) g_bt_deref=1;
 		else if(IsReadable((DWORD)bt,4))
 		{
 			g_bt_deref=2;
-			if(!BoneXformPoint(bt,pb,0,0,0,probe)) { g_bt_deref=0; return; }
+			if(!BoneXformPoint(bt,cache_hb[0].bone,0,0,0,probe)) { g_bt_deref=0; return; }
 		}
 		else return;
 	}
 
 	float ox=EFlt(ent+ENT_ORIGIN), oy=EFlt(ent+ENT_ORIGIN+4), oz=EFlt(ent+ENT_ORIGIN+8);
+	float ctr[STU_HB_MAX][3], lo[STU_HB_MAX][3];
+	int ok[STU_HB_MAX];
+	int nok=0;
+	for(int i=0;i<cache_nhb;i++)
+	{
+		ok[i]=0;
+		if(!BoneXformPoint(bt,cache_hb[i].bone,cache_hb[i].c[0],cache_hb[i].c[1],cache_hb[i].c[2],ctr[i]))
+			continue;
+		if(!StuNearOrigin(ctr[i],ox,oy,oz)) continue;
+		if(!StuXformLo(bt,&cache_hb[i],lo[i])) Vec3Cpy(lo[i],ctr[i]);
+		ok[i]=1; nok++;
+	}
+	if(nok<=0) return;
+
+	float head[3], chest[3], stom[3], thigh[3], feet[3];
+	int haveH=0, haveC=0, haveS=0, haveT=0, haveF=0;
+	float hiZ=-1e9f, loZ=1e9f;
+	int iHi=-1, iLo=-1;
+	float legC[3]={0,0,0}, legF[3]={0,0,0}; int nleg=0;
+	for(int i=0;i<cache_nhb;i++)
+	{
+		if(!ok[i]) continue;
+		if(ctr[i][2]>hiZ){ hiZ=ctr[i][2]; iHi=i; }
+		if(lo[i][2]<loZ){ loZ=lo[i][2]; iLo=i; }
+		int g=cache_hb[i].group;
+		if(g==HITGROUP_HEAD && !haveH){ Vec3Cpy(head,ctr[i]); haveH=1; }
+		if(g==HITGROUP_CHEST && !haveC){ Vec3Cpy(chest,ctr[i]); haveC=1; }
+		if(g==HITGROUP_STOMACH)
+		{
+			if(!haveS || ctr[i][2]<stom[2]) { Vec3Cpy(stom,ctr[i]); haveS=1; }
+		}
+		if(g==HITGROUP_LLEG || g==HITGROUP_RLEG)
+		{
+			legC[0]+=ctr[i][0]; legC[1]+=ctr[i][1]; legC[2]+=ctr[i][2];
+			legF[0]+=lo[i][0];  legF[1]+=lo[i][1];  legF[2]+=lo[i][2];
+			nleg++;
+		}
+	}
+	if(!haveH && iHi>=0){ Vec3Cpy(head,ctr[iHi]); haveH=1; }
+	if(nleg)
+	{
+		float inv=1.0f/(float)nleg;
+		Vec3Set(thigh,legC[0]*inv,legC[1]*inv,legC[2]*inv); haveT=1;
+		Vec3Set(feet, legF[0]*inv,legF[1]*inv,legF[2]*inv); haveF=1;
+	}
+	else if(iLo>=0){ Vec3Cpy(feet,lo[iLo]); haveF=1; }
+
+	// Missing parts: interpolate along the posed head→feet axis so a model
+	// without group 3/6/7 still gets a stomach/thigh/foot, not a copied head.
+	if(haveH && haveF)
+	{
+		if(!haveC) Vec3Lerp(feet,head,0.68f,chest), haveC=1;
+		if(!haveS) Vec3Lerp(feet,head,0.50f,stom),  haveS=1;
+		if(!haveT) Vec3Lerp(feet,head,0.30f,thigh), haveT=1;
+	}
+
+	if(!haveH && !haveC && !haveS && !haveT && !haveF) return;
+
 	int mask=0;
-	float head[3]={0,0,0}, chest[3]={0,0,0}, stom[3]={0,0,0};
-	float thigh[3]={0,0,0}, feet[3]={0,0,0};
-	int nleg=0;
-
-	if(cache_have&HB_HEAD)
+	if(haveH){ Vec3Cpy(eng_hb_head[idx],head); mask|=HB_HEAD; }
+	if(haveC){ Vec3Cpy(eng_hb_chest[idx],chest); mask|=HB_CHEST; }
+	if(haveS){ Vec3Cpy(eng_hb_stom[idx],stom); mask|=HB_STOMACH; }
+	if(haveF && !haveT)
 	{
-		if(BoneXformPoint(bt,cache_head.bone,cache_head.c[0],cache_head.c[1],cache_head.c[2],head)
-		   && StuNearOrigin(head,ox,oy,oz))
-			mask|=HB_HEAD;
+		if(haveH) Vec3Lerp(feet,head,0.30f,thigh);
+		else if(haveC) Vec3Lerp(feet,chest,0.45f,thigh);
+		else { Vec3Cpy(thigh,feet); thigh[2]+=12.0f; }
+		haveT=1;
 	}
-	if(cache_have&HB_CHEST)
-	{
-		if(BoneXformPoint(bt,cache_chest.bone,cache_chest.c[0],cache_chest.c[1],cache_chest.c[2],chest)
-		   && StuNearOrigin(chest,ox,oy,oz))
-			mask|=HB_CHEST;
-	}
-	if(cache_have&HB_STOMACH)
-	{
-		if(BoneXformPoint(bt,cache_stom.bone,cache_stom.c[0],cache_stom.c[1],cache_stom.c[2],stom)
-		   && StuNearOrigin(stom,ox,oy,oz))
-			mask|=HB_STOMACH;
-	}
-	if(cache_have&HB_LEGS)
-	{
-		float lc[3], rc[3], llo[3], rlo[3];
-		int gotL=0, gotR=0;
-		if(cache_lleg.bone || cache_lleg.c[0]||cache_lleg.c[1]||cache_lleg.c[2])
-		{
-			if(BoneXformPoint(bt,cache_lleg.bone,cache_lleg.c[0],cache_lleg.c[1],cache_lleg.c[2],lc)
-			   && StuNearOrigin(lc,ox,oy,oz))
-			{
-				gotL=1;
-				if(!StuXformLo(bt,&cache_lleg,llo)) { llo[0]=lc[0]; llo[1]=lc[1]; llo[2]=lc[2]; }
-			}
-		}
-		if(cache_rleg.bone || cache_rleg.c[0]||cache_rleg.c[1]||cache_rleg.c[2])
-		{
-			if(BoneXformPoint(bt,cache_rleg.bone,cache_rleg.c[0],cache_rleg.c[1],cache_rleg.c[2],rc)
-			   && StuNearOrigin(rc,ox,oy,oz))
-			{
-				gotR=1;
-				if(!StuXformLo(bt,&cache_rleg,rlo)) { rlo[0]=rc[0]; rlo[1]=rc[1]; rlo[2]=rc[2]; }
-			}
-		}
-		if(gotL && gotR)
-		{
-			thigh[0]=0.5f*(lc[0]+rc[0]); thigh[1]=0.5f*(lc[1]+rc[1]); thigh[2]=0.5f*(lc[2]+rc[2]);
-			feet[0]=0.5f*(llo[0]+rlo[0]); feet[1]=0.5f*(llo[1]+rlo[1]); feet[2]=0.5f*(llo[2]+rlo[2]);
-			nleg=2;
-		}
-		else if(gotL) { thigh[0]=lc[0]; thigh[1]=lc[1]; thigh[2]=lc[2]; feet[0]=llo[0]; feet[1]=llo[1]; feet[2]=llo[2]; nleg=1; }
-		else if(gotR) { thigh[0]=rc[0]; thigh[1]=rc[1]; thigh[2]=rc[2]; feet[0]=rlo[0]; feet[1]=rlo[1]; feet[2]=rlo[2]; nleg=1; }
-		if(nleg) mask|=HB_LEGS;
-	}
-
-	if(!mask) return;
-
-	if(mask&HB_HEAD){ eng_hb_head[idx][0]=head[0]; eng_hb_head[idx][1]=head[1]; eng_hb_head[idx][2]=head[2]; }
-	if(mask&HB_CHEST){ eng_hb_chest[idx][0]=chest[0]; eng_hb_chest[idx][1]=chest[1]; eng_hb_chest[idx][2]=chest[2]; }
-	if(mask&HB_STOMACH){ eng_hb_stom[idx][0]=stom[0]; eng_hb_stom[idx][1]=stom[1]; eng_hb_stom[idx][2]=stom[2]; }
-	if(mask&HB_LEGS)
-	{
-		eng_hb_thigh[idx][0]=thigh[0]; eng_hb_thigh[idx][1]=thigh[1]; eng_hb_thigh[idx][2]=thigh[2];
-		eng_hb_feet[idx][0]=feet[0]; eng_hb_feet[idx][1]=feet[1]; eng_hb_feet[idx][2]=feet[2];
-	}
+	if(haveT){ Vec3Cpy(eng_hb_thigh[idx],thigh); mask|=HB_THIGH; }
+	if(haveF){ Vec3Cpy(eng_hb_feet[idx],feet); mask|=HB_FEET; }
 	eng_hb_mask[idx]=(char)mask;
 	eng_hb_ok[idx]=1;
-}
-
-static void Vec3Lerp(const float *a, const float *b, float t, float *o)
-{
-	o[0]=a[0]+(b[0]-a[0])*t; o[1]=a[1]+(b[1]-a[1])*t; o[2]=a[2]+(b[2]-a[2])*t;
 }
 
 // Pick the posed studio point for cvar.aim_hitbox. Neck is 65% of the way
@@ -1986,17 +1955,11 @@ static bool PickStudioAim(int idx, float *hx, float *hy, float *hz)
 	{ p[0]=eng_hb_chest[idx][0]; p[1]=eng_hb_chest[idx][1]; p[2]=eng_hb_chest[idx][2]; got=1; }
 	else if(want==AIMHB_STOMACH && (m&HB_STOMACH))
 	{ p[0]=eng_hb_stom[idx][0]; p[1]=eng_hb_stom[idx][1]; p[2]=eng_hb_stom[idx][2]; got=1; }
-	else if(want==AIMHB_THIGH && (m&HB_LEGS))
+	else if(want==AIMHB_THIGH && (m&HB_THIGH))
 	{ p[0]=eng_hb_thigh[idx][0]; p[1]=eng_hb_thigh[idx][1]; p[2]=eng_hb_thigh[idx][2]; got=1; }
-	else if(want==AIMHB_FEET && (m&HB_LEGS))
+	else if(want==AIMHB_FEET && (m&HB_FEET))
 	{ p[0]=eng_hb_feet[idx][0]; p[1]=eng_hb_feet[idx][1]; p[2]=eng_hb_feet[idx][2]; got=1; }
-	if(!got)
-	{
-		if(m&HB_HEAD)      { p[0]=eng_hb_head[idx][0]; p[1]=eng_hb_head[idx][1]; p[2]=eng_hb_head[idx][2]; got=1; }
-		else if(m&HB_CHEST){ p[0]=eng_hb_chest[idx][0]; p[1]=eng_hb_chest[idx][1]; p[2]=eng_hb_chest[idx][2]; got=1; }
-		else if(m&HB_STOMACH){ p[0]=eng_hb_stom[idx][0]; p[1]=eng_hb_stom[idx][1]; p[2]=eng_hb_stom[idx][2]; got=1; }
-		else if(m&HB_LEGS) { p[0]=eng_hb_thigh[idx][0]; p[1]=eng_hb_thigh[idx][1]; p[2]=eng_hb_thigh[idx][2]; got=1; }
-	}
+	// No substituting a different body part (that put Feet on the skull).
 	if(!got) return false;
 	*hx=p[0]; *hy=p[1]; *hz=p[2];
 	return true;
