@@ -58,6 +58,11 @@ float curcolor[4];
 // skull, so drop by this many world units to land at the CENTER of the head.
 // cvar.aim_point is then added on top to let the user fine-tune the aim height.
 #define AIM_HEAD_CENTER 5.0f
+// Fallback XY offset (world units) along the player's yaw when studio
+// attachment[0] hasn't been posed this frame. The skull sits a few units
+// in front of the hull origin; face-on that is along the line of sight
+// (no screen drift), side-on / strafe it is across the screen (the miss).
+#define AIM_HEAD_FWD    8.0f
 
 // No Flash: a flashbang is ONE opaque white onset followed by a long translucent
 // fade. We latch on the opaque onset, then keep suppressing the fullscreen fade
@@ -1366,6 +1371,8 @@ void DrawCheckText(int x,int y) // bad way of doing this
 #define ENT_CURSTATE		0x2B0	// cl_entity_t: entity_state_t curstate
 #define ENT_CURPOS			0x404	// cl_entity_t: current_position (update counter)
 #define ENT_ORIGIN			0xB48	// cl_entity_t: vec3 interpolated origin
+#define ENT_ANGLES			(ENT_ORIGIN+12)		// cl_entity_t: vec3 interpolated angles (pitch/yaw/roll)
+#define ENT_ATTACH0			(ENT_ORIGIN+24)		// cl_entity_t: attachment[0] (world-space head/mouth after StudioDraw)
 #define ENT_MODEL			(ENT_ORIGIN+0x4C)	// cl_entity_t: model_s* model. Lands right after origin(12)+angles(12)+attachment[4](48)+trivial_accept(4)=0x4C past ENT_ORIGIN (SDK-stable layout). model_s::name is a char[64] at offset 0.
 #define ENG_PC4_SCAN_MAX	1024	// highest entity index we scan for the planted-C4 world entity
 #define ENG_PC4_SCAN_MS		1000	// min ms between full entity scans while we DON'T have the bomb. Time-based (not frame-based) so the cost is fps-independent: a frame-count throttle scans MORE per second the higher your fps, dragging framerate down exactly when it's highest. Only affects how fast the marker pops up after a plant / when the bomb re-enters PVS - ~1s latency is imperceptible against a 35-45s bomb timer, and once found the cached slot is re-verified every frame.
@@ -1376,6 +1383,7 @@ void DrawCheckText(int x,int y) // bad way of doing this
 #define ENG_KILL_HIDE_CAP_MS	12000	// safety cap (ms) on the just-killed full-hide: normally a killed slot stays hidden until it RESPAWNS (origin teleport), which on round-based maps is the next round; this backstop just guarantees a slot can't be stuck hidden forever if we somehow never see the respawn teleport. Comfortably longer than how long a corpse keeps streaming (~5s), so the body has gone stale well before it lapses.
 #define ES_MSGNUM			0x00C	// entity_state_t::messagenum (int) - set to the current parse msg# when an entity is in the received snapshot; lets us tell a live entity from a stale/freed cl_entity slot
 #define ES_ORIGIN			0x010	// entity_state_t::origin (vec3)
+#define ES_SOLID			0x03A	// entity_state_t::solid (short) - 0 = SOLID_NOT (corpse you can walk through)
 #define ES_SCALE			0x040	// entity_state_t::scale (float) - studio model scale; "midget"/resize servers set this <1 to shrink a player (0 or 1 = normal size)
 #define ES_MINS				0x07C	// entity_state_t::mins (vec3) - real per-entity hull min; reflects a resized (short) player when the server streams it
 #define ES_MAXS				0x088	// entity_state_t::maxs (vec3) - real per-entity hull max; maxs[2] is the true crown height for THIS player
@@ -2326,6 +2334,11 @@ void DrawEngineEsp()
 	bool need_aim  = (cvar.aim!=0);
 	bool need_scan = need_aim || cvar.trigger || cvar.esp_log;
 	if(!cvar.esp_engine && !cvar.esp_hud && !cvar.radar && !need_scan && !cvar.bhop) return;
+	// DeathMsg / ScoreAttrib / TeamInfo drive aim hide + team filter even
+	// when the HUD arcs are off. Used to live only inside the HUD block, so
+	// a kill by someone else never stamped eng_kill_time and the corpse
+	// kept its aim-dot for the whole death-anim stream.
+	HookOwnMsgs();
 	eng_frame++;
 
 	GLint vpe[4];
@@ -2378,7 +2391,6 @@ void DrawEngineEsp()
 	// engine entity table, so draw them before the table-ready check below.
 	if(cvar.esp_hud)
 	{
-		HookOwnMsgs();
 		if(cvar.perf)
 		{
 			LARGE_INTEGER a,b; QueryPerformanceCounter(&a);
@@ -2550,6 +2562,21 @@ void DrawEngineEsp()
 			if(o[0]==0&&o[1]==0&&o[2]==0) continue;
 		}
 
+		// Extra death signals on top of DeathMsg (which we now hook even with
+		// HUD off). ScoreAttrib bit0 stays set until respawn. solid==0 is the
+		// walk-through corpse. Either one means "dead this frame" even if the
+		// user-message never arrived (or arrived for someone else's kill after
+		// the 400ms stale timer would have been the only other gate).
+		bool attrib_dead = (eng_msg_attrib[idx]&1)!=0;
+		short esolid = *(short*)(ent+ENT_CURSTATE+ES_SOLID);
+		bool looks_dead = attrib_dead || EngDead(idx) || (esolid==0);
+		if(looks_dead && !eng_kill_time[idx] && !eng_dead_at[idx])
+		{
+			eng_dead_at[idx]=now;
+			eng_kill_time[idx]=now;
+			eng_kill_org_set[idx]=false;
+		}
+
 		// DeathMsg instant-death latch: the moment a slot dies it is dropped from
 		// EVERYTHING below (ESP box/name/radar/aim/trigger) that same frame, and it
 		// STAYS dropped until we're sure what happened next. A fixed-time hold isn't
@@ -2576,13 +2603,15 @@ void DrawEngineEsp()
 				eng_kill_org[idx][0]=o[0]; eng_kill_org[idx][1]=o[1]; eng_kill_org[idx][2]=o[2]; eng_kill_org_set[idx]=true;
 			}
 			float jx=o[0]-eng_dead_org[idx][0], jy=o[1]-eng_dead_org[idx][1], jz=o[2]-eng_dead_org[idx][2];
-			bool respawned=(jx*jx+jy*jy+jz*jz)>(ENG_RESPAWN_DIST*ENG_RESPAWN_DIST);
+			// A running corpse still interpolates; 150u of slide is NOT a respawn.
+			// Only treat a jump as a new life when the slot also looks alive.
+			bool respawned=!looks_dead && (jx*jx+jy*jy+jz*jz)>(ENG_RESPAWN_DIST*ENG_RESPAWN_DIST);
 			if(respawned) { eng_kill_time[idx]=0; eng_kill_org_set[idx]=false; }	// respawn teleport during the latch -> lift the hide at once
 			if(EngDead(idx) || stale || respawned || (now-eng_dead_at[idx])>ENG_DEATH_HOLD_MAX_MS)
 			{ eng_dead_at[idx]=0; eng_dead_org_set[idx]=false; }	// released; the normal gate below decides corpse(hide)/respawn(show)
 			else continue;					// still in the post-death gap -> stay hidden
 		}
-		if(EngDead(idx) || stale) continue;
+		if(EngDead(idx) || stale || looks_dead) continue;
 
 		// just-killed FULL HIDE: a killed slot stays completely hidden (name, box,
 		// radar, aim dot, aimbot, triggerbot) until the player RESPAWNS - detected as
@@ -2598,7 +2627,7 @@ void DrawEngineEsp()
 			else
 			{
 				float kx=o[0]-eng_kill_org[idx][0], ky=o[1]-eng_kill_org[idx][1], kz=o[2]-eng_kill_org[idx][2];
-				bool kteleport=(kx*kx+ky*ky+kz*kz)>(ENG_RESPAWN_DIST*ENG_RESPAWN_DIST);
+				bool kteleport=!looks_dead && (kx*kx+ky*ky+kz*kz)>(ENG_RESPAWN_DIST*ENG_RESPAWN_DIST);
 				if(kteleport || (now-eng_kill_time[idx])>ENG_KILL_HIDE_CAP_MS)
 				{ eng_kill_time[idx]=0; eng_kill_org_set[idx]=false; }
 			}
@@ -2654,12 +2683,28 @@ void DrawEngineEsp()
 		{
 			int usehullA=EInt(ent+ENT_CURSTATE+ES_USEHULL);
 			// Head geometry from the player's REAL extent (see PlayerVExtent):
-			// XY = origin, top = crown, feet = feet. Short models report a lower
-			// crown, so the aim point follows the real head instead of floating
-			// above it. sclA = real/nominal height ratio (1.0 on normal servers).
-			float hxA=o[0], hyA=o[1];				// head XY
+			// top = crown, feet = feet. Short models report a lower crown, so
+			// the aim point follows the real head instead of floating above it.
+			// sclA = real/nominal height ratio (1.0 on normal servers).
+			// XY: studio attachment[0] (head/mouth, posed this frame) so a
+			// yawed / strafing model keeps the point on the skull. Hull origin
+			// is the body center - face-on that projects onto the head, side-on
+			// it sits beside/behind the helmet (the miss in the screenshots).
 			float topZ, feetZ, sclA;
 			PlayerVExtent(ent, o[2], usehullA, &topZ, &feetZ, &sclA);
+			float hxA=o[0], hyA=o[1];
+			{
+				float atx=EFlt(ent+ENT_ATTACH0), aty=EFlt(ent+ENT_ATTACH0+4);
+				float adx=atx-o[0], ady=aty-o[1], ad2=adx*adx+ady*ady;
+				if(ad2>0.25f && ad2<(48.0f*48.0f))
+				{ hxA=atx; hyA=aty; }
+				else
+				{
+					float yaw=EFlt(ent+ENT_ANGLES+4)*(3.14159265f/180.0f);
+					hxA=o[0]+AIM_HEAD_FWD*sclA*cosf(yaw);
+					hyA=o[1]+AIM_HEAD_FWD*sclA*sinf(yaw);
+				}
+			}
 			// Aim point: the CENTER of the head (the top sits a few units above the
 			// skull, so drop by AIM_HEAD_CENTER), plus the user's vertical offset.
 			// Standing and crouching are tuned SEPARATELY (world units, +=higher):
