@@ -58,11 +58,13 @@ float curcolor[4];
 // skull, so drop by this many world units to land at the CENTER of the head.
 // cvar.aim_point is then added on top to let the user fine-tune the aim height.
 #define AIM_HEAD_CENTER 5.0f
-// Fallback XY offset (world units) along the player's yaw when studio
-// attachment[0] hasn't been posed this frame. The skull sits a few units
-// in front of the hull origin; face-on that is along the line of sight
-// (no screen drift), side-on / strafe it is across the screen (the miss).
-#define AIM_HEAD_FWD    8.0f
+// Small XY push (world units) along the player's yaw. The skull sits a
+// few units in front of the hull origin: face-on that is along the line
+// of sight (screen position unchanged), side-on / strafe it is across
+// the screen (the old "dot beside the helmet" miss). Must stay tiny —
+// CS 1.6 player attachment[0] is the WEAPON muzzle, not the head; we
+// never read attachments for aim.
+#define AIM_HEAD_FWD    5.0f
 
 // No Flash: a flashbang is ONE opaque white onset followed by a long translucent
 // fade. We latch on the opaque onset, then keep suppressing the fullscreen fade
@@ -1372,7 +1374,6 @@ void DrawCheckText(int x,int y) // bad way of doing this
 #define ENT_CURPOS			0x404	// cl_entity_t: current_position (update counter)
 #define ENT_ORIGIN			0xB48	// cl_entity_t: vec3 interpolated origin
 #define ENT_ANGLES			(ENT_ORIGIN+12)		// cl_entity_t: vec3 interpolated angles (pitch/yaw/roll)
-#define ENT_ATTACH0			(ENT_ORIGIN+24)		// cl_entity_t: attachment[0] (world-space head/mouth after StudioDraw)
 #define ENT_MODEL			(ENT_ORIGIN+0x4C)	// cl_entity_t: model_s* model. Lands right after origin(12)+angles(12)+attachment[4](48)+trivial_accept(4)=0x4C past ENT_ORIGIN (SDK-stable layout). model_s::name is a char[64] at offset 0.
 #define ENG_PC4_SCAN_MAX	1024	// highest entity index we scan for the planted-C4 world entity
 #define ENG_PC4_SCAN_MS		1000	// min ms between full entity scans while we DON'T have the bomb. Time-based (not frame-based) so the cost is fps-independent: a frame-count throttle scans MORE per second the higher your fps, dragging framerate down exactly when it's highest. Only affects how fast the marker pops up after a plant / when the bomb re-enters PVS - ~1s latency is imperceptible against a 35-45s bomb timer, and once found the cached slot is re-verified every frame.
@@ -2683,28 +2684,19 @@ void DrawEngineEsp()
 		{
 			int usehullA=EInt(ent+ENT_CURSTATE+ES_USEHULL);
 			// Head geometry from the player's REAL extent (see PlayerVExtent):
-			// top = crown, feet = feet. Short models report a lower crown, so
-			// the aim point follows the real head instead of floating above it.
-			// sclA = real/nominal height ratio (1.0 on normal servers).
-			// XY: studio attachment[0] (head/mouth, posed this frame) so a
-			// yawed / strafing model keeps the point on the skull. Hull origin
-			// is the body center - face-on that projects onto the head, side-on
-			// it sits beside/behind the helmet (the miss in the screenshots).
+			// XY = hull origin + a few units along yaw (the skull is slightly
+			// in front of the body center). Do NOT use studio attachments:
+			// on CS 1.6 player models attachment[0] is the weapon muzzle, so
+			// the dot jumps to the gun tip (the regression after the first
+			// "follow the head" attempt). top = crown, feet = feet. Short
+			// models report a lower crown, so the aim point follows the real
+			// head instead of floating above it. sclA = real/nominal height
+			// ratio (1.0 on normal servers).
 			float topZ, feetZ, sclA;
 			PlayerVExtent(ent, o[2], usehullA, &topZ, &feetZ, &sclA);
-			float hxA=o[0], hyA=o[1];
-			{
-				float atx=EFlt(ent+ENT_ATTACH0), aty=EFlt(ent+ENT_ATTACH0+4);
-				float adx=atx-o[0], ady=aty-o[1], ad2=adx*adx+ady*ady;
-				if(ad2>0.25f && ad2<(48.0f*48.0f))
-				{ hxA=atx; hyA=aty; }
-				else
-				{
-					float yaw=EFlt(ent+ENT_ANGLES+4)*(3.14159265f/180.0f);
-					hxA=o[0]+AIM_HEAD_FWD*sclA*cosf(yaw);
-					hyA=o[1]+AIM_HEAD_FWD*sclA*sinf(yaw);
-				}
-			}
+			float yawA=EFlt(ent+ENT_ANGLES+4)*(3.14159265f/180.0f);
+			float hxA=o[0]+AIM_HEAD_FWD*sclA*cosf(yawA);
+			float hyA=o[1]+AIM_HEAD_FWD*sclA*sinf(yawA);
 			// Aim point: the CENTER of the head (the top sits a few units above the
 			// skull, so drop by AIM_HEAD_CENTER), plus the user's vertical offset.
 			// Standing and crouching are tuned SEPARATELY (world units, +=higher):
