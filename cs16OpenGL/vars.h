@@ -66,6 +66,7 @@ typedef struct { // cvars (of course ;P)
 	int	aim_smooth;	// 0=snap, 1..10 = smoothing strength (higher = smoother/slower)
 	int	aim_dot;	// aimbot: draw a dot at the exact point the aimbot aims at
 	int	aim_hitbox;	// aimbot: 0=head 1=neck 2=chest
+	int	aim_pt;		// aimbot: fine offset along head→chest (neg = lower). One value for stand+duck.
 	int	aim_mode;	// aimbot trigger: 0=Always on, 1=Hold key, 2=Toggle key
 	int	aim_key;	// aimbot activation key (index into the shared key table)
 	int	trigger;	// triggerbot: auto-fire when crosshair is over an enemy (engine list)

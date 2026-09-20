@@ -124,6 +124,7 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "aim_smooth %i;",&cvar.aim_smooth);
 					sscanf(str, "aim_dot %i;"	,&cvar.aim_dot);
 					sscanf(str, "aim_hitbox %i;"	,&cvar.aim_hitbox);
+					sscanf(str, "aim_pt %i;"	,&cvar.aim_pt);
 					sscanf(str, "aim_mode %i;"	,&cvar.aim_mode);
 					sscanf(str, "aim_key %i;"	,&cvar.aim_key);
 					sscanf(str, "trigger %i;"	,&cvar.trigger);
@@ -219,6 +220,7 @@ void SaveSettings()
 	fprintf(f,"aim_smooth %i\n",cvar.aim_smooth);
 	fprintf(f,"aim_dot %i\n",cvar.aim_dot);
 	fprintf(f,"aim_hitbox %i\n",cvar.aim_hitbox);
+	fprintf(f,"aim_pt %i\n",cvar.aim_pt);
 	fprintf(f,"aim_mode %i\n",cvar.aim_mode);
 	fprintf(f,"aim_key %i\n",cvar.aim_key);
 	fprintf(f,"trigger %i\n",cvar.trigger);
@@ -305,6 +307,7 @@ void LoadSettings()
 		sscanf(str,"aim_smooth %i"	,&cvar.aim_smooth);
 		sscanf(str,"aim_dot %i"		,&cvar.aim_dot);
 		sscanf(str,"aim_hitbox %i"	,&cvar.aim_hitbox);
+		sscanf(str,"aim_pt %i"		,&cvar.aim_pt);
 		sscanf(str,"aim_mode %i"	,&cvar.aim_mode);
 		sscanf(str,"aim_key %i"		,&cvar.aim_key);
 		sscanf(str,"trigger %i"		,&cvar.trigger);
@@ -387,6 +390,7 @@ void HookInit(bool activate)
 		LoadFile("oglconf.cfg",0);	// read DEFAULT cvar settings
 		LoadSettings();				// override defaults with the user's saved settings (if any)
 		if(cvar.aim_hitbox<0 || cvar.aim_hitbox>2) cvar.aim_hitbox=0;
+		if(cvar.aim_pt<-20) cvar.aim_pt=-20; if(cvar.aim_pt>20) cvar.aim_pt=20;
 		if(cvar.menu_vis_rows<4)  cvar.menu_vis_rows=4;
 		if(cvar.menu_vis_rows>55) cvar.menu_vis_rows=55;
 		oldtarget=cvar.target;		// sync so the line below keeps the restored target
@@ -402,6 +406,7 @@ void HookInit(bool activate)
 		cvar.aim_smooth=0;
 		cvar.aim_dot=0;
 		cvar.aim_hitbox=0;
+		cvar.aim_pt=0;
 		cvar.trigger=0;
 		cvar.trigger_delay=0;
 		cvar.autofire=0;
@@ -551,7 +556,7 @@ void MoveActivePanel(int dx,int dy)
 void ResetConfig()
 {
 	// 1) zero all gameplay cvars so stale save values can't bleed through
-	cvar.aim=0; cvar.aim_smooth=0; cvar.aim_dot=0; cvar.aim_hitbox=0; cvar.aim_mode=0; cvar.aim_key=0;
+	cvar.aim=0; cvar.aim_smooth=0; cvar.aim_dot=0; cvar.aim_hitbox=0; cvar.aim_pt=0; cvar.aim_mode=0; cvar.aim_key=0;
 	cvar.trigger=0; cvar.trigger_delay=0;
 	cvar.autofire=0; cvar.autofire_rate=0; cvar.bhop=0; cvar.bhop_hold=0; cvar.bhop_key=0; cvar.notify=0; cvar.esp_log=0; cvar.perf=0;
 	cvar.aimthru=0; cvar.esp_engine=0; cvar.esp_name=0; cvar.esp_name_pad=0; cvar.esp_name_size=2; cvar.esp_box=0;
@@ -937,6 +942,7 @@ void DrawMenu(int x, int y)
 		{"FOV",         IT_INT,    &cvar.fov,        0,1000,10,   1, &cvar.aim,  1},
 		{"Aim dot",     IT_TOGGLE, &cvar.aim_dot,    0,0,0,       0, &cvar.aim,  1},
 		{"Aim at",      IT_INT,    &cvar.aim_hitbox, 0,2,1,       1, &cvar.aim,  1},
+		{"Aim pt",      IT_INT,    &cvar.aim_pt,     -20,20,1,    0, &cvar.aim,  1},
 		{"Aim mode",    IT_INT,    &cvar.aim_mode,   0,2,1,       1, &cvar.aim,  1},
 		{"Aim key",     IT_INT,    &cvar.aim_key,    0,KEY_TABLE_COUNT-1,1, 1, &cvar.aim, 1},
 		{"Triggerbot",  IT_TOGGLE, &cvar.trigger,    0,0,0,       0, 0,          0},
@@ -1872,6 +1878,29 @@ static bool PickStudioAim(int idx, float *hx, float *hy, float *hz)
 	if(!got) return false;
 	*hx=p[0]; *hy=p[1]; *hz=p[2];
 	return true;
+}
+
+// Fine-tune after Head/Neck/Chest. Negative = lower (toward the chest / feet).
+// Studio: slide along the posed head→chest axis so lean/duck stay correct.
+// Hull / missing axis: add to world Z (old pt behavior).
+static void ApplyAimPt(int idx, float scl, float *hx, float *hy, float *hz)
+{
+	int pt=cvar.aim_pt;
+	if(pt==0) return;
+	if(idx>=1 && idx<=32 && eng_hb_ok[idx]
+		&& (eng_hb_mask[idx]&HB_HEAD) && (eng_hb_mask[idx]&HB_CHEST))
+	{
+		float *h=eng_hb_head[idx], *c=eng_hb_chest[idx];
+		float dx=c[0]-h[0], dy=c[1]-h[1], dz=c[2]-h[2];
+		float L=(float)sqrt(dx*dx+dy*dy+dz*dz);
+		if(L>=1.0f)
+		{
+			float t=-(float)pt/L;	// pt<0 → toward chest
+			*hx+=dx*t; *hy+=dy*t; *hz+=dz*t;
+			return;
+		}
+	}
+	*hz+=(float)pt*scl;
 }
 
 static void HullAimPoint(float ox, float oy, float topZ, float feetZ, float scl,
@@ -2956,6 +2985,7 @@ void DrawEngineEsp()
 			float hxA, hyA, aimz;
 			if(!PickStudioAim(idx,&hxA,&hyA,&aimz))
 				HullAimPoint(o[0],o[1],topZ,feetZ,sclA,&hxA,&hyA,&aimz);
+			ApplyAimPt(idx,sclA,&hxA,&hyA,&aimz);
 			float aimA[3] ={hxA,hyA,aimz};
 			float headA[3]={hxA,hyA,topZ-2.0f};		// head top (triggerbot box)
 			float feetA[3]={hxA,hyA,feetZ};
