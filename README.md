@@ -83,7 +83,7 @@ Open the menu with `Insert`. Use `↑`/`↓` to scroll, `←`/`→` to change a 
 | **- Aimthru** | Aim through walls. Off = depth-buffer visibility check required. |
 | **- FOV** | Screen-pixel radius around the crosshair to search for targets. |
 | **- Aim dot** | Toggle a dot at the exact point the aimbot aims at (each target-team enemy). |
-| **- Aim at** | Body part to aim at: **Head / Neck / Chest / Stomach / Thigh / Feet**. Uses the posed studio hitbox when the model is drawn; hull height is only a fallback if it was not. |
+| **- Aim at** | Body part to aim at: **Head / Neck / Chest**. Uses the posed studio hitbox when the model is drawn; hull height is only a fallback if it was not. |
 | **- Aim mode** | When the aimbot assists: **Always** (on whenever Aimbot is enabled), **Hold** (only while the aim key is held), or **Toggle** (the aim key flips it on/off). Hold/Toggle is far more natural and lowers report risk. |
 | **- Aim key** | The activation key used by Hold / Toggle mode. Cycle through Mouse R / Mouse 4 / Mouse 5 / Mouse M / Shift / Ctrl / Alt / E / F / C / V / X. |
 | **Triggerbot** | Auto-fire when the crosshair rests on an enemy. |
@@ -267,7 +267,7 @@ Mở menu bằng `Insert`. Dùng `↑`/`↓` để cuộn, `←`/`→` để đ�
 | **- Aimthru** | Ngắm xuyên tường. Tắt = bắt buộc kiểm tra tầm nhìn bằng depth-buffer. |
 | **- FOV** | Bán kính tính bằng pixel quanh tâm ngắm để tìm mục tiêu. |
 | **- Aim dot** | Bật/tắt một chấm tại đúng điểm aimbot sẽ ngắm tới. |
-| **- Aim at** | Chỗ ngắm: **Head / Neck / Chest / Stomach / Thigh / Feet**. Lấy hitbox studio khi model đang vẽ; chỉ đoán theo hull nếu frame đó không vẽ model. |
+| **- Aim at** | Chỗ ngắm: **Head / Neck / Chest**. Lấy hitbox studio khi model đang vẽ; chỉ đoán theo hull nếu frame đó không vẽ model. |
 | **- Aim mode** | Khi nào aimbot hỗ trợ: **Always** (luôn bật khi Aimbot bật), **Hold** (chỉ khi giữ phím ngắm), hoặc **Toggle** (phím ngắm bật/tắt). Hold/Toggle tự nhiên hơn nhiều và giảm nguy cơ bị report. |
 | **- Aim key** | Phím kích hoạt cho chế độ Hold / Toggle. Lần lượt: Mouse R / Mouse 4 / Mouse 5 / Mouse M / Shift / Ctrl / Alt / E / F / C / V / X. |
 | **Triggerbot** | Tự động bắn khi tâm ngắm dừng trên kẻ địch. |

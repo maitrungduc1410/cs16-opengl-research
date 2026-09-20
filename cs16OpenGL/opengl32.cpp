@@ -386,6 +386,7 @@ void HookInit(bool activate)
 		cvar.menu_vis_rows=MENU_VIS_ROWS;	// default, overridden by oglconf.cfg then oglsave.cfg
 		LoadFile("oglconf.cfg",0);	// read DEFAULT cvar settings
 		LoadSettings();				// override defaults with the user's saved settings (if any)
+		if(cvar.aim_hitbox<0 || cvar.aim_hitbox>2) cvar.aim_hitbox=0;
 		if(cvar.menu_vis_rows<4)  cvar.menu_vis_rows=4;
 		if(cvar.menu_vis_rows>55) cvar.menu_vis_rows=55;
 		oldtarget=cvar.target;		// sync so the line below keeps the restored target
@@ -935,7 +936,7 @@ void DrawMenu(int x, int y)
 		{"Aimthru",     IT_TOGGLE, &cvar.aimthru,    0,0,0,       0, &cvar.aim,  1},
 		{"FOV",         IT_INT,    &cvar.fov,        0,1000,10,   1, &cvar.aim,  1},
 		{"Aim dot",     IT_TOGGLE, &cvar.aim_dot,    0,0,0,       0, &cvar.aim,  1},
-		{"Aim at",      IT_INT,    &cvar.aim_hitbox, 0,5,1,       1, &cvar.aim,  1},
+		{"Aim at",      IT_INT,    &cvar.aim_hitbox, 0,2,1,       1, &cvar.aim,  1},
 		{"Aim mode",    IT_INT,    &cvar.aim_mode,   0,2,1,       1, &cvar.aim,  1},
 		{"Aim key",     IT_INT,    &cvar.aim_key,    0,KEY_TABLE_COUNT-1,1, 1, &cvar.aim, 1},
 		{"Triggerbot",  IT_TOGGLE, &cvar.trigger,    0,0,0,       0, 0,          0},
@@ -1073,8 +1074,8 @@ void DrawMenu(int x, int y)
 		{
 			if(it->p==&cvar.aim_hitbox)
 			{
-				static const char *hb[6]={"Head","Neck","Chest","Stomach","Thigh","Feet"};
-				int v=*(int*)it->p; if(v<0)v=0; if(v>5)v=5; SetToast("%s: %s", it->label, hb[v]);
+				static const char *hb[3]={"Head","Neck","Chest"};
+				int v=*(int*)it->p; if(v<0)v=0; if(v>2)v=2; SetToast("%s: %s", it->label, hb[v]);
 			}
 			else if(it->p==&cvar.aim_mode)
 			{
@@ -1174,8 +1175,8 @@ void DrawMenu(int x, int y)
 			}
 			else if(it->p==&cvar.aim_hitbox)
 			{
-				static const char *hb[6]={"Head","Neck","Chest","Stomach","Thigh","Feet"};
-				int v=*(int*)it->p; if(v<0)v=0; if(v>5)v=5;
+				static const char *hb[3]={"Head","Neck","Chest"};
+				int v=*(int*)it->p; if(v<0)v=0; if(v>2)v=2;
 				sprintf(buf,"%s%s: %s", pre,it->label,hb[v]);
 			}
 			else if(it->p==&cvar.aim_mode)
@@ -1625,9 +1626,10 @@ DWORD EngFn(int slot){ return ReadDW(eng_table+slot*4); }
 //  Studio hitbox capture (IEngineStudio).
 //
 //  GoldSrc already runs StudioSetupBones when it draws a player. We only READ
-//  posed hitboxes (head/chest/stomach/legs) at glPopMatrix — no second pose,
-//  no per-vertex work. Aim picks among them via cvar.aim_hitbox the same frame
-//  (SwapBuffers); slots that were not drawn keep the hull-height fallback.
+//  the posed HEAD + CHEST hitbox centers at glPopMatrix — two matrix muls,
+//  no second pose, no per-vertex work. Neck is a lerp. Aim picks among them
+//  via cvar.aim_hitbox the same frame (SwapBuffers); slots that were not
+//  drawn keep the hull-height fallback.
 // ---------------------------------------------------------------------------
 #define STU_MOD_EXTRADATA	4	// engine_studio_api_t slot
 #define STU_GETCURRENTENT	6
@@ -1640,20 +1642,11 @@ DWORD EngFn(int slot){ return ReadDW(eng_table+slot*4); }
 #define STUDIO_HITBOX_SIZE	32
 #define HITGROUP_HEAD		1
 #define HITGROUP_CHEST		2
-#define HITGROUP_STOMACH	3
-#define HITGROUP_LLEG		6
-#define HITGROUP_RLEG		7
 #define HB_HEAD				1
 #define HB_CHEST			2
-#define HB_STOMACH			4
-#define HB_THIGH			8
-#define HB_FEET				16
 #define AIMHB_HEAD			0
 #define AIMHB_NECK			1
 #define AIMHB_CHEST			2
-#define AIMHB_STOMACH		3
-#define AIMHB_THIGH			4
-#define AIMHB_FEET			5
 
 typedef void* (__cdecl *stu_GetCurrentEntity_t)(void);
 typedef void* (__cdecl *stu_ModExtradata_t)(void *mod);
@@ -1754,43 +1747,15 @@ static bool BoneXformPoint(void *bt,int bone,float lx,float ly,float lz,float *o
 	return true;
 }
 
-#define STU_HB_MAX 32
-typedef struct { int bone, group; float c[3], mn[3], mx[3]; } stu_hbc_t;
+typedef struct { int bone; float c[3]; } stu_hbc_t;
 
 static void StuHbRead(DWORD b, stu_hbc_t *o)
 {
 	o->bone=*(int*)b;
-	o->group=*(int*)(b+4);
 	float *mn=(float*)(b+8), *mx=(float*)(b+20);
-	o->mn[0]=mn[0]; o->mn[1]=mn[1]; o->mn[2]=mn[2];
-	o->mx[0]=mx[0]; o->mx[1]=mx[1]; o->mx[2]=mx[2];
 	o->c[0]=0.5f*(mn[0]+mx[0]); o->c[1]=0.5f*(mn[1]+mx[1]); o->c[2]=0.5f*(mn[2]+mx[2]);
 }
 
-static bool StuNearOrigin(const float *w, float ox, float oy, float oz)
-{
-	float dx=w[0]-ox, dy=w[1]-oy, dz=w[2]-oz;
-	if(dx*dx+dy*dy+dz*dz>90.0f*90.0f) return false;
-	if(dz<-52.0f || dz>80.0f) return false;
-	return true;
-}
-
-static bool StuXformLo(void *bt, const stu_hbc_t *h, float *lo)
-{
-	float minz=1e9f; int got=0;
-	for(int i=0;i<8;i++)
-	{
-		float lx=(i&1)?h->mx[0]:h->mn[0];
-		float ly=(i&2)?h->mx[1]:h->mn[1];
-		float lz=(i&4)?h->mx[2]:h->mn[2];
-		float w[3];
-		if(!BoneXformPoint(bt,h->bone,lx,ly,lz,w)) continue;
-		if(w[2]<minz){ minz=w[2]; lo[0]=w[0]; lo[1]=w[1]; lo[2]=w[2]; got=1; }
-	}
-	return got!=0;
-}
-
-static void Vec3Set(float *d, float x, float y, float z){ d[0]=x; d[1]=y; d[2]=z; }
 static void Vec3Cpy(float *d, const float *s){ d[0]=s[0]; d[1]=s[1]; d[2]=s[2]; }
 static void Vec3Lerp(const float *a, const float *b, float t, float *o)
 {
@@ -1822,111 +1787,62 @@ static void CaptureStudioHead()
 	if(!hdr || !IsReadable(hdr,164)) return;
 
 	static DWORD cache_hdr=0;
-	static stu_hbc_t cache_hb[STU_HB_MAX];
-	static int cache_nhb=0;
+	static stu_hbc_t cache_head, cache_chest;
+	static int cache_have=0;
 	if(hdr!=cache_hdr)
 	{
-		cache_hdr=hdr; cache_nhb=0;
+		memset(&cache_head,0,sizeof(cache_head));
+		memset(&cache_chest,0,sizeof(cache_chest));
+		cache_have=0; cache_hdr=hdr;
 		int numhb=*(int*)(hdr+STUDIO_HDR_NUMHB);
 		int hbidx=*(int*)(hdr+STUDIO_HDR_HBIDX);
 		if(numhb>0 && numhb<=128 && hbidx>0 && IsReadable(hdr+(DWORD)hbidx,(DWORD)numhb*STUDIO_HITBOX_SIZE))
 		{
-			if(numhb>STU_HB_MAX) numhb=STU_HB_MAX;
 			for(int i=0;i<numhb;i++)
-				StuHbRead(hdr+(DWORD)hbidx+(DWORD)i*STUDIO_HITBOX_SIZE, &cache_hb[cache_nhb++]);
+			{
+				DWORD b=hdr+(DWORD)hbidx+(DWORD)i*STUDIO_HITBOX_SIZE;
+				int g=*(int*)(b+4);
+				if(g==HITGROUP_HEAD && !(cache_have&HB_HEAD))
+				{ StuHbRead(b,&cache_head); cache_have|=HB_HEAD; }
+				else if(g==HITGROUP_CHEST && !(cache_have&HB_CHEST))
+				{ StuHbRead(b,&cache_chest); cache_have|=HB_CHEST; }
+				if((cache_have&(HB_HEAD|HB_CHEST))==(HB_HEAD|HB_CHEST)) break;
+			}
 		}
 	}
-	if(cache_nhb<=0) return;			// weapon / prop: no hitboxes
+	if(!(cache_have&(HB_HEAD|HB_CHEST))) return;	// weapon / prop: no body boxes
 
 	stu_GetBoneTransform_t getBT=(stu_GetBoneTransform_t)ReadDW(g_studio+STU_GETBONEXFORM*4);
 	if((DWORD)getBT<0x10000) return;
 	void *bt=getBT();
 	if(!bt) return;
 
+	int probe_bone=(cache_have&HB_HEAD)?cache_head.bone:cache_chest.bone;
 	if(g_bt_deref==0)
 	{
 		float probe[3];
-		if(BoneXformPoint(bt,cache_hb[0].bone,0,0,0,probe)) g_bt_deref=1;
+		if(BoneXformPoint(bt,probe_bone,0,0,0,probe)) g_bt_deref=1;
 		else if(IsReadable((DWORD)bt,4))
 		{
 			g_bt_deref=2;
-			if(!BoneXformPoint(bt,cache_hb[0].bone,0,0,0,probe)) { g_bt_deref=0; return; }
+			if(!BoneXformPoint(bt,probe_bone,0,0,0,probe)) { g_bt_deref=0; return; }
 		}
 		else return;
 	}
 
-	float ox=EFlt(ent+ENT_ORIGIN), oy=EFlt(ent+ENT_ORIGIN+4), oz=EFlt(ent+ENT_ORIGIN+8);
-	float ctr[STU_HB_MAX][3], lo[STU_HB_MAX][3];
-	int ok[STU_HB_MAX];
-	int nok=0;
-	for(int i=0;i<cache_nhb;i++)
-	{
-		ok[i]=0;
-		if(!BoneXformPoint(bt,cache_hb[i].bone,cache_hb[i].c[0],cache_hb[i].c[1],cache_hb[i].c[2],ctr[i]))
-			continue;
-		if(!StuNearOrigin(ctr[i],ox,oy,oz)) continue;
-		if(!StuXformLo(bt,&cache_hb[i],lo[i])) Vec3Cpy(lo[i],ctr[i]);
-		ok[i]=1; nok++;
-	}
-	if(nok<=0) return;
-
-	float head[3], chest[3], stom[3], thigh[3], feet[3];
-	int haveH=0, haveC=0, haveS=0, haveT=0, haveF=0;
-	float hiZ=-1e9f, loZ=1e9f;
-	int iHi=-1, iLo=-1;
-	float legC[3]={0,0,0}, legF[3]={0,0,0}; int nleg=0;
-	for(int i=0;i<cache_nhb;i++)
-	{
-		if(!ok[i]) continue;
-		if(ctr[i][2]>hiZ){ hiZ=ctr[i][2]; iHi=i; }
-		if(lo[i][2]<loZ){ loZ=lo[i][2]; iLo=i; }
-		int g=cache_hb[i].group;
-		if(g==HITGROUP_HEAD && !haveH){ Vec3Cpy(head,ctr[i]); haveH=1; }
-		if(g==HITGROUP_CHEST && !haveC){ Vec3Cpy(chest,ctr[i]); haveC=1; }
-		if(g==HITGROUP_STOMACH)
-		{
-			if(!haveS || ctr[i][2]<stom[2]) { Vec3Cpy(stom,ctr[i]); haveS=1; }
-		}
-		if(g==HITGROUP_LLEG || g==HITGROUP_RLEG)
-		{
-			legC[0]+=ctr[i][0]; legC[1]+=ctr[i][1]; legC[2]+=ctr[i][2];
-			legF[0]+=lo[i][0];  legF[1]+=lo[i][1];  legF[2]+=lo[i][2];
-			nleg++;
-		}
-	}
-	if(!haveH && iHi>=0){ Vec3Cpy(head,ctr[iHi]); haveH=1; }
-	if(nleg)
-	{
-		float inv=1.0f/(float)nleg;
-		Vec3Set(thigh,legC[0]*inv,legC[1]*inv,legC[2]*inv); haveT=1;
-		Vec3Set(feet, legF[0]*inv,legF[1]*inv,legF[2]*inv); haveF=1;
-	}
-	else if(iLo>=0){ Vec3Cpy(feet,lo[iLo]); haveF=1; }
-
-	// Missing parts: interpolate along the posed head→feet axis so a model
-	// without group 3/6/7 still gets a stomach/thigh/foot, not a copied head.
-	if(haveH && haveF)
-	{
-		if(!haveC) Vec3Lerp(feet,head,0.68f,chest), haveC=1;
-		if(!haveS) Vec3Lerp(feet,head,0.50f,stom),  haveS=1;
-		if(!haveT) Vec3Lerp(feet,head,0.30f,thigh), haveT=1;
-	}
-
-	if(!haveH && !haveC && !haveS && !haveT && !haveF) return;
-
 	int mask=0;
-	if(haveH){ Vec3Cpy(eng_hb_head[idx],head); mask|=HB_HEAD; }
-	if(haveC){ Vec3Cpy(eng_hb_chest[idx],chest); mask|=HB_CHEST; }
-	if(haveS){ Vec3Cpy(eng_hb_stom[idx],stom); mask|=HB_STOMACH; }
-	if(haveF && !haveT)
+	float w[3];
+	if((cache_have&HB_HEAD) && BoneXformPoint(bt,cache_head.bone,cache_head.c[0],cache_head.c[1],cache_head.c[2],w))
 	{
-		if(haveH) Vec3Lerp(feet,head,0.30f,thigh);
-		else if(haveC) Vec3Lerp(feet,chest,0.45f,thigh);
-		else { Vec3Cpy(thigh,feet); thigh[2]+=12.0f; }
-		haveT=1;
+		Vec3Cpy(eng_hb_head[idx],w);
+		mask|=HB_HEAD;
 	}
-	if(haveT){ Vec3Cpy(eng_hb_thigh[idx],thigh); mask|=HB_THIGH; }
-	if(haveF){ Vec3Cpy(eng_hb_feet[idx],feet); mask|=HB_FEET; }
+	if((cache_have&HB_CHEST) && BoneXformPoint(bt,cache_chest.bone,cache_chest.c[0],cache_chest.c[1],cache_chest.c[2],w))
+	{
+		Vec3Cpy(eng_hb_chest[idx],w);
+		mask|=HB_CHEST;
+	}
+	if(!mask) return;
 	eng_hb_mask[idx]=(char)mask;
 	eng_hb_ok[idx]=1;
 }
@@ -1936,7 +1852,7 @@ static void CaptureStudioHead()
 static bool PickStudioAim(int idx, float *hx, float *hy, float *hz)
 {
 	if(!eng_hb_ok[idx]) return false;
-	int want=cvar.aim_hitbox; if(want<0) want=0; if(want>AIMHB_FEET) want=AIMHB_FEET;
+	int want=cvar.aim_hitbox; if(want<0) want=0; if(want>AIMHB_CHEST) want=AIMHB_CHEST;
 	int m=eng_hb_mask[idx];
 	float p[3];
 	int got=0;
@@ -1953,13 +1869,6 @@ static bool PickStudioAim(int idx, float *hx, float *hy, float *hz)
 	}
 	else if(want==AIMHB_CHEST && (m&HB_CHEST))
 	{ p[0]=eng_hb_chest[idx][0]; p[1]=eng_hb_chest[idx][1]; p[2]=eng_hb_chest[idx][2]; got=1; }
-	else if(want==AIMHB_STOMACH && (m&HB_STOMACH))
-	{ p[0]=eng_hb_stom[idx][0]; p[1]=eng_hb_stom[idx][1]; p[2]=eng_hb_stom[idx][2]; got=1; }
-	else if(want==AIMHB_THIGH && (m&HB_THIGH))
-	{ p[0]=eng_hb_thigh[idx][0]; p[1]=eng_hb_thigh[idx][1]; p[2]=eng_hb_thigh[idx][2]; got=1; }
-	else if(want==AIMHB_FEET && (m&HB_FEET))
-	{ p[0]=eng_hb_feet[idx][0]; p[1]=eng_hb_feet[idx][1]; p[2]=eng_hb_feet[idx][2]; got=1; }
-	// No substituting a different body part (that put Feet on the skull).
 	if(!got) return false;
 	*hx=p[0]; *hy=p[1]; *hz=p[2];
 	return true;
@@ -1970,13 +1879,10 @@ static void HullAimPoint(float ox, float oy, float topZ, float feetZ, float scl,
 {
 	*hx=ox; *hy=oy;
 	float h=topZ-feetZ; if(h<8.0f) h=72.0f*scl;
-	int want=cvar.aim_hitbox; if(want<0) want=0; if(want>AIMHB_FEET) want=AIMHB_FEET;
-	if(want==AIMHB_NECK)         *hz=topZ-0.16f*h;
-	else if(want==AIMHB_CHEST)   *hz=topZ-0.32f*h;
-	else if(want==AIMHB_STOMACH) *hz=topZ-0.50f*h;
-	else if(want==AIMHB_THIGH)   *hz=topZ-0.70f*h;
-	else if(want==AIMHB_FEET)    *hz=feetZ+4.0f*scl;
-	else                         *hz=topZ-AIM_HEAD_CENTER*scl;
+	int want=cvar.aim_hitbox; if(want<0) want=0; if(want>AIMHB_CHEST) want=AIMHB_CHEST;
+	if(want==AIMHB_NECK)       *hz=topZ-0.16f*h;
+	else if(want==AIMHB_CHEST) *hz=topZ-0.32f*h;
+	else                       *hz=topZ-AIM_HEAD_CENTER*scl;
 }
 
 bool EngWorldToScreen(float *world,float *screen)
@@ -3043,7 +2949,7 @@ void DrawEngineEsp()
 		if((need_aim || cvar.trigger) && team==want_team)
 		{
 			int usehullA=EInt(ent+ENT_CURSTATE+ES_USEHULL);
-			// Studio hitbox for cvar.aim_hitbox (head/neck/chest/...) when the
+			// Studio hitbox for cvar.aim_hitbox (head/neck/chest) when the
 			// model was posed this frame. Hull-height guess only if it wasn't.
 			float topZ, feetZ, sclA;
 			PlayerVExtent(ent, o[2], usehullA, &topZ, &feetZ, &sclA);
