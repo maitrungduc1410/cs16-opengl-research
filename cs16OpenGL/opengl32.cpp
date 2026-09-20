@@ -1283,7 +1283,7 @@ void DrawCheckText(int x,int y) // bad way of doing this
 		norec_peak,norec_last[0],norec_last[1],norec_last[2]);
 	y=y+(int)(13*ui_scale);
 	if(eng_studio_ok)
-		DrawText(x,y,0.5f,1.0f,0.5f,"Studio head: ON  IEngineStudio @ 0x%08X",g_studio);
+		DrawText(x,y,0.5f,1.0f,0.5f,"Studio head: ON");
 	else
 		DrawText(x,y,1.0f,0.85f,0.4f,"Studio head: waiting (hull fallback until IEngineStudio resolves)");
 	y=y+(int)(13*ui_scale);
