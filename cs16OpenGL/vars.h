@@ -65,8 +65,7 @@ typedef struct { // cvars (of course ;P)
 	int	aim;
 	int	aim_smooth;	// 0=snap, 1..10 = smoothing strength (higher = smoother/slower)
 	int	aim_dot;	// aimbot: draw a dot at the exact point the aimbot aims at
-	int	aim_point;	// aimbot: STANDING vertical aim offset from head center (world units, +=up)
-	int	aim_point_duck;	// aimbot: CROUCHING vertical aim offset from head center (world units, +=up)
+	int	aim_hitbox;	// aimbot: 0=head 1=neck 2=chest 3=stomach 4=thigh 5=feet
 	int	aim_mode;	// aimbot trigger: 0=Always on, 1=Hold key, 2=Toggle key
 	int	aim_key;	// aimbot activation key (index into the shared key table)
 	int	trigger;	// triggerbot: auto-fire when crosshair is over an enemy (engine list)
@@ -254,8 +253,13 @@ bool	eng_aim_have	=false;	// did we pick a target this frame?
 float	eng_aim_sx		=0.0f;	// target screen x (px, 0..vp[2])
 float	eng_aim_sy		=0.0f;	// target screen y (px, 0..vp[3])
 bool	eng_aim_visible	=true;	// false if blocked by a wall (depth-buffer test)
-char	eng_bone_ok[33]	={0};	// 1 = this frame's studio draw posed a head hitbox for the slot
-float	eng_bone_head[33][3]={0};	// world-space head-hitbox center, captured during ShadeModel
+char	eng_hb_ok[33]	={0};	// 1 = this frame's studio draw posed hitboxes for the slot
+char	eng_hb_mask[33]	={0};	// bit0=head bit1=chest bit2=stomach bit3=legs
+float	eng_hb_head[33][3]={0};
+float	eng_hb_chest[33][3]={0};
+float	eng_hb_stom[33][3]={0};
+float	eng_hb_thigh[33][3]={0};
+float	eng_hb_feet[33][3]={0};
 bool	eng_studio_ok	=false;	// IEngineStudio resolved (F11 / debug)
 bool	g_aim_toggle_on	=false;	// aim_mode==Toggle: latched on/off state
 bool	g_aim_key_prev	=false;	// aim key down last frame (for toggle edge detection)

@@ -56,7 +56,7 @@ float curcolor[4];
 
 // Aimbot aim height: the engine bounding-hull top sits a few units ABOVE the
 // skull, so drop by this many world units to land at the CENTER of the head.
-// cvar.aim_point is then added on top to let the user fine-tune the aim height.
+// Used only for the hull fallback (model not drawn this frame).
 #define AIM_HEAD_CENTER 5.0f
 
 // No Flash: a flashbang is ONE opaque white onset followed by a long translucent
@@ -123,8 +123,7 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "aim %i;"		,&cvar.aim);
 					sscanf(str, "aim_smooth %i;",&cvar.aim_smooth);
 					sscanf(str, "aim_dot %i;"	,&cvar.aim_dot);
-					sscanf(str, "aim_point %i;"	,&cvar.aim_point);
-					sscanf(str, "aim_point_duck %i;",&cvar.aim_point_duck);
+					sscanf(str, "aim_hitbox %i;"	,&cvar.aim_hitbox);
 					sscanf(str, "aim_mode %i;"	,&cvar.aim_mode);
 					sscanf(str, "aim_key %i;"	,&cvar.aim_key);
 					sscanf(str, "trigger %i;"	,&cvar.trigger);
@@ -219,8 +218,7 @@ void SaveSettings()
 	fprintf(f,"aim %i\n",cvar.aim);
 	fprintf(f,"aim_smooth %i\n",cvar.aim_smooth);
 	fprintf(f,"aim_dot %i\n",cvar.aim_dot);
-	fprintf(f,"aim_point %i\n",cvar.aim_point);
-	fprintf(f,"aim_point_duck %i\n",cvar.aim_point_duck);
+	fprintf(f,"aim_hitbox %i\n",cvar.aim_hitbox);
 	fprintf(f,"aim_mode %i\n",cvar.aim_mode);
 	fprintf(f,"aim_key %i\n",cvar.aim_key);
 	fprintf(f,"trigger %i\n",cvar.trigger);
@@ -306,8 +304,7 @@ void LoadSettings()
 		sscanf(str,"aim %i"			,&cvar.aim);
 		sscanf(str,"aim_smooth %i"	,&cvar.aim_smooth);
 		sscanf(str,"aim_dot %i"		,&cvar.aim_dot);
-		sscanf(str,"aim_point %i"	,&cvar.aim_point);
-		sscanf(str,"aim_point_duck %i",&cvar.aim_point_duck);
+		sscanf(str,"aim_hitbox %i"	,&cvar.aim_hitbox);
 		sscanf(str,"aim_mode %i"	,&cvar.aim_mode);
 		sscanf(str,"aim_key %i"		,&cvar.aim_key);
 		sscanf(str,"trigger %i"		,&cvar.trigger);
@@ -403,8 +400,7 @@ void HookInit(bool activate)
 		cvar.aim=0;
 		cvar.aim_smooth=0;
 		cvar.aim_dot=0;
-		cvar.aim_point=0;
-		cvar.aim_point_duck=0;
+		cvar.aim_hitbox=0;
 		cvar.trigger=0;
 		cvar.trigger_delay=0;
 		cvar.autofire=0;
@@ -554,7 +550,7 @@ void MoveActivePanel(int dx,int dy)
 void ResetConfig()
 {
 	// 1) zero all gameplay cvars so stale save values can't bleed through
-	cvar.aim=0; cvar.aim_smooth=0; cvar.aim_dot=0; cvar.aim_point=0; cvar.aim_point_duck=0; cvar.aim_mode=0; cvar.aim_key=0;
+	cvar.aim=0; cvar.aim_smooth=0; cvar.aim_dot=0; cvar.aim_hitbox=0; cvar.aim_mode=0; cvar.aim_key=0;
 	cvar.trigger=0; cvar.trigger_delay=0;
 	cvar.autofire=0; cvar.autofire_rate=0; cvar.bhop=0; cvar.bhop_hold=0; cvar.bhop_key=0; cvar.notify=0; cvar.esp_log=0; cvar.perf=0;
 	cvar.aimthru=0; cvar.esp_engine=0; cvar.esp_name=0; cvar.esp_name_pad=0; cvar.esp_name_size=2; cvar.esp_box=0;
@@ -938,9 +934,8 @@ void DrawMenu(int x, int y)
 		{"Shoot",       IT_TOGGLE, &cvar.shoot,      0,0,0,       0, &cvar.aim,  1},
 		{"Aimthru",     IT_TOGGLE, &cvar.aimthru,    0,0,0,       0, &cvar.aim,  1},
 		{"FOV",         IT_INT,    &cvar.fov,        0,1000,10,   1, &cvar.aim,  1},
-		{"Head dot",    IT_TOGGLE, &cvar.aim_dot,    0,0,0,       0, &cvar.aim,  1},
-		{"Aim pt stand",IT_INT,    &cvar.aim_point,     -50,50,1, 0, &cvar.aim,  1},
-		{"Aim pt duck", IT_INT,    &cvar.aim_point_duck,-50,50,1, 0, &cvar.aim,  1},
+		{"Aim dot",     IT_TOGGLE, &cvar.aim_dot,    0,0,0,       0, &cvar.aim,  1},
+		{"Aim at",      IT_INT,    &cvar.aim_hitbox, 0,5,1,       1, &cvar.aim,  1},
 		{"Aim mode",    IT_INT,    &cvar.aim_mode,   0,2,1,       1, &cvar.aim,  1},
 		{"Aim key",     IT_INT,    &cvar.aim_key,    0,KEY_TABLE_COUNT-1,1, 1, &cvar.aim, 1},
 		{"Triggerbot",  IT_TOGGLE, &cvar.trigger,    0,0,0,       0, 0,          0},
@@ -1076,7 +1071,12 @@ void DrawMenu(int x, int y)
 		if(it->type==IT_TOGGLE)      SetToast("%s: %s", it->label, (*(int*)it->p)?"On":"Off");
 		else if(it->type==IT_INT)
 		{
-			if(it->p==&cvar.aim_mode)
+			if(it->p==&cvar.aim_hitbox)
+			{
+				static const char *hb[6]={"Head","Neck","Chest","Stomach","Thigh","Feet"};
+				int v=*(int*)it->p; if(v<0)v=0; if(v>5)v=5; SetToast("%s: %s", it->label, hb[v]);
+			}
+			else if(it->p==&cvar.aim_mode)
 			{
 				static const char *am[3]={"Always","Hold","Toggle"};
 				int v=*(int*)it->p; if(v<0)v=0; if(v>2)v=2; SetToast("%s: %s", it->label, am[v]);
@@ -1171,6 +1171,12 @@ void DrawMenu(int x, int y)
 				int v=*(int*)it->p;
 				if(v<=0) sprintf(buf,"%s%s: Unlimited", pre,it->label);
 				else     sprintf(buf,"%s%s: %im", pre,it->label,v);
+			}
+			else if(it->p==&cvar.aim_hitbox)
+			{
+				static const char *hb[6]={"Head","Neck","Chest","Stomach","Thigh","Feet"};
+				int v=*(int*)it->p; if(v<0)v=0; if(v>5)v=5;
+				sprintf(buf,"%s%s: %s", pre,it->label,hb[v]);
 			}
 			else if(it->p==&cvar.aim_mode)
 			{
@@ -1616,12 +1622,12 @@ bool EngineResolve()	// resolve & cache the engine table; true when usable
 DWORD EngFn(int slot){ return ReadDW(eng_table+slot*4); }
 
 // ---------------------------------------------------------------------------
-//  Studio head capture (IEngineStudio).
+//  Studio hitbox capture (IEngineStudio).
 //
 //  GoldSrc already runs StudioSetupBones when it draws a player. We only READ
-//  the posed bone matrix + HITGROUP_HEAD hitbox at glPopMatrix (end of model) —
-//  no second pose, no per-vertex work. Aim uses that point the same frame
-//  (SwapBuffers); slots that were not drawn (wall / PVS) keep the hull fallback.
+//  posed hitboxes (head/chest/stomach/legs) at glPopMatrix — no second pose,
+//  no per-vertex work. Aim picks among them via cvar.aim_hitbox the same frame
+//  (SwapBuffers); slots that were not drawn keep the hull-height fallback.
 // ---------------------------------------------------------------------------
 #define STU_MOD_EXTRADATA	4	// engine_studio_api_t slot
 #define STU_GETCURRENTENT	6
@@ -1633,6 +1639,20 @@ DWORD EngFn(int slot){ return ReadDW(eng_table+slot*4); }
 #define STUDIO_BONE_SIZE	112
 #define STUDIO_HITBOX_SIZE	32
 #define HITGROUP_HEAD		1
+#define HITGROUP_CHEST		2
+#define HITGROUP_STOMACH	3
+#define HITGROUP_LLEG		6
+#define HITGROUP_RLEG		7
+#define HB_HEAD				1
+#define HB_CHEST			2
+#define HB_STOMACH			4
+#define HB_LEGS				8
+#define AIMHB_HEAD			0
+#define AIMHB_NECK			1
+#define AIMHB_CHEST			2
+#define AIMHB_STOMACH		3
+#define AIMHB_THIGH			4
+#define AIMHB_FEET			5
 
 typedef void* (__cdecl *stu_GetCurrentEntity_t)(void);
 typedef void* (__cdecl *stu_ModExtradata_t)(void *mod);
@@ -1733,7 +1753,41 @@ static bool BoneXformPoint(void *bt,int bone,float lx,float ly,float lz,float *o
 	return true;
 }
 
-// Called from sys_glShadeModel(GL_SMOOTH) once per studio model. Cheap reject
+typedef struct { int bone; float c[3], mn[3], mx[3]; } stu_hbc_t;
+
+static void StuHbRead(DWORD b, stu_hbc_t *o)
+{
+	o->bone=*(int*)b;
+	float *mn=(float*)(b+8), *mx=(float*)(b+20);
+	o->mn[0]=mn[0]; o->mn[1]=mn[1]; o->mn[2]=mn[2];
+	o->mx[0]=mx[0]; o->mx[1]=mx[1]; o->mx[2]=mx[2];
+	o->c[0]=0.5f*(mn[0]+mx[0]); o->c[1]=0.5f*(mn[1]+mx[1]); o->c[2]=0.5f*(mn[2]+mx[2]);
+}
+
+static bool StuNearOrigin(const float *w, float ox, float oy, float oz)
+{
+	float dx=w[0]-ox, dy=w[1]-oy, dz=w[2]-oz;
+	if(dx*dx+dy*dy+dz*dz>80.0f*80.0f) return false;
+	if(dz<-40.0f || dz>72.0f) return false;
+	return true;
+}
+
+static bool StuXformLo(void *bt, const stu_hbc_t *h, float *lo)
+{
+	float minz=1e9f; int got=0;
+	for(int i=0;i<8;i++)
+	{
+		float lx=(i&1)?h->mx[0]:h->mn[0];
+		float ly=(i&2)?h->mx[1]:h->mn[1];
+		float lz=(i&4)?h->mx[2]:h->mn[2];
+		float w[3];
+		if(!BoneXformPoint(bt,h->bone,lx,ly,lz,w)) continue;
+		if(w[2]<minz){ minz=w[2]; lo[0]=w[0]; lo[1]=w[1]; lo[2]=w[2]; got=1; }
+	}
+	return got!=0;
+}
+
+// Called from sys_glPopMatrix once the model has been posed. Cheap reject
 // if this isn't a player body (weapon / prop / already captured this frame).
 static void CaptureStudioHead()
 {
@@ -1747,7 +1801,7 @@ static void CaptureStudioHead()
 	if(EInt(ent+ENT_PLAYER)==0) return;
 	int idx=EInt(ent+ENT_INDEX);
 	if(idx<1||idx>32) return;
-	if(eng_bone_ok[idx]) return;		// body already captured; skip weapon pass
+	if(eng_hb_ok[idx]) return;		// body already captured; skip weapon pass
 
 	DWORD model=ReadDW(ent+ENT_MODEL);
 	if(model<0x10000 || !IsReadable(model,4)) return;
@@ -1758,13 +1812,16 @@ static void CaptureStudioHead()
 	if(!hdr || !IsReadable(hdr,164)) return;
 
 	static DWORD cache_hdr=0;
-	static int   cache_bone=-1;
-	static float cache_l[3]={0,0,0};
-	int bone=cache_bone;
-	float lx=cache_l[0], ly=cache_l[1], lz=cache_l[2];
-	if(hdr!=cache_hdr || cache_bone<0)
+	static stu_hbc_t cache_head, cache_chest, cache_stom, cache_lleg, cache_rleg;
+	static int cache_have=0;
+	if(hdr!=cache_hdr)
 	{
-		bone=-1;
+		memset(&cache_head,0,sizeof(cache_head));
+		memset(&cache_chest,0,sizeof(cache_chest));
+		memset(&cache_stom,0,sizeof(cache_stom));
+		memset(&cache_lleg,0,sizeof(cache_lleg));
+		memset(&cache_rleg,0,sizeof(cache_rleg));
+		cache_have=0; cache_hdr=hdr;
 		int numhb=*(int*)(hdr+STUDIO_HDR_NUMHB);
 		int hbidx=*(int*)(hdr+STUDIO_HDR_HBIDX);
 		if(numhb>0 && numhb<=128 && hbidx>0 && IsReadable(hdr+(DWORD)hbidx,(DWORD)numhb*STUDIO_HITBOX_SIZE))
@@ -1772,14 +1829,20 @@ static void CaptureStudioHead()
 			for(int i=0;i<numhb;i++)
 			{
 				DWORD b=hdr+(DWORD)hbidx+(DWORD)i*STUDIO_HITBOX_SIZE;
-				if(*(int*)(b+4)!=HITGROUP_HEAD) continue;
-				bone=*(int*)b;
-				float *mn=(float*)(b+8), *mx=(float*)(b+20);
-				lx=0.5f*(mn[0]+mx[0]); ly=0.5f*(mn[1]+mx[1]); lz=0.5f*(mn[2]+mx[2]);
-				break;
+				int g=*(int*)(b+4);
+				if(g==HITGROUP_HEAD && !(cache_have&HB_HEAD))
+				{ StuHbRead(b,&cache_head); cache_have|=HB_HEAD; }
+				else if(g==HITGROUP_CHEST && !(cache_have&HB_CHEST))
+				{ StuHbRead(b,&cache_chest); cache_have|=HB_CHEST; }
+				else if(g==HITGROUP_STOMACH && !(cache_have&HB_STOMACH))
+				{ StuHbRead(b,&cache_stom); cache_have|=HB_STOMACH; }
+				else if(g==HITGROUP_LLEG && cache_lleg.bone==0 && cache_lleg.c[0]==0 && cache_lleg.c[1]==0)
+				{ StuHbRead(b,&cache_lleg); cache_have|=HB_LEGS; }
+				else if(g==HITGROUP_RLEG && cache_rleg.bone==0 && cache_rleg.c[0]==0 && cache_rleg.c[1]==0)
+				{ StuHbRead(b,&cache_rleg); cache_have|=HB_LEGS; }
 			}
 		}
-		if(bone<0)
+		if(!(cache_have&HB_HEAD))
 		{
 			int nb=*(int*)(hdr+STUDIO_HDR_NUMBONES);
 			int bo=*(int*)(hdr+STUDIO_HDR_BONEIDX);
@@ -1789,43 +1852,168 @@ static void CaptureStudioHead()
 				{
 					const char *nm=(const char*)(hdr+(DWORD)bo+(DWORD)i*STUDIO_BONE_SIZE);
 					if(!IsReadable((DWORD)nm,10)) continue;
-					// "Bip01 Head" / any bone name ending in "Head"
 					int n=0; while(n<31 && nm[n]) n++;
 					if(n>=4 && nm[n-4]=='H' && nm[n-3]=='e' && nm[n-2]=='a' && nm[n-1]=='d')
-					{ bone=i; lx=ly=lz=0; break; }
+					{
+						cache_head.bone=i;
+						cache_head.c[0]=cache_head.c[1]=cache_head.c[2]=0;
+						cache_head.mn[0]=cache_head.mn[1]=cache_head.mn[2]=0;
+						cache_head.mx[0]=cache_head.mx[1]=cache_head.mx[2]=0;
+						cache_have|=HB_HEAD;
+						break;
+					}
 				}
 			}
 		}
-		if(bone<0) return;				// weapon / prop: no head
-		cache_hdr=hdr; cache_bone=bone; cache_l[0]=lx; cache_l[1]=ly; cache_l[2]=lz;
 	}
+	if(!cache_have) return;				// weapon / prop: no body hitboxes
 
 	stu_GetBoneTransform_t getBT=(stu_GetBoneTransform_t)ReadDW(g_studio+STU_GETBONEXFORM*4);
 	if((DWORD)getBT<0x10000) return;
 	void *bt=getBT();
 	if(!bt) return;
 
-	float w[3];
-	if(!BoneXformPoint(bt,bone,lx,ly,lz,w))
+	if(g_bt_deref==0)
 	{
-		if(g_bt_deref==0 && IsReadable((DWORD)bt,4))
+		float probe[3];
+		int pb=(cache_have&HB_HEAD)?cache_head.bone:0;
+		if(BoneXformPoint(bt,pb,0,0,0,probe)) g_bt_deref=1;
+		else if(IsReadable((DWORD)bt,4))
 		{
 			g_bt_deref=2;
-			if(!BoneXformPoint(bt,bone,lx,ly,lz,w)) { g_bt_deref=0; return; }
+			if(!BoneXformPoint(bt,pb,0,0,0,probe)) { g_bt_deref=0; return; }
 		}
 		else return;
 	}
-	else if(g_bt_deref==0) g_bt_deref=1;
 
 	float ox=EFlt(ent+ENT_ORIGIN), oy=EFlt(ent+ENT_ORIGIN+4), oz=EFlt(ent+ENT_ORIGIN+8);
-	float dx=w[0]-ox, dy=w[1]-oy, dz=w[2]-oz;
-	if(dx*dx+dy*dy+dz*dz>80.0f*80.0f) return;	// garbage / wrong matrix style
-	if(dz<-10.0f || dz>72.0f) return;
+	int mask=0;
+	float head[3]={0,0,0}, chest[3]={0,0,0}, stom[3]={0,0,0};
+	float thigh[3]={0,0,0}, feet[3]={0,0,0};
+	int nleg=0;
 
-	eng_bone_head[idx][0]=w[0];
-	eng_bone_head[idx][1]=w[1];
-	eng_bone_head[idx][2]=w[2];
-	eng_bone_ok[idx]=1;
+	if(cache_have&HB_HEAD)
+	{
+		if(BoneXformPoint(bt,cache_head.bone,cache_head.c[0],cache_head.c[1],cache_head.c[2],head)
+		   && StuNearOrigin(head,ox,oy,oz))
+			mask|=HB_HEAD;
+	}
+	if(cache_have&HB_CHEST)
+	{
+		if(BoneXformPoint(bt,cache_chest.bone,cache_chest.c[0],cache_chest.c[1],cache_chest.c[2],chest)
+		   && StuNearOrigin(chest,ox,oy,oz))
+			mask|=HB_CHEST;
+	}
+	if(cache_have&HB_STOMACH)
+	{
+		if(BoneXformPoint(bt,cache_stom.bone,cache_stom.c[0],cache_stom.c[1],cache_stom.c[2],stom)
+		   && StuNearOrigin(stom,ox,oy,oz))
+			mask|=HB_STOMACH;
+	}
+	if(cache_have&HB_LEGS)
+	{
+		float lc[3], rc[3], llo[3], rlo[3];
+		int gotL=0, gotR=0;
+		if(cache_lleg.bone || cache_lleg.c[0]||cache_lleg.c[1]||cache_lleg.c[2])
+		{
+			if(BoneXformPoint(bt,cache_lleg.bone,cache_lleg.c[0],cache_lleg.c[1],cache_lleg.c[2],lc)
+			   && StuNearOrigin(lc,ox,oy,oz))
+			{
+				gotL=1;
+				if(!StuXformLo(bt,&cache_lleg,llo)) { llo[0]=lc[0]; llo[1]=lc[1]; llo[2]=lc[2]; }
+			}
+		}
+		if(cache_rleg.bone || cache_rleg.c[0]||cache_rleg.c[1]||cache_rleg.c[2])
+		{
+			if(BoneXformPoint(bt,cache_rleg.bone,cache_rleg.c[0],cache_rleg.c[1],cache_rleg.c[2],rc)
+			   && StuNearOrigin(rc,ox,oy,oz))
+			{
+				gotR=1;
+				if(!StuXformLo(bt,&cache_rleg,rlo)) { rlo[0]=rc[0]; rlo[1]=rc[1]; rlo[2]=rc[2]; }
+			}
+		}
+		if(gotL && gotR)
+		{
+			thigh[0]=0.5f*(lc[0]+rc[0]); thigh[1]=0.5f*(lc[1]+rc[1]); thigh[2]=0.5f*(lc[2]+rc[2]);
+			feet[0]=0.5f*(llo[0]+rlo[0]); feet[1]=0.5f*(llo[1]+rlo[1]); feet[2]=0.5f*(llo[2]+rlo[2]);
+			nleg=2;
+		}
+		else if(gotL) { thigh[0]=lc[0]; thigh[1]=lc[1]; thigh[2]=lc[2]; feet[0]=llo[0]; feet[1]=llo[1]; feet[2]=llo[2]; nleg=1; }
+		else if(gotR) { thigh[0]=rc[0]; thigh[1]=rc[1]; thigh[2]=rc[2]; feet[0]=rlo[0]; feet[1]=rlo[1]; feet[2]=rlo[2]; nleg=1; }
+		if(nleg) mask|=HB_LEGS;
+	}
+
+	if(!mask) return;
+
+	if(mask&HB_HEAD){ eng_hb_head[idx][0]=head[0]; eng_hb_head[idx][1]=head[1]; eng_hb_head[idx][2]=head[2]; }
+	if(mask&HB_CHEST){ eng_hb_chest[idx][0]=chest[0]; eng_hb_chest[idx][1]=chest[1]; eng_hb_chest[idx][2]=chest[2]; }
+	if(mask&HB_STOMACH){ eng_hb_stom[idx][0]=stom[0]; eng_hb_stom[idx][1]=stom[1]; eng_hb_stom[idx][2]=stom[2]; }
+	if(mask&HB_LEGS)
+	{
+		eng_hb_thigh[idx][0]=thigh[0]; eng_hb_thigh[idx][1]=thigh[1]; eng_hb_thigh[idx][2]=thigh[2];
+		eng_hb_feet[idx][0]=feet[0]; eng_hb_feet[idx][1]=feet[1]; eng_hb_feet[idx][2]=feet[2];
+	}
+	eng_hb_mask[idx]=(char)mask;
+	eng_hb_ok[idx]=1;
+}
+
+static void Vec3Lerp(const float *a, const float *b, float t, float *o)
+{
+	o[0]=a[0]+(b[0]-a[0])*t; o[1]=a[1]+(b[1]-a[1])*t; o[2]=a[2]+(b[2]-a[2])*t;
+}
+
+// Pick the posed studio point for cvar.aim_hitbox. Neck is 65% of the way
+// from chest toward head (no CS hitgroup for neck). Returns false → hull.
+static bool PickStudioAim(int idx, float *hx, float *hy, float *hz)
+{
+	if(!eng_hb_ok[idx]) return false;
+	int want=cvar.aim_hitbox; if(want<0) want=0; if(want>AIMHB_FEET) want=AIMHB_FEET;
+	int m=eng_hb_mask[idx];
+	float p[3];
+	int got=0;
+	if(want==AIMHB_HEAD && (m&HB_HEAD))
+	{ p[0]=eng_hb_head[idx][0]; p[1]=eng_hb_head[idx][1]; p[2]=eng_hb_head[idx][2]; got=1; }
+	else if(want==AIMHB_NECK)
+	{
+		if((m&HB_HEAD)&&(m&HB_CHEST))
+		{ Vec3Lerp(eng_hb_chest[idx],eng_hb_head[idx],0.65f,p); got=1; }
+		else if(m&HB_HEAD)
+		{ p[0]=eng_hb_head[idx][0]; p[1]=eng_hb_head[idx][1]; p[2]=eng_hb_head[idx][2]-6.0f; got=1; }
+		else if(m&HB_CHEST)
+		{ p[0]=eng_hb_chest[idx][0]; p[1]=eng_hb_chest[idx][1]; p[2]=eng_hb_chest[idx][2]; got=1; }
+	}
+	else if(want==AIMHB_CHEST && (m&HB_CHEST))
+	{ p[0]=eng_hb_chest[idx][0]; p[1]=eng_hb_chest[idx][1]; p[2]=eng_hb_chest[idx][2]; got=1; }
+	else if(want==AIMHB_STOMACH && (m&HB_STOMACH))
+	{ p[0]=eng_hb_stom[idx][0]; p[1]=eng_hb_stom[idx][1]; p[2]=eng_hb_stom[idx][2]; got=1; }
+	else if(want==AIMHB_THIGH && (m&HB_LEGS))
+	{ p[0]=eng_hb_thigh[idx][0]; p[1]=eng_hb_thigh[idx][1]; p[2]=eng_hb_thigh[idx][2]; got=1; }
+	else if(want==AIMHB_FEET && (m&HB_LEGS))
+	{ p[0]=eng_hb_feet[idx][0]; p[1]=eng_hb_feet[idx][1]; p[2]=eng_hb_feet[idx][2]; got=1; }
+	if(!got)
+	{
+		if(m&HB_HEAD)      { p[0]=eng_hb_head[idx][0]; p[1]=eng_hb_head[idx][1]; p[2]=eng_hb_head[idx][2]; got=1; }
+		else if(m&HB_CHEST){ p[0]=eng_hb_chest[idx][0]; p[1]=eng_hb_chest[idx][1]; p[2]=eng_hb_chest[idx][2]; got=1; }
+		else if(m&HB_STOMACH){ p[0]=eng_hb_stom[idx][0]; p[1]=eng_hb_stom[idx][1]; p[2]=eng_hb_stom[idx][2]; got=1; }
+		else if(m&HB_LEGS) { p[0]=eng_hb_thigh[idx][0]; p[1]=eng_hb_thigh[idx][1]; p[2]=eng_hb_thigh[idx][2]; got=1; }
+	}
+	if(!got) return false;
+	*hx=p[0]; *hy=p[1]; *hz=p[2];
+	return true;
+}
+
+static void HullAimPoint(float ox, float oy, float topZ, float feetZ, float scl,
+                         float *hx, float *hy, float *hz)
+{
+	*hx=ox; *hy=oy;
+	float h=topZ-feetZ; if(h<8.0f) h=72.0f*scl;
+	int want=cvar.aim_hitbox; if(want<0) want=0; if(want>AIMHB_FEET) want=AIMHB_FEET;
+	if(want==AIMHB_NECK)         *hz=topZ-0.16f*h;
+	else if(want==AIMHB_CHEST)   *hz=topZ-0.32f*h;
+	else if(want==AIMHB_STOMACH) *hz=topZ-0.50f*h;
+	else if(want==AIMHB_THIGH)   *hz=topZ-0.70f*h;
+	else if(want==AIMHB_FEET)    *hz=feetZ+4.0f*scl;
+	else                         *hz=topZ-AIM_HEAD_CENTER*scl;
 }
 
 bool EngWorldToScreen(float *world,float *screen)
@@ -2774,13 +2962,12 @@ void DrawEngineEsp()
 		}
 
 		// Extra death signals on top of DeathMsg (which we now hook even with
-		// HUD off). ScoreAttrib bit0 stays set until respawn. solid==0 is the
-		// walk-through corpse. Either one means "dead this frame" even if the
-		// user-message never arrived (or arrived for someone else's kill after
-		// the 400ms stale timer would have been the only other gate).
+		// HUD off). ScoreAttrib bit0 stays set until respawn. Do NOT treat
+		// entity_state.solid==0 as dead: online servers often leave solid
+		// un-streamed (0) for every living player, which hid all names/dots
+		// on public servers while listen-server bots still looked fine.
 		bool attrib_dead = (eng_msg_attrib[idx]&1)!=0;
-		short esolid = *(short*)(ent+ENT_CURSTATE+ES_SOLID);
-		bool looks_dead = attrib_dead || EngDead(idx) || (esolid==0);
+		bool looks_dead = attrib_dead || EngDead(idx);
 		if(looks_dead && !eng_kill_time[idx] && !eng_dead_at[idx])
 		{
 			eng_dead_at[idx]=now;
@@ -2893,26 +3080,13 @@ void DrawEngineEsp()
 		if((need_aim || cvar.trigger) && team==want_team)
 		{
 			int usehullA=EInt(ent+ENT_CURSTATE+ES_USEHULL);
-			// Head: prefer the studio HITGROUP_HEAD hitbox posed this frame
-			// (CaptureStudioHead). That tracks yaw / duck / look-down. Do NOT
-			// add pt stand/duck on top — those are hull-tuned and would pull
-			// the bone point off the skull. Fallback = hull origin + extent
-			// (the old setup) when the model was not drawn (wall / PVS).
+			// Studio hitbox for cvar.aim_hitbox (head/neck/chest/...) when the
+			// model was posed this frame. Hull-height guess only if it wasn't.
 			float topZ, feetZ, sclA;
 			PlayerVExtent(ent, o[2], usehullA, &topZ, &feetZ, &sclA);
 			float hxA, hyA, aimz;
-			if(eng_bone_ok[idx])
-			{
-				hxA=eng_bone_head[idx][0];
-				hyA=eng_bone_head[idx][1];
-				aimz=eng_bone_head[idx][2];
-			}
-			else
-			{
-				hxA=o[0]; hyA=o[1];
-				int aimOff=(usehullA==1)?cvar.aim_point_duck:cvar.aim_point;
-				aimz=topZ-AIM_HEAD_CENTER*sclA+(float)aimOff*sclA;
-			}
+			if(!PickStudioAim(idx,&hxA,&hyA,&aimz))
+				HullAimPoint(o[0],o[1],topZ,feetZ,sclA,&hxA,&hyA,&aimz);
 			float aimA[3] ={hxA,hyA,aimz};
 			float headA[3]={hxA,hyA,topZ-2.0f};		// head top (triggerbot box)
 			float feetA[3]={hxA,hyA,feetZ};
@@ -4237,7 +4411,7 @@ void sys_wglSwapBuffers(HDC hDC)
 		EnsureNoRecoilHook();	// (un)install the V_CalcRefdef detour for no visual recoil
 		if(perf){ QueryPerformanceCounter(&ovA); espA=ovA; }
 		DrawEngineEsp();	// radar + engine ESP + own HUD (bottom overlay layer)
-		memset(eng_bone_ok,0,sizeof(eng_bone_ok));	// next frame's ShadeModel refills
+		memset(eng_hb_ok,0,sizeof(eng_hb_ok));		// next frame's studio draw refills
 		if(perf) QueryPerformanceCounter(&espB);
 		DrawToast();		// feature toggle notifications (middle layer)
 		DrawAimStatus();	// pink Hold/Toggle aim-key status (middle layer)
