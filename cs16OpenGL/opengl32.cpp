@@ -139,6 +139,7 @@ void LoadFile(char *thefile,int ftype)
 					sscanf(str, "perf %i;"		,&cvar.perf);
 					sscanf(str, "aimthru %i;"	,&cvar.aimthru);
 					sscanf(str, "target %i;"	,&cvar.target);
+					sscanf(str, "shoot %i;"		,&cvar.shoot);
 					sscanf(str, "recoil %i;"	,&cvar.recoil);
 					sscanf(str, "norecoil %i;"	,&cvar.norecoil);
 					sscanf(str, "esp_engine %i;",&cvar.esp_engine);
@@ -774,49 +775,46 @@ GLvoid KillFont(GLvoid)
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
-void DrawText(float x, float y,float r, float g, float b, const char *fmt, ...)
+static bool g_in_2d_overlay = false;	// true while inside a 2D overlay pass (already has PushAttrib + TEXTURE_2D off)
+static bool g_wall_depth_off = false;	// tracks whether GL_DEPTH_TEST is currently disabled to skip redundant glDisable calls
+
+static void DrawTextRaw(float x, float y, float r, float g, float b, GLuint fsz, const char *text)
 {
-	char		text[256];								
-	va_list		ap;										
-	
-	if (fmt == NULL)									
-		return;											
-	
-	va_start(ap, fmt);									
-	vsprintf(text, fmt, ap);						
-	va_end(ap);
+	int len=(int)strlen(text);
+	if(len<=0) return;
 
-	GLfloat  curcolor[4], position[4];
-	(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
-	(*orig_glGetFloatv)(GL_CURRENT_COLOR, curcolor);
-	(*orig_glGetFloatv)(GL_CURRENT_RASTER_POSITION, position);
-	(*orig_glDisable)(GL_TEXTURE_2D); 
+	if(!g_in_2d_overlay)
+	{
+		(*orig_glPushAttrib)(GL_LIST_BIT|GL_CURRENT_BIT|GL_ENABLE_BIT);
+		(*orig_glDisable)(GL_TEXTURE_2D);
+	}
+
+	(*orig_glListBase)(fsz - 32);
 	(*orig_glColor4f)(0.0f,0.0f,0.0f,gTextAlpha);
-	(*orig_glRasterPos2f)(x+1,y+1);
+	(*orig_glRasterPos2f)(x+1.0f,y+1.0f);
+	(*orig_glCallLists)(len, GL_UNSIGNED_BYTE, text);
 
-	//glPrint(text) - shadow
-	(*orig_glPushAttrib)(GL_LIST_BIT);							
-	(*orig_glListBase)(base - 32);								
-	(*orig_glCallLists)(strlen(text), GL_UNSIGNED_BYTE, text);	
-	(*orig_glPopAttrib)();										
-	(*orig_glEnable)(GL_TEXTURE_2D); 
-
-	(*orig_glDisable)(GL_TEXTURE_2D); 
 	(*orig_glColor4f)(r,g,b,gTextAlpha);
 	(*orig_glRasterPos2f)(x,y);
-	(*orig_glColor4f)(r,g,b,gTextAlpha);
+	(*orig_glCallLists)(len, GL_UNSIGNED_BYTE, text);
 
-	//glPrint(text);
-	(*orig_glPushAttrib)(GL_LIST_BIT);							
-	(*orig_glListBase)(base - 32);								
-	(*orig_glCallLists)(strlen(text), GL_UNSIGNED_BYTE, text);	
-	(*orig_glPopAttrib)();										
-	(*orig_glEnable)(GL_TEXTURE_2D); 
+	if(!g_in_2d_overlay)
+		(*orig_glPopAttrib)();
+}
 
-    //restore ogl shiat
-    (*orig_glPopAttrib)();
-    (*orig_glColor4fv)(curcolor);
-    (*orig_glRasterPos2f)(position[0],position[1]);
+void DrawText(float x, float y,float r, float g, float b, const char *fmt, ...)
+{
+	char		text[256];
+	va_list		ap;
+
+	if (fmt == NULL)
+		return;
+
+	va_start(ap, fmt);
+	vsprintf(text, fmt, ap);
+	va_end(ap);
+
+	DrawTextRaw(x, y, r, g, b, base, text);
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -845,30 +843,7 @@ void DrawTextSz(float x, float y, float r, float g, float b, int sz, const char 
 	if(sz<1) sz=1; if(sz>FONT_SIZES) sz=FONT_SIZES;
 	GLuint fsz=g_font_base[sz-1]; if(fsz==0) fsz=base;	// fallback to default if not built
 
-	GLfloat  curcolor[4], position[4];
-	(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
-	(*orig_glGetFloatv)(GL_CURRENT_COLOR, curcolor);
-	(*orig_glGetFloatv)(GL_CURRENT_RASTER_POSITION, position);
-	(*orig_glDisable)(GL_TEXTURE_2D);
-	(*orig_glColor4f)(0.0f,0.0f,0.0f,gTextAlpha);
-	(*orig_glRasterPos2f)(x+1,y+1);
-	(*orig_glPushAttrib)(GL_LIST_BIT);
-	(*orig_glListBase)(fsz - 32);
-	(*orig_glCallLists)(strlen(text), GL_UNSIGNED_BYTE, text);
-	(*orig_glPopAttrib)();
-	(*orig_glEnable)(GL_TEXTURE_2D);
-	(*orig_glDisable)(GL_TEXTURE_2D);
-	(*orig_glColor4f)(r,g,b,gTextAlpha);
-	(*orig_glRasterPos2f)(x,y);
-	(*orig_glColor4f)(r,g,b,gTextAlpha);
-	(*orig_glPushAttrib)(GL_LIST_BIT);
-	(*orig_glListBase)(fsz - 32);
-	(*orig_glCallLists)(strlen(text), GL_UNSIGNED_BYTE, text);
-	(*orig_glPopAttrib)();
-	(*orig_glEnable)(GL_TEXTURE_2D);
-	(*orig_glPopAttrib)();
-	(*orig_glColor4fv)(curcolor);
-	(*orig_glRasterPos2f)(position[0],position[1]);
+	DrawTextRaw(x, y, r, g, b, fsz, text);
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1113,16 +1088,11 @@ void DrawMenu(int x, int y)
 		float bl=mx-8*sc, bt=my-33*sc, br=mx+182*sc;
 		float bb=y0+visRows*line-2*sc + (menu_move_mode? 12.0f*sc : 0.0f);	// fixed height (scrolls); room for the move hint
 		float rad=8.0f*sc;										// soft rounded corners
-		(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
-		(*orig_glDisable)(GL_TEXTURE_2D);
-		(*orig_glEnable)(GL_BLEND);
-		(*orig_glBlendFunc)(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
 		(*orig_glColor4f)(0.0f,0.0f,0.0f,0.55f*menu_alpha);		// translucent fill
 		FillRoundRect2D(bl,bt,br,bb,rad);
 		(*orig_glColor4f)(0.1f,0.6f,1.0f,menu_alpha);			// bold accent border (opaque, fades w/ menu)
 		(*orig_glLineWidth)(2.0f*sc);
 		DrawBox2D(bl,bt,br,bb,rad);
-		(*orig_glPopAttrib)();
 	}
 
 	DrawText(mx, my-20*sc, 0.85f,0.9f,1.0f, "Mod by maitrungduc1410");
@@ -1136,13 +1106,8 @@ void DrawMenu(int x, int y)
 		if(selDisp<0) selDisp=0; if(selDisp>(float)(visRows-1)) selDisp=(float)(visRows-1);
 		float hy=y0+selDisp*line;
 		float hrad=4.0f*sc;									// soft corners on the highlight
-		(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
-		(*orig_glDisable)(GL_TEXTURE_2D);
-		(*orig_glEnable)(GL_BLEND);
-		(*orig_glBlendFunc)(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
 		(*orig_glColor4f)(0.1f,0.6f,1.0f,0.30f*menu_alpha);
 		FillRoundRect2D(mx-5*sc, hy-line+3*sc, mx+160*sc, hy+3*sc, hrad);
-		(*orig_glPopAttrib)();
 	}
 
 	char buf[96];
@@ -1224,15 +1189,10 @@ void DrawMenu(int x, int y)
 		float thumbH=trackH*frac; if(thumbH<8.0f*sc) thumbH=8.0f*sc;
 		float sf=(float)menu_scroll/(float)(nvis-visRows);		// 0..1 scroll position
 		float thumbTop=trackTop+(trackH-thumbH)*sf;
-		(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
-		(*orig_glDisable)(GL_TEXTURE_2D);
-		(*orig_glEnable)(GL_BLEND);
-		(*orig_glBlendFunc)(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
 		(*orig_glColor4f)(1.0f,1.0f,1.0f,0.12f*menu_alpha);		// track
 		FillRoundRect2D(sbx,trackTop,sbx+sbw,trackTop+trackH,sbw*0.5f);
 		(*orig_glColor4f)(0.1f,0.6f,1.0f,0.85f*menu_alpha);		// thumb (accent)
 		FillRoundRect2D(sbx,thumbTop,sbx+sbw,thumbTop+thumbH,sbw*0.5f);
-		(*orig_glPopAttrib)();
 	}
 
 	if(menu_move_mode)		// footer hint shown only while repositioning a panel
@@ -1253,16 +1213,11 @@ void DrawCheckText(int x,int y) // bad way of doing this
 		float padL=10.0f*ui_scale, padT=14.0f*ui_scale;	// more top room so text isn't flush
 		float pl=(float)x-padL, pt=(float)y-padT, pr=(float)x+600.0f*ui_scale, pb=(float)y+check_h+padL;
 		float rad=8.0f*ui_scale;						// soft rounded corners
-		(*orig_glPushAttrib)(GL_ALL_ATTRIB_BITS);
-		(*orig_glDisable)(GL_TEXTURE_2D);
-		(*orig_glEnable)(GL_BLEND);
-		(*orig_glBlendFunc)(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
 		(*orig_glColor4f)(0.0f,0.0f,0.0f,0.6f*check_alpha);	// translucent fill
 		FillRoundRect2D(pl,pt,pr,pb,rad);
 		(*orig_glColor4f)(0.1f,0.6f,1.0f,check_alpha);		// bold accent border (opaque, fades w/ F11)
 		(*orig_glLineWidth)(2.0f*ui_scale);
 		DrawBox2D(pl,pt,pr,pb,rad);
-		(*orig_glPopAttrib)();
 	}
 
 	DrawText(x,y,0.7f,0.7f,1.0f,"Mod by maitrungduc1410 - Check");
@@ -1450,6 +1405,27 @@ BYTE  ReadByte (DWORD a){ return IsReadable(a,1)?*(BYTE*)a:0; }
 #define ENT_SPAN  (ENT_ORIGIN+0x50)
 static int   EInt(DWORD a){ return *(int*)a; }
 static float EFlt(DWORD a){ return *(float*)a; }
+
+bool RegionReadable(MEMORY_BASIC_INFORMATION &mbi);
+
+// All cl_entity_t slots in GoldSrc live inside one contiguous committed array
+// (cl_entities[]). Caching the validated region bounds lets us verify any
+// entity pointer in that region with two integer comparisons (0 VirtualQuery).
+static DWORD g_ent_rbase=0, g_ent_rend=0;
+static bool IsEntReadableFast(DWORD ent)
+{
+	if(ent<0x10000) return false;
+	if(ent>=g_ent_rbase && (ent+ENT_SPAN)<=g_ent_rend) return true;
+	MEMORY_BASIC_INFORMATION mbi;
+	if(!VirtualQuery((LPCVOID)ent,&mbi,sizeof(mbi))) return false;
+	if(!RegionReadable(mbi)) return false;
+	DWORD rb=(DWORD)mbi.BaseAddress;
+	DWORD re=rb+mbi.RegionSize;
+	if((ent+ENT_SPAN)>re) return false;
+	g_ent_rbase=rb; g_ent_rend=re;
+	return true;
+}
+
 // Cache a successful span-check per slot so empty/live entities don't pay
 // VirtualQuery every frame (the pointer is stable for the life of the slot).
 static bool EntSpanOk(int idx, DWORD ent)
@@ -1458,7 +1434,7 @@ static bool EntSpanOk(int idx, DWORD ent)
 	static bool  chk_ok[33]={0};
 	if(idx<1||idx>32||!ent) return false;
 	if(chk_ent[idx]==ent && chk_ok[idx]) return true;
-	bool ok=IsReadable(ent,ENT_SPAN);
+	bool ok=IsEntReadableFast(ent);
 	if(ok){ chk_ent[idx]=ent; chk_ok[idx]=true; }
 	return ok;
 }
@@ -1613,20 +1589,47 @@ DWORD FindExtraInfo()
 	return ScanPattern(cl_base,cl_end,pat,mask,27);
 }
 
+static eng_GetLocalPlayer_t   g_fn_GetLocalPlayer   = 0;
+static eng_GetEntityByIndex_t g_fn_GetEntityByIndex = 0;
+static eng_GetPlayerInfo_t    g_fn_GetPlayerInfo    = 0;
+static eng_GetViewAngles_t    g_fn_GetViewAngles    = 0;
+static eng_WorldToScreen_t    g_fn_WorldToScreen    = 0;
+static DWORD                  g_extra_tried_cl      = 0;
+
+DWORD EngFn(int slot){ return ReadDW(eng_table+slot*4); }
+
 bool EngineResolve()	// resolve & cache the engine table; true when usable
 {
-	if(eng_table==0 || ReadDW(eng_table+ENG_SLOT_GETLOCALPLAYER*4)==0)
-		eng_table=FindEngineTable();
+	if(eng_table==0 || g_fn_GetLocalPlayer==0)
+	{
+		if(eng_table==0 || ReadDW(eng_table+ENG_SLOT_GETLOCALPLAYER*4)==0)
+			eng_table=FindEngineTable();
+		g_fn_GetLocalPlayer=0; g_fn_GetEntityByIndex=0;
+		g_fn_GetPlayerInfo=0;  g_fn_GetViewAngles=0;
+		g_fn_WorldToScreen=0;
+	}
 	if(eng_table==0) return false;
+	if(!g_fn_GetLocalPlayer)   g_fn_GetLocalPlayer  =(eng_GetLocalPlayer_t)  ReadDW(eng_table+ENG_SLOT_GETLOCALPLAYER*4);
+	if(!g_fn_GetEntityByIndex) g_fn_GetEntityByIndex=(eng_GetEntityByIndex_t)ReadDW(eng_table+ENG_SLOT_GETENTITYBYINDEX*4);
+	if(!g_fn_GetPlayerInfo)    g_fn_GetPlayerInfo   =(eng_GetPlayerInfo_t)   ReadDW(eng_table+ENG_SLOT_GETPLAYERINFO*4);
+	if(!g_fn_GetViewAngles)    g_fn_GetViewAngles   =(eng_GetViewAngles_t)   ReadDW(eng_table+ENG_SLOT_GETVIEWANGLES*4);
+	if(!g_fn_WorldToScreen)
+	{
+		DWORD tri=ReadDW(eng_table+ENG_SLOT_PTRIAPI*4);
+		if(tri>=0x10000) g_fn_WorldToScreen=(eng_WorldToScreen_t)ReadDW(tri+12*4);
+	}
 	if(!eng_have_extra)
 	{
-		eng_extrainfo=FindExtraInfo();
-		eng_have_extra=(eng_extrainfo!=0);
+		DWORD cl=(DWORD)GetModuleHandleA("client.dll");
+		if(cl && cl!=g_extra_tried_cl)	// scan client.dll once per module load, not every frame
+		{
+			g_extra_tried_cl=cl;
+			eng_extrainfo=FindExtraInfo();
+			eng_have_extra=(eng_extrainfo!=0);
+		}
 	}
 	return true;
 }
-
-DWORD EngFn(int slot){ return ReadDW(eng_table+slot*4); }
 
 // ---------------------------------------------------------------------------
 //  Studio hitbox capture (IEngineStudio).
@@ -1661,6 +1664,10 @@ typedef void* (__cdecl *stu_GetBoneTransform_t)(void);
 static DWORD g_studio=0;			// &IEngineStudio in client.dll
 static int   g_studio_tries=0;
 static int   g_bt_deref=0;			// 0=unknown, 1=direct, 2=one extra deref
+static stu_GetCurrentEntity_t g_stu_GetCurrentEnt=0;
+static stu_ModExtradata_t     g_stu_ModExtradata =0;
+static stu_GetBoneTransform_t g_stu_GetBoneXform =0;
+static DWORD                  g_bt_valid_base    =0;
 
 static bool StuPtrInHw(DWORD p,DWORD hw_base,DWORD hw_end)
 {
@@ -1732,9 +1739,20 @@ static DWORD FindStudioAPI()
 
 static bool StudioResolve()
 {
-	if(g_studio) return true;
-	if((g_studio_tries++ & 63)!=1 && g_studio_tries>2) return false;
-	g_studio=FindStudioAPI();
+	if(g_studio && g_stu_GetCurrentEnt && g_stu_ModExtradata && g_stu_GetBoneXform) return true;
+	if(!g_studio)
+	{
+		if((g_studio_tries++ & 63)!=1 && g_studio_tries>2) return false;
+		g_studio=FindStudioAPI();
+	}
+	if(g_studio)
+	{
+		g_stu_GetCurrentEnt=(stu_GetCurrentEntity_t)ReadDW(g_studio+STU_GETCURRENTENT*4);
+		g_stu_ModExtradata =(stu_ModExtradata_t)    ReadDW(g_studio+STU_MOD_EXTRADATA*4);
+		g_stu_GetBoneXform =(stu_GetBoneTransform_t)ReadDW(g_studio+STU_GETBONEXFORM*4);
+		if((DWORD)g_stu_GetCurrentEnt<0x10000 || (DWORD)g_stu_ModExtradata<0x10000 || (DWORD)g_stu_GetBoneXform<0x10000)
+			g_studio=0;
+	}
 	eng_studio_ok=(g_studio!=0);
 	return g_studio!=0;
 }
@@ -1743,9 +1761,16 @@ static bool BoneXformPoint(void *bt,int bone,float lx,float ly,float lz,float *o
 {
 	if(!bt || bone<0 || bone>=128) return false;
 	DWORD base=(DWORD)bt;
-	if(g_bt_deref==2 && IsReadable(base,4))
+	if(g_bt_deref==2)
+	{
+		if(!IsReadable(base,4)) return false;
 		base=*(DWORD*)base;
-	if(!IsReadable(base+(DWORD)bone*48,48)) return false;
+	}
+	if(base!=g_bt_valid_base)
+	{
+		if(!IsReadable(base,128*48)) return false;
+		g_bt_valid_base=base;
+	}
 	float *m=(float*)(base+(DWORD)bone*48);
 	out[0]=m[0]*lx+m[1]*ly+m[2]*lz+m[3];
 	out[1]=m[4]*lx+m[5]*ly+m[6]*lz+m[7];
@@ -1775,31 +1800,41 @@ static void CaptureStudioHead()
 	if(!cvar.aim && !cvar.trigger) return;
 	if(!StudioResolve()) return;
 
-	stu_GetCurrentEntity_t getEnt=(stu_GetCurrentEntity_t)ReadDW(g_studio+STU_GETCURRENTENT*4);
-	if((DWORD)getEnt<0x10000) return;
-	DWORD ent=(DWORD)getEnt();
-	if(!ent || !IsReadable(ent,ENT_SPAN)) return;
+	DWORD ent=(DWORD)g_stu_GetCurrentEnt();
+	if(!ent || !IsEntReadableFast(ent)) return;
 	if(EInt(ent+ENT_PLAYER)==0) return;
 	int idx=EInt(ent+ENT_INDEX);
 	if(idx<1||idx>32) return;
 	if(eng_hb_ok[idx]) return;		// body already captured; skip weapon pass
+	if(idx==eng_local_idx) return;	// never need our own studio hitbox
 
-	DWORD model=ReadDW(ent+ENT_MODEL);
-	if(model<0x10000 || !IsReadable(model,4)) return;
+	// Aimbot + triggerbot only ever target want_team. Skip known teammates
+	// here so crowded spawn / team fights don't pose-read friendly models
+	// (unknown team 0 still falls through so new players are never missed).
+	int want_team=(cvar.target==0)?1:2;
+	int tm=eng_msg_team[idx];
+	if(tm!=0 && tm!=want_team) return;
 
-	stu_ModExtradata_t extra=(stu_ModExtradata_t)ReadDW(g_studio+STU_MOD_EXTRADATA*4);
-	if((DWORD)extra<0x10000) return;
-	DWORD hdr=(DWORD)extra((void*)model);
-	if(!hdr || !IsReadable(hdr,164)) return;
+	DWORD model=(DWORD)EInt(ent+ENT_MODEL);
+	if(model<0x10000) return;
 
-	static DWORD cache_hdr=0;
-	static stu_hbc_t cache_head, cache_chest;
-	static int cache_have=0;
-	if(hdr!=cache_hdr)
+	DWORD hdr=(DWORD)g_stu_ModExtradata((void*)model);
+	if(!hdr) return;
+
+	// Per-slot studiohdr_t hitbox cache: players wear different models (urban,
+	// gsg9, leet, arctic, ...), so a single global cache_hdr thrashed on every
+	// player every frame. Caching per slot parses each model's static hitbox
+	// offsets once and reuses them with zero VirtualQuery calls.
+	static DWORD     slot_hdr[33]={0};
+	static stu_hbc_t slot_head[33], slot_chest[33];
+	static int       slot_have[33]={0};
+	if(hdr!=slot_hdr[idx])
 	{
-		memset(&cache_head,0,sizeof(cache_head));
-		memset(&cache_chest,0,sizeof(cache_chest));
-		cache_have=0; cache_hdr=hdr;
+		memset(&slot_head[idx],0,sizeof(stu_hbc_t));
+		memset(&slot_chest[idx],0,sizeof(stu_hbc_t));
+		slot_have[idx]=0; slot_hdr[idx]=0;
+		if(!IsReadable(hdr,164)) return;
+		slot_hdr[idx]=hdr;
 		int numhb=*(int*)(hdr+STUDIO_HDR_NUMHB);
 		int hbidx=*(int*)(hdr+STUDIO_HDR_HBIDX);
 		if(numhb>0 && numhb<=128 && hbidx>0 && IsReadable(hdr+(DWORD)hbidx,(DWORD)numhb*STUDIO_HITBOX_SIZE))
@@ -1808,22 +1843,21 @@ static void CaptureStudioHead()
 			{
 				DWORD b=hdr+(DWORD)hbidx+(DWORD)i*STUDIO_HITBOX_SIZE;
 				int g=*(int*)(b+4);
-				if(g==HITGROUP_HEAD && !(cache_have&HB_HEAD))
-				{ StuHbRead(b,&cache_head); cache_have|=HB_HEAD; }
-				else if(g==HITGROUP_CHEST && !(cache_have&HB_CHEST))
-				{ StuHbRead(b,&cache_chest); cache_have|=HB_CHEST; }
-				if((cache_have&(HB_HEAD|HB_CHEST))==(HB_HEAD|HB_CHEST)) break;
+				if(g==HITGROUP_HEAD && !(slot_have[idx]&HB_HEAD))
+				{ StuHbRead(b,&slot_head[idx]); slot_have[idx]|=HB_HEAD; }
+				else if(g==HITGROUP_CHEST && !(slot_have[idx]&HB_CHEST))
+				{ StuHbRead(b,&slot_chest[idx]); slot_have[idx]|=HB_CHEST; }
+				if((slot_have[idx]&(HB_HEAD|HB_CHEST))==(HB_HEAD|HB_CHEST)) break;
 			}
 		}
 	}
-	if(!(cache_have&(HB_HEAD|HB_CHEST))) return;	// weapon / prop: no body boxes
+	int have=slot_have[idx];
+	if(!(have&(HB_HEAD|HB_CHEST))) return;	// weapon / prop: no body boxes
 
-	stu_GetBoneTransform_t getBT=(stu_GetBoneTransform_t)ReadDW(g_studio+STU_GETBONEXFORM*4);
-	if((DWORD)getBT<0x10000) return;
-	void *bt=getBT();
+	void *bt=g_stu_GetBoneXform();
 	if(!bt) return;
 
-	int probe_bone=(cache_have&HB_HEAD)?cache_head.bone:cache_chest.bone;
+	int probe_bone=(have&HB_HEAD)?slot_head[idx].bone:slot_chest[idx].bone;
 	if(g_bt_deref==0)
 	{
 		float probe[3];
@@ -1838,12 +1872,12 @@ static void CaptureStudioHead()
 
 	int mask=0;
 	float w[3];
-	if((cache_have&HB_HEAD) && BoneXformPoint(bt,cache_head.bone,cache_head.c[0],cache_head.c[1],cache_head.c[2],w))
+	if((have&HB_HEAD) && BoneXformPoint(bt,slot_head[idx].bone,slot_head[idx].c[0],slot_head[idx].c[1],slot_head[idx].c[2],w))
 	{
 		Vec3Cpy(eng_hb_head[idx],w);
 		mask|=HB_HEAD;
 	}
-	if((cache_have&HB_CHEST) && BoneXformPoint(bt,cache_chest.bone,cache_chest.c[0],cache_chest.c[1],cache_chest.c[2],w))
+	if((have&HB_CHEST) && BoneXformPoint(bt,slot_chest[idx].bone,slot_chest[idx].c[0],slot_chest[idx].c[1],slot_chest[idx].c[2],w))
 	{
 		Vec3Cpy(eng_hb_chest[idx],w);
 		mask|=HB_CHEST;
@@ -1916,17 +1950,20 @@ static void HullAimPoint(float ox, float oy, float topZ, float feetZ, float scl,
 
 bool EngWorldToScreen(float *world,float *screen)
 {
-	DWORD tri=EngFn(ENG_SLOT_PTRIAPI);
-	if(tri<0x10000) return false;
-	DWORD w2s=ReadDW(tri+12*4);		// TriAPI slot 12 = WorldToScreen
-	if(w2s==0) return false;
-	return ((eng_WorldToScreen_t)w2s)(world,screen)==0;	// 0 = in front of camera
+	if(!g_fn_WorldToScreen)
+	{
+		DWORD tri=EngFn(ENG_SLOT_PTRIAPI);
+		if(tri<0x10000) return false;
+		g_fn_WorldToScreen=(eng_WorldToScreen_t)ReadDW(tri+12*4);	// TriAPI slot 12 = WorldToScreen
+		if(!g_fn_WorldToScreen) return false;
+	}
+	return g_fn_WorldToScreen(world,screen)==0;	// 0 = in front of camera
 }
 
 int EngTeam(int idx)
 {
 	if(!eng_have_extra || idx<0 || idx>32) return 0;
-	return ReadShort(eng_extrainfo+idx*EXTRA_STRIDE+EXTRA_TEAMNUMBER);
+	return *(short*)(eng_extrainfo+idx*EXTRA_STRIDE+EXTRA_TEAMNUMBER);
 }
 
 // On-screen ESP filter (cvar.esp_team): 0=both, 1=CT, 2=T, 3=enemies
@@ -2018,16 +2055,16 @@ void EnsureNoRecoilHook()	// install / remove the detour so it matches cvar.nore
 bool EngDead(int idx)
 {
 	if(!eng_have_extra || idx<0 || idx>32) return false;	// can't tell -> alive
-	return ReadByte(eng_extrainfo+idx*EXTRA_STRIDE+EXTRA_DEAD)!=0;
+	return *(BYTE*)(eng_extrainfo+idx*EXTRA_STRIDE+EXTRA_DEAD)!=0;
 }
 
 // classify team from the player's model name (offset-free fallback when
 // g_PlayerExtraInfo wasn't found). 1 = T, 2 = CT, 0 = unknown.
 int TeamFromModel(const char *m)
 {
-	if(m==0 || !IsReadable((DWORD)m,1)) return 0;
+	if(m==0 || m[0]==0) return 0;
 	char s[64]; int i=0;
-	for(; i<63 && IsReadable((DWORD)(m+i),1) && m[i]; i++)
+	for(; i<63 && m[i]; i++)
 	{
 		char c=m[i];
 		s[i]=(c>='A'&&c<='Z')?(c+32):c;	// lowercase
@@ -2313,12 +2350,16 @@ void PatchPfn(DWORD node,DWORD newpfn)		// overwrite node->pfn (make page writab
 	}
 }
 
-// Install (or re-install after a reconnect) our three message hooks. Cheap to
-// call every frame: once hooked it just verifies the pointers are still ours.
+// Install (or re-install after a reconnect) our message hooks. Cheap to
+// call every frame: once hooked it throttles reconnect verification to 250ms.
 void HookOwnMsgs()
 {
 	if(msg_hooked)
 	{
+		static DWORD last_verify=0;
+		DWORD nowm=GetTickCount();
+		if((nowm-last_verify)<250) return;
+		last_verify=nowm;
 		bool ok=true;	// reconnecting rebuilds the node list -> our hook is gone
 		if(um_node_health  && ReadDW(um_node_health +UM_PFN)!=(DWORD)Hk_Health)    ok=false;
 		if(um_node_battery && ReadDW(um_node_battery+UM_PFN)!=(DWORD)Hk_Battery)   ok=false;
@@ -2396,6 +2437,23 @@ void DrawOwnHud(float sw,float sh)
 	const float FILL=0.66f;							// 66% bar + 34% gap -> CrossFire-style ticks
 	const float HALFGAP=SLOT*(1.0f-FILL)*0.5f;		// half the gap, trimmed from each slot end
 
+	// Precompute unit tick vectors once (angles are constant).
+	static bool  s_arc_init=false;
+	static float s_hp_c0[TICKS], s_hp_s0[TICKS], s_hp_c1[TICKS], s_hp_s1[TICKS];
+	static float s_am_c0[TICKS], s_am_s0[TICKS], s_am_c1[TICKS], s_am_s1[TICKS];
+	if(!s_arc_init)
+	{
+		const float baseH=180.0f-SPAN*0.5f, baseA=-SPAN*0.5f;
+		for(int i=0;i<TICKS;i++)
+		{
+			float h0=(baseH+i*SLOT+HALFGAP)*DEG, h1=(baseH+(i+1)*SLOT-HALFGAP)*DEG;
+			s_hp_c0[i]=cosf(h0); s_hp_s0[i]=sinf(h0); s_hp_c1[i]=cosf(h1); s_hp_s1[i]=sinf(h1);
+			float a0=(baseA+i*SLOT+HALFGAP)*DEG, a1=(baseA+(i+1)*SLOT-HALFGAP)*DEG;
+			s_am_c0[i]=cosf(a0); s_am_s0[i]=sinf(a0); s_am_c1[i]=cosf(a1); s_am_s1[i]=sinf(a1);
+		}
+		s_arc_init=true;
+	}
+
 	int hp=me_health; if(hp<0)hp=0; if(hp>100)hp=100;
 	int litH=(hp+9)/10;								// ceil to 0..10 ticks
 
@@ -2407,50 +2465,58 @@ void DrawOwnHud(float sw,float sh)
 		litA=(pct+9)/10; showA=true;				// hidden for knife/grenades (clip<0)
 	}
 
-	(*orig_glEnable)(GL_LINE_SMOOTH);				// rounded tick ends (restored by glPopAttrib)
+	(*orig_glEnable)(GL_LINE_SMOOTH);				// rounded tick ends
 	(*orig_glLineWidth)(5.5f*ui_scale);				// thicker bars
 
 	if(cvar.hud_hp)
 	{
-		const float base=180.0f-SPAN*0.5f;			// health arc centered on the left (180 deg)
 		(*orig_glBegin)(GL_LINES);
 		for(int i=0;i<TICKS;i++)
 		{
-			float a0=(base+i*SLOT+HALFGAP)*DEG;		// trim both ends -> visible gap
-			float a1=(base+(i+1)*SLOT-HALFGAP)*DEG;
 			if(i<litH) (*orig_glColor4f)(0.10f,1.00f,0.20f,0.95f);
 			else       (*orig_glColor4f)(0.10f,0.35f,0.10f,0.45f);
-			(*orig_glVertex2f)(cx+cosf(a0)*R, cy-sinf(a0)*R);
-			(*orig_glVertex2f)(cx+cosf(a1)*R, cy-sinf(a1)*R);
+			(*orig_glVertex2f)(cx+s_hp_c0[i]*R, cy-s_hp_s0[i]*R);
+			(*orig_glVertex2f)(cx+s_hp_c1[i]*R, cy-s_hp_s1[i]*R);
 		}
 		(*orig_glEnd)();
 	}
 
 	if(cvar.hud_ammo && showA)
 	{
-		const float base=-SPAN*0.5f;				// ammo arc centered on the right (0 deg)
 		(*orig_glBegin)(GL_LINES);
 		for(int i=0;i<TICKS;i++)
 		{
-			float a0=(base+i*SLOT+HALFGAP)*DEG;
-			float a1=(base+(i+1)*SLOT-HALFGAP)*DEG;
 			if(i<litA) (*orig_glColor4f)(1.00f,0.85f,0.10f,0.95f);
 			else       (*orig_glColor4f)(0.40f,0.35f,0.10f,0.45f);
-			(*orig_glVertex2f)(cx+cosf(a0)*R, cy-sinf(a0)*R);
-			(*orig_glVertex2f)(cx+cosf(a1)*R, cy-sinf(a1)*R);
+			(*orig_glVertex2f)(cx+s_am_c0[i]*R, cy-s_am_s0[i]*R);
+			(*orig_glVertex2f)(cx+s_am_c1[i]*R, cy-s_am_s1[i]*R);
 		}
 		(*orig_glEnd)();
 	}
 
+	// Restore line state immediately so subsequent ESP lines/boxes don't inherit
+	// 5.5px GL_LINE_SMOOTH anti-aliasing overhead.
+	(*orig_glDisable)(GL_LINE_SMOOTH);
+	(*orig_glLineWidth)(1.0f);
 	(*orig_glColor4f)(1,1,1,1);
 }
 
 // small filled disc in the current 2D pass (used for radar dots / local marker)
 void FillCircle2D(float cx,float cy,float r)
 {
+	static const float uc[13]={
+		 1.0000000f,  0.8660254f,  0.5000000f,  0.0000000f,
+		-0.5000000f, -0.8660254f, -1.0000000f, -0.8660254f,
+		-0.5000000f,  0.0000000f,  0.5000000f,  0.8660254f, 1.0000000f
+	};
+	static const float us[13]={
+		 0.0000000f,  0.5000000f,  0.8660254f,  1.0000000f,
+		 0.8660254f,  0.5000000f,  0.0000000f, -0.5000000f,
+		-0.8660254f, -1.0000000f, -0.8660254f, -0.5000000f, 0.0000000f
+	};
 	(*orig_glBegin)(GL_TRIANGLE_FAN);
 	(*orig_glVertex2f)(cx,cy);
-	for(int a=0;a<=12;a++){ float t=a*6.2831853f/12.0f; (*orig_glVertex2f)(cx+cosf(t)*r, cy+sinf(t)*r); }
+	for(int a=0;a<=12;a++) (*orig_glVertex2f)(cx+uc[a]*r, cy+us[a]*r);
 	(*orig_glEnd)();
 }
 
@@ -2671,18 +2737,18 @@ void DrawEngineEsp()
 	(*orig_glMatrixMode)(GL_MODELVIEW);
 	(*orig_glPushMatrix)();
 	(*orig_glLoadIdentity)();
+	g_in_2d_overlay=true;
 
-	DWORD fnLocal=ready?EngFn(ENG_SLOT_GETLOCALPLAYER):0;
-	DWORD fnEnt  =ready?EngFn(ENG_SLOT_GETENTITYBYINDEX):0;
-	DWORD fnInfo =ready?EngFn(ENG_SLOT_GETPLAYERINFO):0;
+	eng_GetLocalPlayer_t   fnLocal = ready ? g_fn_GetLocalPlayer   : 0;
+	eng_GetEntityByIndex_t fnEnt   = ready ? g_fn_GetEntityByIndex : 0;
+	eng_GetPlayerInfo_t    fnInfo  = ready ? g_fn_GetPlayerInfo    : 0;
 
 	// Keep our own player index fresh so the DeathMsg hook can tell when WE died,
 	// even when ESP Engine / Radar are off and the loop below never runs.
-	if(fnLocal>=0x10000)
-	{
-		DWORD lp=(DWORD)((eng_GetLocalPlayer_t)fnLocal)();
-		if(lp) eng_local_idx=ReadInt(lp+ENT_INDEX);
-	}
+	DWORD local = ((DWORD)fnLocal>=0x10000) ? (DWORD)fnLocal() : 0;
+	bool  local_ok = local && IsEntReadableFast(local);
+	if(local_ok) eng_local_idx=EInt(local+ENT_INDEX);
+	else if(local) eng_local_idx=ReadInt(local+ENT_INDEX);
 
 	// own HP / ammo arcs around the crosshair: driven by user messages, not by the
 	// engine entity table, so draw them before the table-ready check below.
@@ -2698,13 +2764,15 @@ void DrawEngineEsp()
 			DrawOwnHud(sw,sh);
 	}
 
-	if(!ready || fnLocal<0x10000 || fnEnt<0x10000)
+	if(!ready || (DWORD)fnLocal<0x10000 || (DWORD)fnEnt<0x10000)
 	{
 		if(cvar.esp_engine && cvar.esp_dbg)
 			DrawText(16.0f*ui_scale,24.0f*ui_scale,1.0f,0.7f,0.2f,"ENGINE ESP: searching engine table (start a game)...");
+		g_in_2d_overlay=false;
 		(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPopMatrix)();
 		(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPopMatrix)();
 		(*orig_glPopAttrib)();
+		g_wall_depth_off=false;
 		return;
 	}
 
@@ -2712,16 +2780,14 @@ void DrawEngineEsp()
 	{
 
 	float lo[3]={0,0,0};
-	DWORD local=(DWORD)((eng_GetLocalPlayer_t)fnLocal)();
 	if(local)
 	{
 		int og=-1;
-		if(IsReadable(local,ENT_SPAN))
+		if(local_ok)
 		{
 			lo[0]=EFlt(local+ENT_ORIGIN);
 			lo[1]=EFlt(local+ENT_ORIGIN+4);
 			lo[2]=EFlt(local+ENT_ORIGIN+8);
-			eng_local_idx =EInt(local+ENT_INDEX);
 			og=EInt(local+ENT_CURSTATE+ES_ONGROUND);
 		}
 		else
@@ -2729,7 +2795,6 @@ void DrawEngineEsp()
 			lo[0]=ReadFlt(local+ENT_ORIGIN);
 			lo[1]=ReadFlt(local+ENT_ORIGIN+4);
 			lo[2]=ReadFlt(local+ENT_ORIGIN+8);
-			eng_local_idx =ReadInt(local+ENT_INDEX);
 			og=ReadInt(local+ENT_CURSTATE+ES_ONGROUND);
 		}
 		// auto-bhop: onground from curstate (-1 = airborne). sys_glViewport
@@ -2754,6 +2819,7 @@ void DrawEngineEsp()
 
 	// ---- 2D radar frame. Center is freely positioned (radar_x/radar_y, move mode 3). ----
 	float rcx=0,rcy=0,rrad=0; float rcos=1.0f,rsin=0.0f; bool radar_on=false;
+	bool  have_yaw=false; float yaw_cos=1.0f, yaw_sin=0.0f;
 	if(cvar.radar)
 	{
 		{ int rs=cvar.radar_size; if(rs<30)rs=70; if(rs>150)rs=150; rrad=(float)rs*ui_scale; }	// user-tunable size
@@ -2762,10 +2828,10 @@ void DrawEngineEsp()
 		if(cvar.radar_rotate)
 		{
 			float va[3]={0,0,0};
-			DWORD fnVA=EngFn(ENG_SLOT_GETVIEWANGLES);
-			if(fnVA>=0x10000) ((eng_GetViewAngles_t)fnVA)(va);
+			if((DWORD)g_fn_GetViewAngles>=0x10000) g_fn_GetViewAngles(va);
 			float yaw=va[1]*3.14159265f/180.0f;	// rotate so local forward points up
 			rcos=cosf(yaw); rsin=sinf(yaw);
+			yaw_cos=rcos; yaw_sin=rsin; have_yaw=true;
 		}
 		else { rcos=1.0f; rsin=0.0f; }				// fixed north-up
 		radar_on=true;
@@ -2824,28 +2890,12 @@ void DrawEngineEsp()
 		if(cached_team && cached_team!=want_team && !radar_on && !EspWantsTeam(cached_team)) continue;
 
 		// Empty slots: GetEntityByIndex + player flag, not GetPlayerInfo+VQ.
-		DWORD ent=(DWORD)((eng_GetEntityByIndex_t)fnEnt)(idx);
+		DWORD ent=(DWORD)fnEnt(idx);
 		if(!ent || !EntSpanOk(idx,ent) || EInt(ent+ENT_PLAYER)==0) continue;
 
-		char namebuf[64]="";
-		char modelbuf[64]="";
-		// Name/model only when we will draw them, or when team is still unknown
-		// (need the spectator flag + model fallback). Known T/CT are not specs.
-		bool want_name = need_esp_name || need_radar_name;
-		bool want_model = (cached_team==0);
-		if(fnInfo>=0x10000 && (want_name || want_model))
-		{
-			hud_player_info_t info; memset(&info,0,sizeof(info));
-			((eng_GetPlayerInfo_t)fnInfo)(idx,&info);
-			if(info.name==0 || !IsReadable((DWORD)info.name,1)) continue;	// empty slot
-			if(info.spectator) continue;	// spectators aren't ESP/aim targets
-			if(want_name){ strncpy(namebuf,info.name,63); namebuf[63]=0; }
-			if(want_model && info.model && IsReadable((DWORD)info.model,1))
-			{ strncpy(modelbuf,info.model,63); modelbuf[63]=0; }
-		}
-
-		// alive/stale check: current_position keeps incrementing while a player
-		// receives network updates; it freezes on death / disconnect / round-end.
+		// alive/stale check FIRST (pure memory reads on span-checked ent, 0 syscalls):
+		// current_position keeps incrementing while a player receives network updates;
+		// it freezes on death / disconnect / round-end.
 		int cur=EInt(ent+ENT_CURPOS);
 		if(cur!=eng_lastcurpos[idx]) { eng_lastcurpos[idx]=cur; eng_lastchange[idx]=now; }
 		bool stale=(now-eng_lastchange[idx])>ENG_STALE_MS;	// time-based: same at 60 or 240 fps
@@ -2875,47 +2925,25 @@ void DrawEngineEsp()
 
 		// DeathMsg instant-death latch: the moment a slot dies it is dropped from
 		// EVERYTHING below (ESP box/name/radar/aim/trigger) that same frame, and it
-		// STAYS dropped until we're sure what happened next. A fixed-time hold isn't
-		// enough: the scoreboard 'dead' byte lags the kill by a variable amount, and
-		// a fresh corpse can keep streaming position updates for a moment so the
-		// staleness timer hasn't fired yet -- a fixed window expired during that gap
-		// and the corpse briefly popped back as an aim/ESP target. The latch releases
-		// on whichever happens first:
-		//   - EngDead/stale : the engine confirmed the corpse -> normal gate hides it.
-		//   - respawn       : the origin teleported a long way (to a spawn point) ->
-		//                     it's a NEW life, show it now. This is the key one for
-		//                     deathmatch: an instant respawn keeps the slot alive and
-		//                     streaming, so EngDead/stale may NEVER fire and we'd
-		//                     otherwise stay hidden all the way to the safety cap (the
-		//                     multi-second "I respawned but I'm invisible" delay).
-		//   - safety cap    : backstop so a missed signal can't hide a live player.
+		// STAYS dropped until we're sure what happened next.
 		if(eng_dead_at[idx])
 		{
 			if(!eng_dead_org_set[idx])		// remember the death spot on the first latched frame
 			{
 				eng_dead_org[idx][0]=o[0]; eng_dead_org[idx][1]=o[1]; eng_dead_org[idx][2]=o[2]; eng_dead_org_set[idx]=true;
-				// capture the same spot for the full-hide kill cooldown (eager, so its
-				// respawn-teleport test has a correct reference even after this latch releases)
 				eng_kill_org[idx][0]=o[0]; eng_kill_org[idx][1]=o[1]; eng_kill_org[idx][2]=o[2]; eng_kill_org_set[idx]=true;
 			}
 			float jx=o[0]-eng_dead_org[idx][0], jy=o[1]-eng_dead_org[idx][1], jz=o[2]-eng_dead_org[idx][2];
-			// A running corpse still interpolates; 150u of slide is NOT a respawn.
-			// Only treat a jump as a new life when the slot also looks alive.
 			bool respawned=!looks_dead && (jx*jx+jy*jy+jz*jz)>(ENG_RESPAWN_DIST*ENG_RESPAWN_DIST);
-			if(respawned) { eng_kill_time[idx]=0; eng_kill_org_set[idx]=false; }	// respawn teleport during the latch -> lift the hide at once
+			if(respawned) { eng_kill_time[idx]=0; eng_kill_org_set[idx]=false; }
 			if(EngDead(idx) || stale || respawned || (now-eng_dead_at[idx])>ENG_DEATH_HOLD_MAX_MS)
-			{ eng_dead_at[idx]=0; eng_dead_org_set[idx]=false; }	// released; the normal gate below decides corpse(hide)/respawn(show)
+			{ eng_dead_at[idx]=0; eng_dead_org_set[idx]=false; }
 			else continue;					// still in the post-death gap -> stay hidden
 		}
 		if(EngDead(idx) || stale || looks_dead) continue;
 
 		// just-killed FULL HIDE: a killed slot stays completely hidden (name, box,
-		// radar, aim dot, aimbot, triggerbot) until the player RESPAWNS - detected as
-		// an origin teleport away from the captured death spot - or a generous safety
-		// cap lapses. This is what makes a corpse vanish for good so that, with several
-		// bodies piled up, the one live enemy is the only thing left to aim at. It's
-		// independent of the death latch above (which only hides briefly then hands
-		// back to the normal gate, letting a lingering corpse re-appear).
+		// radar, aim dot, aimbot, triggerbot) until the player RESPAWNS.
 		if(eng_kill_time[idx])
 		{
 			if(!eng_kill_org_set[idx])		// death seen out of PVS -> capture on first sighting
@@ -2930,12 +2958,38 @@ void DrawEngineEsp()
 			if(eng_kill_time[idx]) continue;	// still dead (not respawned) -> stay fully hidden
 		}
 
+		char namebuf[64]="";
+		char modelbuf[64]="";
+		// Name/model only for ALIVE, in-PVS players when we will draw them, or when
+		// team is still unknown (need the spectator flag + model fallback).
+		bool want_name = need_esp_name || need_radar_name;
+		bool want_model = (cached_team==0);
+		if((DWORD)fnInfo>=0x10000 && (want_name || want_model))
+		{
+			static DWORD chk_name[33]={0}, chk_model[33]={0};
+			hud_player_info_t info; memset(&info,0,sizeof(info));
+			fnInfo(idx,&info);
+			DWORD np=(DWORD)info.name;
+			if(!np) continue;
+			if(np!=chk_name[idx])
+			{
+				if(!IsReadable(np,1)) continue;
+				chk_name[idx]=np;
+			}
+			if(info.spectator) continue;	// spectators aren't ESP/aim targets
+			if(want_name){ strncpy(namebuf,info.name,63); namebuf[63]=0; }
+			if(want_model && info.model)
+			{
+				DWORD mp=(DWORD)info.model;
+				if(mp==chk_model[idx] || IsReadable(mp,1))
+				{
+					chk_model[idx]=mp;
+					strncpy(modelbuf,info.model,63); modelbuf[63]=0;
+				}
+			}
+		}
+
 		// team color (shared by the radar dot and the on-screen ESP below).
-		// Three-tier team resolution, most-reliable first:
-		//   1) TeamInfo user-message (eng_msg_team) - the server's scoreboard
-		//      source; correct for ANY model (incl. custom) and needs no signature.
-		//   2) g_PlayerExtraInfo (EngTeam) - only when that scan resolved on this build.
-		//   3) model-name guess (TeamFromModel) - last resort; fails on custom models.
 		int team=eng_msg_team[idx];
 		if(team==0) team=EngTeam(idx);
 		if(team==0) team=TeamFromModel(modelbuf);
@@ -2973,26 +3027,24 @@ void DrawEngineEsp()
 			}
 		}
 
+		// Compute vertical extent ONCE per player and share between aim/trigger and ESP.
+		int usehull=EInt(ent+ENT_CURSTATE+ES_USEHULL);
+		float boxTop=0, boxFeet=0, boxScl=1.0f;
+		bool  have_extent=false;
+
 		// engine-aim + triggerbot candidate checks (independent of ESP being on).
 		// Both target the side selected by cvar.target (mapped to engine team#).
 		if((need_aim || cvar.trigger) && team==want_team)
 		{
-			int usehullA=EInt(ent+ENT_CURSTATE+ES_USEHULL);
-			// Studio hitbox for cvar.aim_hitbox (head/neck/chest) when the
-			// model was posed this frame. Hull-height guess only if it wasn't.
-			float topZ, feetZ, sclA;
-			PlayerVExtent(ent, o[2], usehullA, &topZ, &feetZ, &sclA);
+			PlayerVExtent(ent, o[2], usehull, &boxTop, &boxFeet, &boxScl);
+			have_extent=true;
 			float hxA, hyA, aimz;
 			if(!PickStudioAim(idx,&hxA,&hyA,&aimz))
-				HullAimPoint(o[0],o[1],topZ,feetZ,sclA,&hxA,&hyA,&aimz);
-			ApplyAimPt(idx,sclA,&hxA,&hyA,&aimz);
+				HullAimPoint(o[0],o[1],boxTop,boxFeet,boxScl,&hxA,&hyA,&aimz);
+			ApplyAimPt(idx,boxScl,&hxA,&hyA,&aimz);
 			float aimA[3] ={hxA,hyA,aimz};
-			float headA[3]={hxA,hyA,topZ-2.0f};		// head top (triggerbot box)
-			float feetA[3]={hxA,hyA,feetZ};
-			float sAi[3], sHe[3], sFe[3];
+			float sAi[3];
 			bool okAi=EngWorldToScreen(aimA,sAi);
-			bool okHe=EngWorldToScreen(headA,sHe);
-			bool okFe=EngWorldToScreen(feetA,sFe);
 
 			// screen-space aim point (shared by the aim dot and the aimbot pick)
 			float ax=0,ay=0;
@@ -3027,21 +3079,27 @@ void DrawEngineEsp()
 			}
 
 			// --- triggerbot: is the crosshair inside this enemy's 2D box? ---
-			if(cvar.trigger && okHe && okFe)
+			if(cvar.trigger)
 			{
-				float fxx=(sFe[0]*0.5f+0.5f)*sw, fyy=sh-(sFe[1]*0.5f+0.5f)*sh;
-				float hxx=(sHe[0]*0.5f+0.5f)*sw, hyy=sh-(sHe[1]*0.5f+0.5f)*sh;
-				float ty0=(hyy<fyy)?hyy:fyy, ty1=(hyy<fyy)?fyy:hyy;
-				float tbh=ty1-ty0; if(tbh<4.0f) tbh=4.0f;
-				float tbw=tbh*0.45f;
-				float tcx=(fxx+hxx)*0.5f;
-				float tx0=tcx-tbw*0.5f, tx1=tcx+tbw*0.5f;
-				if(aim_cx>=tx0 && aim_cx<=tx1 && aim_cy>=ty0 && aim_cy<=ty1)
+				float headA[3]={hxA,hyA,boxTop-2.0f};		// head top (triggerbot box)
+				float feetA[3]={hxA,hyA,boxFeet};
+				float sHe[3], sFe[3];
+				if(EngWorldToScreen(headA,sHe) && EngWorldToScreen(feetA,sFe))
 				{
-					bool v=true;
-					if(!cvar.aimthru)
-						v=PlayerVisibleCached(idx,o[0],o[1],o[2]+10.0f,mm_w,pm_w,vp);
-					if(cvar.aimthru || v) trig_hit=true;
+					float fxx=(sFe[0]*0.5f+0.5f)*sw, fyy=sh-(sFe[1]*0.5f+0.5f)*sh;
+					float hxx=(sHe[0]*0.5f+0.5f)*sw, hyy=sh-(sHe[1]*0.5f+0.5f)*sh;
+					float ty0=(hyy<fyy)?hyy:fyy, ty1=(hyy<fyy)?fyy:hyy;
+					float tbh=ty1-ty0; if(tbh<4.0f) tbh=4.0f;
+					float tbw=tbh*0.45f;
+					float tcx=(fxx+hxx)*0.5f;
+					float tx0=tcx-tbw*0.5f, tx1=tcx+tbw*0.5f;
+					if(aim_cx>=tx0 && aim_cx<=tx1 && aim_cy>=ty0 && aim_cy<=ty1)
+					{
+						bool v=true;
+						if(!cvar.aimthru)
+							v=PlayerVisibleCached(idx,o[0],o[1],o[2]+10.0f,mm_w,pm_w,vp);
+						if(cvar.aimthru || v) trig_hit=true;
+					}
 				}
 			}
 		}
@@ -3054,11 +3112,8 @@ void DrawEngineEsp()
 		// max-distance filter: skip if too far (0 = unlimited)
 		if(cvar.esp_maxdist>0 && distM>(float)cvar.esp_maxdist) continue;
 
-		int usehull=EInt(ent+ENT_CURSTATE+ES_USEHULL);
-		// Real extent so the box wraps short/resized players (see PlayerVExtent).
-		float boxTop, boxFeet, boxScl;
-		PlayerVExtent(ent, o[2], usehull, &boxTop, &boxFeet, &boxScl);
-		(void)boxScl;							// box only needs top/feet, not the ratio
+		if(!have_extent)
+			PlayerVExtent(ent, o[2], usehull, &boxTop, &boxFeet, &boxScl);
 
 		float feet[3]={o[0],o[1],boxFeet};
 		float head[3]={o[0],o[1],boxTop};
@@ -3083,18 +3138,14 @@ void DrawEngineEsp()
 		{
 			if(cvar.esp_arrow)
 			{
-				// Direction in world space relative to local yaw -> screen vector.
-				// We reuse rcos/rsin (computed earlier in the radar block) ONLY if
-				// the radar is on; otherwise compute yaw here.
-				float vcos=rcos, vsin=rsin;
-				if(!radar_on)
+				if(!have_yaw)
 				{
 					float va[3]={0,0,0};
-					DWORD fnVA2=EngFn(ENG_SLOT_GETVIEWANGLES);
-					if(fnVA2>=0x10000) ((eng_GetViewAngles_t)fnVA2)(va);
+					if((DWORD)g_fn_GetViewAngles>=0x10000) g_fn_GetViewAngles(va);
 					float yaw=va[1]*3.14159265f/180.0f;
-					vcos=cosf(yaw); vsin=sinf(yaw);
+					yaw_cos=cosf(yaw); yaw_sin=sinf(yaw); have_yaw=true;
 				}
+				float vcos=yaw_cos, vsin=yaw_sin;
 				float wx=o[0]-lo[0], wy=o[1]-lo[1];
 				float rx= wx*vsin - wy*vcos;		// right of local
 				float ry= wx*vcos + wy*vsin;		// in front of local
@@ -3256,20 +3307,29 @@ void DrawEngineEsp()
 	// up forever. A short grace window after the last live sighting avoids flicker on a
 	// dropped snapshot; once it lapses the marker clears on its own. Drawn in red to
 	// distinguish the ticking planted bomb from an orange dropped C4.
-	if(cvar.esp_engine && cvar.esp_bomb && fnEnt>=0x10000 && local)
+	if(cvar.esp_engine && cvar.esp_bomb && (DWORD)fnEnt>=0x10000 && local)
 	{
-		int  pc4_ref=ReadInt(local+ENT_CURSTATE+ES_MSGNUM);		// liveness reference
+		int  pc4_ref=local_ok ? EInt(local+ENT_CURSTATE+ES_MSGNUM) : ReadInt(local+ENT_CURSTATE+ES_MSGNUM);	// liveness reference
 		DWORD nowb=GetTickCount();
 		bool have=false;
 		if(eng_pc4_idx)
 		{
-			DWORD e=(DWORD)((eng_GetEntityByIndex_t)fnEnt)(eng_pc4_idx);
+			DWORD e=(DWORD)fnEnt(eng_pc4_idx);
 			if(e && ModelIsC4(ReadDW(e+ENT_MODEL)) && EntLive(e,pc4_ref))
 			{
 				float po[3];
-				po[0]=ReadFlt(e+ENT_ORIGIN); po[1]=ReadFlt(e+ENT_ORIGIN+4); po[2]=ReadFlt(e+ENT_ORIGIN+8);
-				if(po[0]==0&&po[1]==0&&po[2]==0)
-				{ DWORD cs=e+ENT_CURSTATE; po[0]=ReadFlt(cs+ES_ORIGIN); po[1]=ReadFlt(cs+ES_ORIGIN+4); po[2]=ReadFlt(cs+ES_ORIGIN+8); }
+				if(IsEntReadableFast(e))
+				{
+					po[0]=EFlt(e+ENT_ORIGIN); po[1]=EFlt(e+ENT_ORIGIN+4); po[2]=EFlt(e+ENT_ORIGIN+8);
+					if(po[0]==0&&po[1]==0&&po[2]==0)
+					{ DWORD cs=e+ENT_CURSTATE; po[0]=EFlt(cs+ES_ORIGIN); po[1]=EFlt(cs+ES_ORIGIN+4); po[2]=EFlt(cs+ES_ORIGIN+8); }
+				}
+				else
+				{
+					po[0]=ReadFlt(e+ENT_ORIGIN); po[1]=ReadFlt(e+ENT_ORIGIN+4); po[2]=ReadFlt(e+ENT_ORIGIN+8);
+					if(po[0]==0&&po[1]==0&&po[2]==0)
+					{ DWORD cs=e+ENT_CURSTATE; po[0]=ReadFlt(cs+ES_ORIGIN); po[1]=ReadFlt(cs+ES_ORIGIN+4); po[2]=ReadFlt(cs+ES_ORIGIN+8); }
+				}
 				eng_pc4_org[0]=po[0]; eng_pc4_org[1]=po[1]; eng_pc4_org[2]=po[2];
 				eng_pc4_seen=nowb; have=true;
 			}
@@ -3281,7 +3341,7 @@ void DrawEngineEsp()
 			else if(nowb-eng_pc4_scan_at >= ENG_PC4_SCAN_MS)				// time-throttled full scan (fps-independent)
 			{
 				eng_pc4_scan_at=nowb;
-				int f=FindPlantedC4(fnEnt,pc4_ref);
+				int f=FindPlantedC4((DWORD)fnEnt,pc4_ref);
 				if(f) eng_pc4_idx=f;						// confirmed live -> drawn next frame
 			}
 		}
@@ -3346,11 +3406,13 @@ void DrawEngineEsp()
 
 	}	// end if(cvar.esp_engine || cvar.radar || need_aim)
 
+	g_in_2d_overlay=false;
 	(*orig_glMatrixMode)(GL_PROJECTION);
 	(*orig_glPopMatrix)();
 	(*orig_glMatrixMode)(GL_MODELVIEW);
 	(*orig_glPopMatrix)();
 	(*orig_glPopAttrib)();
+	g_wall_depth_off=false;
 }
 
 // (tier1 DrawPlayerEsp removed - replaced entirely by DrawEngineEsp)
@@ -3380,18 +3442,20 @@ void sys_glAlphaFunc (GLenum func,  GLclampf ref)
 
 void sys_glBegin (GLenum mode)
 {
-	// No Flash: bFlash is only ARMED for a bright GL_QUADS quad (re-armed in the
-	// GL_QUADS block below). While armed, the quad's vertices are buffered and
-	// sys_glEnd decides whether it's the real fullscreen flash (suppress) or an
-	// innocent bright HUD quad (replay). Clear it at the start of every primitive so
-	// a stale arm from a previous quad can never leak into a later draw.
+	// No Flash / No Smoke: reset per-primitive flags at the start of every primitive
+	// so a stale arm from a previous GL_QUADS can never leak into a later draw.
 	bFlash=false;
+	bSmoke=false;
 
 	if ((cvar.wall==1) && (bWall) && (mode==GL_TRIANGLE_FAN || mode==GL_TRIANGLE_STRIP))
 	{
-		LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
-		(*orig_glDisable)(GL_DEPTH_TEST);
-		if(cvar.perf) PerfAccAdd(&g_perf_acc_wall,t0);
+		if(!g_wall_depth_off)
+		{
+			LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
+			(*orig_glDisable)(GL_DEPTH_TEST);
+			g_wall_depth_off=true;
+			if(cvar.perf) PerfAccAdd(&g_perf_acc_wall,t0);
+		}
 	}
 	else if((cvar.wall==2) && (bWall))
 	{
@@ -3399,6 +3463,7 @@ void sys_glBegin (GLenum mode)
 		(*orig_glGetFloatv)(GL_CURRENT_COLOR, curcolor);
 		if(cvar.perf) g_perf_n_getf++;
 		(*orig_glDisable)(GL_DEPTH_TEST);
+		g_wall_depth_off=true;
 		(*orig_glEnable)(GL_BLEND);
 		(*orig_glBlendFunc)(GL_SRC_ALPHA, GL_ONE);
 		(*orig_glColor4f)(curcolor[0], curcolor[1], curcolor[2], 255.0);
@@ -3410,6 +3475,7 @@ void sys_glBegin (GLenum mode)
 		(*orig_glGetFloatv)(GL_CURRENT_COLOR, curcolor);
 		if(cvar.perf) g_perf_n_getf++;
 		(*orig_glDisable)(GL_DEPTH_TEST);
+		g_wall_depth_off=true;
 		(*orig_glEnable)(GL_BLEND);
 		(*orig_glBlendFunc)(GL_SRC_ALPHA, GL_SRC_ALPHA_SATURATE);
 		(*orig_glColor4f)(curcolor[0], curcolor[1], curcolor[2], 1.0);
@@ -3419,13 +3485,15 @@ void sys_glBegin (GLenum mode)
 	{
 		if(cvar.sky) bSky=true;		// only latch when No Sky is on (feeds sys_glClear)
 		if(cvar.perf) g_perf_n_quad++;
+		GLfloat qcol[4];
+		bool have_qcol=false;
 		if(cvar.smoke)
 		{
 			LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
-			GLfloat smokecol[4];
-			(*orig_glGetFloatv)(GL_CURRENT_COLOR, smokecol);
+			(*orig_glGetFloatv)(GL_CURRENT_COLOR, qcol);
+			have_qcol=true;
 			if(cvar.perf) g_perf_n_getf++;
-			if((smokecol[0]==smokecol[1]) && (smokecol[0]==smokecol[2]) && (smokecol[0]!=0.0) && (smokecol[0]!=1.0))
+			if((qcol[0]==qcol[1]) && (qcol[0]==qcol[2]) && (qcol[0]!=0.0) && (qcol[0]!=1.0))
 				bSmoke=true;
 			else 
 				bSmoke=false;
@@ -3434,45 +3502,33 @@ void sys_glBegin (GLenum mode)
 		if(cvar.flash)
 		{
 			LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
-			GLfloat flashcol[4];
-			(*orig_glGetFloatv)(GL_CURRENT_COLOR, flashcol);
-			if(cvar.perf) g_perf_n_getf++;
-			// The stock flashbang is a pure-white fullscreen quad, but modded
-			// servers tint it (pink/green/random each round), so requiring exact
-			// white missed those entirely. A flash is really just a BRIGHT, UNTEXTURED
-			// overlay of any hue. We ARM on "bright + untextured" here, then in
-			// sys_glEnd only suppress it if it truly spans the whole screen.
-			//   - The UNTEXTURED check is essential: every bright HUD element (ammo
-			//     digits, kill-feed weapon icons, buy-menu weapon image, buy-zone
-			//     card icon) is a TEXTURED sprite, so it never arms and is drawn
-			//     normally. Buffering a textured quad would also break it, because
-			//     replaying its vertices in sys_glEnd loses the per-vertex texcoords.
-			//   - The fullscreen gate then protects untextured bright quads that
-			//     aren't the flash (e.g. the buy-menu panel).
-			float mx=flashcol[0];
-			if(flashcol[1]>mx) mx=flashcol[1];
-			if(flashcol[2]>mx) mx=flashcol[2];
-			// ARM on any bright untextured quad and remember its alpha; sys_glEnd
-			// then decides what to do. We deliberately DON'T gate arming on alpha
-			// here anymore: a real flashbang's fade TAIL is translucent (low alpha)
-			// yet must still be suppressed, otherwise it leaves a milky wash that
-			// hides enemy models for the rest of the flash even though the screen
-			// isn't fully white. The onset-vs-fade / flash-vs-killfade decision is
-			// made in sys_glEnd from flashArmA + the flash latch.
+			if(!have_qcol)
+			{
+				(*orig_glGetFloatv)(GL_CURRENT_COLOR, qcol);
+				have_qcol=true;
+				if(cvar.perf) g_perf_n_getf++;
+			}
+			float mx=qcol[0];
+			if(qcol[1]>mx) mx=qcol[1];
+			if(qcol[2]>mx) mx=qcol[2];
+			// Check brightness on CPU first; only query GL_TEXTURE_2D when mx >= 0.5f.
 			bFlash=(mx>=0.5f) && !(*orig_glIsEnabled)(GL_TEXTURE_2D);
-			if(bFlash){ flashVN=0; flashArmA=flashcol[3]; }	// start buffering this (untextured) quad's vertices
+			if(bFlash){ flashVN=0; flashArmA=qcol[3]; }	// start buffering this (untextured) quad's vertices
 			if(cvar.perf) PerfAccAdd(&g_perf_acc_flash,t0);
 		}
 		if(cvar.scope)
 		{
 			LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
-			GLfloat scopecol[4];
-			(*orig_glGetFloatv)(GL_CURRENT_COLOR, scopecol);
-			if(cvar.perf) g_perf_n_getf++;
-			if(scopecol[0]==1.0f && scopecol[1]==1.0f && scopecol[2]==1.0f && scopecol[3]==1.0f)
+			if(!have_qcol)
+			{
+				(*orig_glGetFloatv)(GL_CURRENT_COLOR, qcol);
+				have_qcol=true;
+				if(cvar.perf) g_perf_n_getf++;
+			}
+			if(qcol[0]==1.0f && qcol[1]==1.0f && qcol[2]==1.0f && qcol[3]==1.0f)
 			{
 				(*orig_glEnable)(GL_BLEND);
-				(*orig_glColor4f)(scopecol[0],scopecol[1],scopecol[2],0.0f);
+				(*orig_glColor4f)(qcol[0],qcol[1],qcol[2],0.0f);
 				(*orig_glDisable)(GL_BLEND);
 			}
 			if(cvar.perf) PerfAccAdd(&g_perf_acc_scope,t0);
@@ -3573,11 +3629,13 @@ void sys_glDepthRange (GLclampd zNear,  GLclampd zFar)
 
 void sys_glDisable (GLenum cap)
 {
+	if(cap==GL_DEPTH_TEST) g_wall_depth_off=true;
 	(*orig_glDisable) (cap);
 }
 
 void sys_glEnable (GLenum cap)
 {
+	if(cap==GL_DEPTH_TEST) g_wall_depth_off=false;
 	if(!FirstInit) // just called once
 	{
 		BuildFont();							// load bitmap font
@@ -3724,7 +3782,10 @@ void sys_glPopMatrix (void)
 	}
 
 	if(cvar.wall)
+	{
 		bWall=false;
+		g_wall_depth_off=false;
+	}
 
 	(*orig_glPopMatrix) ();
 }
@@ -3752,7 +3813,10 @@ void sys_glPushClientAttrib (GLbitfield mask)
 void sys_glPushMatrix (void)
 {
 	if(cvar.wall)
+	{
 		bWall=true;
+		g_wall_depth_off=false;
+	}
 
 	(*orig_glPushMatrix) ();
 }
@@ -4037,6 +4101,7 @@ void DrawOverlayUI()
 	(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPushMatrix)(); (*orig_glLoadIdentity)();
 	(*orig_glOrtho)(0,sw,sh,0,-1,1);
 	(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPushMatrix)(); (*orig_glLoadIdentity)();
+	g_in_2d_overlay=true;
 
 	// later-opened panel draws on top; but while repositioning, keep the hack menu
 	// (and its move hint) on top so it's always readable.
@@ -4052,9 +4117,11 @@ void DrawOverlayUI()
 		if(showCheck) DrawCheckText(cvar.check_x,cvar.check_y);
 	}
 
+	g_in_2d_overlay=false;
 	(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPopMatrix)();
 	(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPopMatrix)();
 	(*orig_glPopAttrib)();
+	g_wall_depth_off=false;
 }
 
 // Draw a centered rounded "pill" of text at vertical fraction cyf of the screen,
@@ -4076,6 +4143,7 @@ static void DrawPill(const char *msg, float cyf, float cr, float cg, float cb, f
 	(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPushMatrix)(); (*orig_glLoadIdentity)();
 	(*orig_glOrtho)(0,sw,sh,0,-1,1);
 	(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPushMatrix)(); (*orig_glLoadIdentity)();
+	g_in_2d_overlay=true;
 
 	float tw=TextWidthPx(msg);								// exact text width -> true centering
 	float padX=16.0f*ui_scale, padY=10.0f*ui_scale;			// generous padding on all 4 sides
@@ -4095,9 +4163,11 @@ static void DrawPill(const char *msg, float cyf, float cr, float cg, float cb, f
 	DrawText(cx-tw*0.5f, cyc+charH*0.5f, cr,cg,cb, "%s", msg);	// centered
 	gTextAlpha=ta;
 
+	g_in_2d_overlay=false;
 	(*orig_glMatrixMode)(GL_PROJECTION); (*orig_glPopMatrix)();
 	(*orig_glMatrixMode)(GL_MODELVIEW);  (*orig_glPopMatrix)();
 	(*orig_glPopAttrib)();
+	g_wall_depth_off=false;
 }
 
 // Centered toast near the bottom of the screen. Drawn in its own 2D pass so it
@@ -4319,6 +4389,7 @@ void sys_wglSwapBuffers(HDC hDC)
 	}
 	UpdateBhop();			// once-per-frame jump spam (also releases SPACE when bhop/hack is off)
 	viewportcount=0;		// reset viewport count, cuz this is the last function called every frame
+	g_wall_depth_off=false;
 
 	// Perf monitor: commit this frame's section timings. "now" is sampled at the
 	// end of every swap, so Frame = now - previous swap = one full frame period
