@@ -776,7 +776,8 @@ GLvoid KillFont(GLvoid)
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 static bool g_in_2d_overlay = false;	// true while inside a 2D overlay pass (already has PushAttrib + TEXTURE_2D off)
-static bool g_wall_depth_off = false;	// tracks whether GL_DEPTH_TEST is currently disabled to skip redundant glDisable calls
+bool g_wall_depth_off = false;			// tracks whether GL_DEPTH_TEST is currently disabled to skip redundant glDisable calls
+GLenum g_gl_list_mode = 0;				// current display-list compile mode (GL_COMPILE / GL_COMPILE_AND_EXECUTE / 0)
 
 static void DrawTextRaw(float x, float y, float r, float g, float b, GLuint fsz, const char *text)
 {
@@ -1408,35 +1409,199 @@ static float EFlt(DWORD a){ return *(float*)a; }
 
 bool RegionReadable(MEMORY_BASIC_INFORMATION &mbi);
 
-// All cl_entity_t slots in GoldSrc live inside one contiguous committed array
-// (cl_entities[]). Caching the validated region bounds lets us verify any
-// entity pointer in that region with two integer comparisons (0 VirtualQuery).
-static DWORD g_ent_rbase=0, g_ent_rend=0;
-static bool IsEntReadableFast(DWORD ent)
+// ---------------------------------------------------------------------------
+//  Unified runtime cache & lifetime invalidation (g_cache_epoch).
+//
+//  * Per-frame region bounds (g_ent_rbase, g_hdr_rbase, g_str_rbase,
+//    g_bt_rbase, g_bt_valid_base) avoid repeating VirtualQuery for contiguous
+//    allocations within the same render frame, and are cleared at the end of
+//    every wglSwapBuffers so a freed region can never persist across frames.
+//  * Cross-frame metadata caches are invalidated by reason:
+//      - INV_REHOOK : user-message hook list was rebuilt in-session; marks
+//        non-fresh TeamInfo/ScoreAttrib entries as UNKNOWN while keeping
+//        same-session death latches and current-frame messages intact.
+//      - INV_SESSION: map change / reconnect; clears per-slot caches and old
+//        death/kill latches while preserving messages received in the new
+//        session/frame.
+//      - INV_MODULE : client.dll / hw.dll reload or invalid table; full reset
+//        of all module pointers, caches, message tables, and death latches.
+// ---------------------------------------------------------------------------
+enum {
+	INV_REHOOK  = 0,
+	INV_SESSION = 1,
+	INV_MODULE  = 2
+};
+
+#define FRAME_REGIONS_MAX 8
+
+static DWORD g_cache_epoch    = 1;
+static DWORD g_mod_cl_base    = 0, g_mod_cl_end = 0;
+static DWORD g_mod_hw_base    = 0, g_mod_hw_end = 0;
+static DWORD g_ent_rbase      = 0, g_ent_rend   = 0;
+static DWORD g_hdr_rbase      = 0, g_hdr_rend   = 0;
+static DWORD g_str_rbase      = 0, g_str_rend   = 0;
+static DWORD g_bt_rbase       = 0, g_bt_rend    = 0;
+static DWORD g_bt_valid_base  = 0;
+static DWORD g_frame_rbase[FRAME_REGIONS_MAX] = {0};
+static DWORD g_frame_rend [FRAME_REGIONS_MAX] = {0};
+static int   g_frame_rcount   = 0;
+static int   g_frame_rnext    = 0;
+static DWORD g_frame_hdr_ptr [FRAME_REGIONS_MAX] = {0};
+static DWORD g_frame_hdr_hash[FRAME_REGIONS_MAX] = {0};
+static int   g_frame_hdr_cnt  = 0;
+static bool  g_mods_checked   = false;
+static bool  g_eng_table_valid= false;
+static bool  g_stu_table_valid= false;
+static DWORD g_ent_span_ent[33]      = {0};
+static DWORD g_ent_span_epoch[33]    = {0};
+static DWORD g_pinfo_name[33]        = {0};
+static DWORD g_pinfo_model[33]       = {0};
+static DWORD g_pinfo_epoch[33]       = {0};
+static char  eng_msg_team_fresh[33]  = {0};
+static char  eng_msg_attrib_fresh[33]= {0};
+static DWORD eng_msg_team_sess[33]   = {0};
+static DWORD eng_msg_attrib_sess[33] = {0};
+static int   eng_last_emsg[33]       = {0};
+static int   eng_spawn_msgnum[33]    = {0};
+static bool  eng_attrib_alive_pend[33]={false};
+static DWORD g_last_local_ent        = 0;
+static int   g_last_local_msgnum     = 0;
+
+static eng_GetLocalPlayer_t   g_fn_GetLocalPlayer   = 0;
+static eng_GetEntityByIndex_t g_fn_GetEntityByIndex = 0;
+static eng_GetPlayerInfo_t    g_fn_GetPlayerInfo    = 0;
+static eng_GetViewAngles_t    g_fn_GetViewAngles    = 0;
+static eng_WorldToScreen_t    g_fn_WorldToScreen    = 0;
+
+bool EngineResolve();
+static bool IsEntReadableFast(DWORD ent);
+
+static void RaiseSpawnWatermark(int idx)
 {
-	if(ent<0x10000) return false;
-	if(ent>=g_ent_rbase && (ent+ENT_SPAN)<=g_ent_rend) return true;
+	if(idx<1 || idx>32) return;
+	if(g_last_local_msgnum>eng_spawn_msgnum[idx])
+		eng_spawn_msgnum[idx]=g_last_local_msgnum;
+	if(eng_last_emsg[idx]>eng_spawn_msgnum[idx])
+		eng_spawn_msgnum[idx]=eng_last_emsg[idx];
+	DWORD ent=g_ent_span_ent[idx];
+	bool  confirmed_empty=false;
+	if(ent)
+	{
+		if(IsEntReadableFast(ent) || IsReadable(ent,ENT_SPAN))
+		{
+			int eidx=EInt(ent+ENT_INDEX);
+			int eplr=EInt(ent+ENT_INDEX+4);
+			if(!(eidx==idx && eplr!=0))
+			{
+				if(eidx==0 && eplr==0) confirmed_empty=true;
+				ent=0;
+			}
+		}
+		else ent=0;
+	}
+	if(!ent && (g_eng_table_valid || EngineResolve())
+		&& (size_t)g_fn_GetEntityByIndex>=(size_t)g_mod_hw_base
+		&& (size_t)g_fn_GetEntityByIndex<(size_t)g_mod_hw_end
+		&& (size_t)g_fn_GetEntityByIndex>=0x10000)
+	{
+		DWORD cand=(DWORD)(size_t)((void*(__cdecl*)(int))g_fn_GetEntityByIndex)(idx);
+		if(cand && (IsEntReadableFast(cand) || IsReadable(cand,ENT_SPAN)))
+		{
+			int eidx=EInt(cand+ENT_INDEX);
+			int eplr=EInt(cand+ENT_INDEX+4);
+			if(eidx==idx && eplr!=0)
+				ent=cand;
+			else if(eidx==0 && eplr==0)
+				confirmed_empty=true;
+		}
+	}
+	if(ent)
+	{
+		int emsg=EInt(ent+ENT_CURSTATE+ES_MSGNUM);
+		if(emsg>eng_spawn_msgnum[idx])
+			eng_spawn_msgnum[idx]=emsg;
+		if(eng_last_emsg[idx]<0 || emsg>eng_last_emsg[idx])
+			eng_last_emsg[idx]=(emsg>0)?emsg:0;
+		g_ent_span_ent[idx]=ent;
+		g_ent_span_epoch[idx]=g_cache_epoch;
+	}
+	else
+	{
+		g_ent_span_ent[idx]=0;
+		g_ent_span_epoch[idx]=0;
+		if(confirmed_empty)
+		{
+			if(eng_last_emsg[idx]<0) eng_last_emsg[idx]=0;
+		}
+		else
+			eng_last_emsg[idx]=-1;
+	}
+}
+
+static void ResetFrameRegionCaches()
+{
+	g_ent_rbase=0; g_ent_rend=0;
+	g_hdr_rbase=0; g_hdr_rend=0;
+	g_str_rbase=0; g_str_rend=0;
+	g_bt_rbase=0;  g_bt_rend=0;
+	g_bt_valid_base=0;
+	g_frame_rcount=0; g_frame_rnext=0;
+	g_frame_hdr_cnt=0;
+	g_mods_checked=false;
+	g_eng_table_valid=false;
+	g_stu_table_valid=false;
+}
+
+static bool IsRangeReadableFast(DWORD addr, DWORD len, DWORD *rbase, DWORD *rend)
+{
+	if(addr<0x10000 || len==0 || (addr+len)<addr) return false;
+	if(addr>=*rbase && (addr+len)<=*rend) return true;
+	for(int i=0;i<g_frame_rcount;i++)
+	{
+		if(addr>=g_frame_rbase[i] && (addr+len)<=g_frame_rend[i])
+		{
+			*rbase=g_frame_rbase[i]; *rend=g_frame_rend[i];
+			return true;
+		}
+	}
 	MEMORY_BASIC_INFORMATION mbi;
-	if(!VirtualQuery((LPCVOID)ent,&mbi,sizeof(mbi))) return false;
+	if(!VirtualQuery((LPCVOID)addr,&mbi,sizeof(mbi))) return false;
 	if(!RegionReadable(mbi)) return false;
 	DWORD rb=(DWORD)mbi.BaseAddress;
 	DWORD re=rb+mbi.RegionSize;
-	if((ent+ENT_SPAN)>re) return false;
-	g_ent_rbase=rb; g_ent_rend=re;
+	if((addr+len)>re) return false;
+	*rbase=rb; *rend=re;
+	int slot=g_frame_rnext;
+	g_frame_rbase[slot]=rb; g_frame_rend[slot]=re;
+	if(g_frame_rcount<FRAME_REGIONS_MAX) g_frame_rcount++;
+	g_frame_rnext=(slot+1)&(FRAME_REGIONS_MAX-1);
 	return true;
 }
 
-// Cache a successful span-check per slot so empty/live entities don't pay
-// VirtualQuery every frame (the pointer is stable for the life of the slot).
+static bool IsEntReadableFast(DWORD ent)
+{
+	return IsRangeReadableFast(ent, ENT_SPAN, &g_ent_rbase, &g_ent_rend);
+}
+
+static bool IsHdrReadableFast(DWORD hdr, DWORD len)
+{
+	return IsRangeReadableFast(hdr, len, &g_hdr_rbase, &g_hdr_rend);
+}
+
+static bool IsStrReadableFast(DWORD s)
+{
+	return IsRangeReadableFast(s, 64, &g_str_rbase, &g_str_rend);
+}
+
+// Cache a successful span-check per slot for the current frame/epoch so
+// empty/live entities don't pay VirtualQuery repeatedly.
 static bool EntSpanOk(int idx, DWORD ent)
 {
-	static DWORD chk_ent[33]={0};
-	static bool  chk_ok[33]={0};
 	if(idx<1||idx>32||!ent) return false;
-	if(chk_ent[idx]==ent && chk_ok[idx]) return true;
-	bool ok=IsEntReadableFast(ent);
-	if(ok){ chk_ent[idx]=ent; chk_ok[idx]=true; }
-	return ok;
+	if(g_ent_span_ent[idx]==ent && g_ent_span_epoch[idx]==g_cache_epoch
+		&& ent>=g_ent_rbase && (ent+ENT_SPAN)<=g_ent_rend)
+		return true;
+	return IsEntReadableFast(ent);
 }
 
 // Resolve a player's REAL vertical extent so short ("midget"/resize-server)
@@ -1589,60 +1754,11 @@ DWORD FindExtraInfo()
 	return ScanPattern(cl_base,cl_end,pat,mask,27);
 }
 
-static eng_GetLocalPlayer_t   g_fn_GetLocalPlayer   = 0;
-static eng_GetEntityByIndex_t g_fn_GetEntityByIndex = 0;
-static eng_GetPlayerInfo_t    g_fn_GetPlayerInfo    = 0;
-static eng_GetViewAngles_t    g_fn_GetViewAngles    = 0;
-static eng_WorldToScreen_t    g_fn_WorldToScreen    = 0;
-static DWORD                  g_extra_tried_cl      = 0;
-
-DWORD EngFn(int slot){ return ReadDW(eng_table+slot*4); }
-
-bool EngineResolve()	// resolve & cache the engine table; true when usable
-{
-	if(eng_table==0 || g_fn_GetLocalPlayer==0)
-	{
-		if(eng_table==0 || ReadDW(eng_table+ENG_SLOT_GETLOCALPLAYER*4)==0)
-			eng_table=FindEngineTable();
-		g_fn_GetLocalPlayer=0; g_fn_GetEntityByIndex=0;
-		g_fn_GetPlayerInfo=0;  g_fn_GetViewAngles=0;
-		g_fn_WorldToScreen=0;
-	}
-	if(eng_table==0) return false;
-	if(!g_fn_GetLocalPlayer)   g_fn_GetLocalPlayer  =(eng_GetLocalPlayer_t)  ReadDW(eng_table+ENG_SLOT_GETLOCALPLAYER*4);
-	if(!g_fn_GetEntityByIndex) g_fn_GetEntityByIndex=(eng_GetEntityByIndex_t)ReadDW(eng_table+ENG_SLOT_GETENTITYBYINDEX*4);
-	if(!g_fn_GetPlayerInfo)    g_fn_GetPlayerInfo   =(eng_GetPlayerInfo_t)   ReadDW(eng_table+ENG_SLOT_GETPLAYERINFO*4);
-	if(!g_fn_GetViewAngles)    g_fn_GetViewAngles   =(eng_GetViewAngles_t)   ReadDW(eng_table+ENG_SLOT_GETVIEWANGLES*4);
-	if(!g_fn_WorldToScreen)
-	{
-		DWORD tri=ReadDW(eng_table+ENG_SLOT_PTRIAPI*4);
-		if(tri>=0x10000) g_fn_WorldToScreen=(eng_WorldToScreen_t)ReadDW(tri+12*4);
-	}
-	if(!eng_have_extra)
-	{
-		DWORD cl=(DWORD)GetModuleHandleA("client.dll");
-		if(cl && cl!=g_extra_tried_cl)	// scan client.dll once per module load, not every frame
-		{
-			g_extra_tried_cl=cl;
-			eng_extrainfo=FindExtraInfo();
-			eng_have_extra=(eng_extrainfo!=0);
-		}
-	}
-	return true;
-}
-
-// ---------------------------------------------------------------------------
-//  Studio hitbox capture (IEngineStudio).
-//
-//  GoldSrc already runs StudioSetupBones when it draws a player. We only READ
-//  the posed HEAD + CHEST hitbox centers at glPopMatrix — two matrix muls,
-//  no second pose, no per-vertex work. Neck is a lerp. Aim picks among them
-//  via cvar.aim_hitbox the same frame (SwapBuffers); slots that were not
-//  drawn keep the hull-height fallback.
-// ---------------------------------------------------------------------------
 #define STU_MOD_EXTRADATA	4	// engine_studio_api_t slot
 #define STU_GETCURRENTENT	6
 #define STU_GETBONEXFORM	16
+#define STUDIO_HDR_NAME		8
+#define STUDIO_HDR_LENGTH	72
 #define STUDIO_HDR_NUMBONES	140
 #define STUDIO_HDR_BONEIDX	144
 #define STUDIO_HDR_NUMHB	156
@@ -1660,14 +1776,239 @@ bool EngineResolve()	// resolve & cache the engine table; true when usable
 typedef void* (__cdecl *stu_GetCurrentEntity_t)(void);
 typedef void* (__cdecl *stu_ModExtradata_t)(void *mod);
 typedef void* (__cdecl *stu_GetBoneTransform_t)(void);
+typedef struct { int bone; float c[3]; } stu_hbc_t;
+typedef struct {
+	DWORD     epoch;
+	DWORD     model;
+	DWORD     hdr;
+	int       length;
+	int       numbones;
+	int       numhb;
+	int       hbidx;
+	DWORD     hb_hash;
+	int       have;
+	stu_hbc_t head;
+	stu_hbc_t chest;
+} stu_slot_cache_t;
 
-static DWORD g_studio=0;			// &IEngineStudio in client.dll
-static int   g_studio_tries=0;
-static int   g_bt_deref=0;			// 0=unknown, 1=direct, 2=one extra deref
-static stu_GetCurrentEntity_t g_stu_GetCurrentEnt=0;
-static stu_ModExtradata_t     g_stu_ModExtradata =0;
-static stu_GetBoneTransform_t g_stu_GetBoneXform =0;
-static DWORD                  g_bt_valid_base    =0;
+static DWORD                  g_extra_tried_cl      = 0;
+static DWORD                  g_studio              = 0;	// &IEngineStudio in client.dll
+static int                    g_studio_tries        = 0;
+static int                    g_bt_deref            = 0;	// 0=unknown, 1=direct, 2=one extra deref
+static stu_GetCurrentEntity_t g_stu_GetCurrentEnt   = 0;
+static stu_ModExtradata_t     g_stu_ModExtradata    = 0;
+static stu_GetBoneTransform_t g_stu_GetBoneXform    = 0;
+static stu_slot_cache_t       g_hb_cache[33];
+
+// Central cache invalidation by reason (INV_REHOOK / INV_SESSION / INV_MODULE).
+static void InvalidateRuntimeCaches(int reason)
+{
+	DWORD prev_epoch=g_cache_epoch;
+	if(++g_cache_epoch==0) g_cache_epoch=1;
+	ResetFrameRegionCaches();
+	if(reason==INV_SESSION || reason==INV_MODULE)
+		memset(g_ent_span_ent, 0, sizeof(g_ent_span_ent));
+	memset(g_ent_span_epoch, 0, sizeof(g_ent_span_epoch));
+	memset(g_pinfo_name,     0, sizeof(g_pinfo_name));
+	memset(g_pinfo_model,    0, sizeof(g_pinfo_model));
+	memset(g_pinfo_epoch,    0, sizeof(g_pinfo_epoch));
+	memset(g_hb_cache,       0, sizeof(g_hb_cache));
+	memset(eng_hb_ok,        0, sizeof(eng_hb_ok));
+	memset(eng_hb_mask,      0, sizeof(eng_hb_mask));
+	memset(eng_vis_at,       0, sizeof(eng_vis_at));
+	memset(eng_vis_cache,    0, sizeof(eng_vis_cache));
+
+	for(int i=0;i<33;i++)
+	{
+		bool keep_team = (eng_msg_team_fresh[i]!=0)
+			|| (reason==INV_REHOOK && eng_msg_team_sess[i]!=0 && eng_msg_team_sess[i]==prev_epoch);
+		if(keep_team) eng_msg_team_sess[i]=g_cache_epoch;
+		else { eng_msg_team[i]=MSG_TEAM_UNKNOWN; eng_msg_team_sess[i]=0; }
+
+		bool keep_attr = (eng_msg_attrib_fresh[i]!=0)
+			|| (reason==INV_REHOOK && eng_msg_attrib_sess[i]!=0 && eng_msg_attrib_sess[i]==prev_epoch);
+		if(keep_attr) eng_msg_attrib_sess[i]=g_cache_epoch;
+		else { eng_msg_attrib[i]=MSG_ATTRIB_UNKNOWN; eng_msg_attrib_sess[i]=0; }
+	}
+
+	if(reason==INV_SESSION || reason==INV_MODULE)
+	{
+		// New map / server connection or module reload: previous session's death
+		// latches and death origins do not apply to the new session's players.
+		memset(eng_dead_at,        0, sizeof(eng_dead_at));
+		memset(eng_dead_org_set,   0, sizeof(eng_dead_org_set));
+		memset(eng_kill_time,      0, sizeof(eng_kill_time));
+		memset(eng_kill_org_set,   0, sizeof(eng_kill_org_set));
+		memset(eng_need_fresh_ent,    0, sizeof(eng_need_fresh_ent));
+		memset(eng_attrib_alive_pend, 0, sizeof(eng_attrib_alive_pend));
+		memset(eng_last_emsg,         0, sizeof(eng_last_emsg));
+		memset(eng_spawn_msgnum,      0, sizeof(eng_spawn_msgnum));
+		memset(eng_lastchange,        0, sizeof(eng_lastchange));
+		eng_bomb_flag=-1; eng_pc4_idx=0; eng_pc4_seen=0; eng_pc4_scan_at=0;
+		g_last_local_ent=0; g_last_local_msgnum=0;
+	}
+
+	if(reason==INV_MODULE)
+	{
+		eng_table=0;
+		g_fn_GetLocalPlayer=0; g_fn_GetEntityByIndex=0;
+		g_fn_GetPlayerInfo=0;  g_fn_GetViewAngles=0;
+		g_fn_WorldToScreen=0;
+		eng_extrainfo=0; eng_have_extra=false; g_extra_tried_cl=0;
+		g_studio=0; g_studio_tries=0; g_bt_deref=0;
+		g_stu_GetCurrentEnt=0; g_stu_ModExtradata=0; g_stu_GetBoneXform=0;
+		eng_studio_ok=false;
+	}
+}
+
+bool EngineResolve();
+
+// Check if the local player entity or snapshot messagenum rewound (new map /
+// server connection). Validates engine table & function pointer before calling
+// so a module reload mid-session can never invoke a stale function pointer.
+static void CheckSessionTransition()
+{
+	if(!g_eng_table_valid && !EngineResolve())
+	{
+		if(g_last_local_ent!=0 || g_last_local_msgnum>0)
+		{
+			memset(eng_msg_team_fresh,   0, sizeof(eng_msg_team_fresh));
+			memset(eng_msg_attrib_fresh, 0, sizeof(eng_msg_attrib_fresh));
+			InvalidateRuntimeCaches(INV_SESSION);
+		}
+		return;
+	}
+	if((DWORD)g_fn_GetLocalPlayer<g_mod_hw_base || (DWORD)g_fn_GetLocalPlayer>=g_mod_hw_end) return;
+	DWORD local=(DWORD)g_fn_GetLocalPlayer();
+	if(!local)
+	{
+		if(g_last_local_ent!=0 || g_last_local_msgnum>0)
+		{
+			memset(eng_msg_team_fresh,   0, sizeof(eng_msg_team_fresh));
+			memset(eng_msg_attrib_fresh, 0, sizeof(eng_msg_attrib_fresh));
+			InvalidateRuntimeCaches(INV_SESSION);
+		}
+		return;
+	}
+	int lmsg=0;
+	if(IsEntReadableFast(local))
+	{
+		eng_local_idx=EInt(local+ENT_INDEX);
+		lmsg=EInt(local+ENT_CURSTATE+ES_MSGNUM);
+	}
+	else if(IsReadable(local,ENT_SPAN))
+	{
+		eng_local_idx=*(int*)(local+ENT_INDEX);
+		lmsg=*(int*)(local+ENT_CURSTATE+ES_MSGNUM);
+	}
+	else return;
+
+	if((g_last_local_ent && local!=g_last_local_ent)
+		|| (g_last_local_msgnum>0 && lmsg<g_last_local_msgnum))
+	{
+		// Any message marked fresh earlier in this frame arrived BEFORE the
+		// session transition (under the old local entity / old messagenum),
+		// so clear the fresh flags before invalidating the session.
+		memset(eng_msg_team_fresh,   0, sizeof(eng_msg_team_fresh));
+		memset(eng_msg_attrib_fresh, 0, sizeof(eng_msg_attrib_fresh));
+		InvalidateRuntimeCaches(INV_SESSION);
+	}
+	g_last_local_ent=local;
+	g_last_local_msgnum=lmsg;
+}
+
+static bool VerifyModulesOncePerFrame()
+{
+	if(g_mods_checked) return (g_mod_cl_base!=0 && g_mod_hw_base!=0);
+	DWORD cl_base=0,cl_end=0,hw_base=0,hw_end=0;
+	if(!ModuleRange("client.dll",cl_base,cl_end))
+	{
+		if(g_mod_cl_base || eng_table || g_studio) InvalidateRuntimeCaches(INV_MODULE);
+		g_mod_cl_base=g_mod_cl_end=g_mod_hw_base=g_mod_hw_end=0;
+		return false;
+	}
+	if(!ModuleRange("hw.dll",hw_base,hw_end))
+		if(!ModuleRange("sw.dll",hw_base,hw_end))
+		{
+			if(g_mod_hw_base || eng_table || g_studio) InvalidateRuntimeCaches(INV_MODULE);
+			g_mod_cl_base=g_mod_cl_end=g_mod_hw_base=g_mod_hw_end=0;
+			return false;
+		}
+	if(cl_base!=g_mod_cl_base || cl_end!=g_mod_cl_end || hw_base!=g_mod_hw_base || hw_end!=g_mod_hw_end)
+	{
+		InvalidateRuntimeCaches(INV_MODULE);
+		g_mod_cl_base=cl_base; g_mod_cl_end=cl_end;
+		g_mod_hw_base=hw_base; g_mod_hw_end=hw_end;
+	}
+	g_mods_checked=true;
+	return true;
+}
+
+DWORD EngFn(int slot){ return ReadDW(eng_table+slot*4); }
+
+bool EngineResolve()	// resolve & cache the engine table; true when usable
+{
+	if(!VerifyModulesOncePerFrame()) return false;
+	DWORD cl_base=g_mod_cl_base, cl_end=g_mod_cl_end;
+	DWORD hw_base=g_mod_hw_base, hw_end=g_mod_hw_end;
+
+	// Per-frame table validity check: verify eng_table is readable inside
+	// client.dll and its core function pointers still match.
+	if(eng_table!=0 && g_fn_GetLocalPlayer!=0 && g_fn_GetEntityByIndex!=0)
+	{
+		if(!g_eng_table_valid)
+		{
+			DWORD r0=0, r1=0;
+			if(eng_table<cl_base || (eng_table+84*4)>cl_end
+				|| !IsRangeReadableFast(eng_table,84*4,&r0,&r1)
+				|| *(DWORD*)(eng_table+ENG_SLOT_GETLOCALPLAYER*4)!=(DWORD)g_fn_GetLocalPlayer
+				|| *(DWORD*)(eng_table+ENG_SLOT_GETENTITYBYINDEX*4)!=(DWORD)g_fn_GetEntityByIndex
+				|| *(DWORD*)(eng_table+ENG_SLOT_GETPLAYERINFO*4)!=(DWORD)g_fn_GetPlayerInfo
+				|| *(DWORD*)(eng_table+ENG_SLOT_GETVIEWANGLES*4)!=(DWORD)g_fn_GetViewAngles
+				|| (DWORD)g_fn_GetLocalPlayer<hw_base || (DWORD)g_fn_GetLocalPlayer>=hw_end)
+			{
+				InvalidateRuntimeCaches(INV_MODULE);
+				g_mod_cl_base=cl_base; g_mod_cl_end=cl_end;
+				g_mod_hw_base=hw_base; g_mod_hw_end=hw_end;
+				g_mods_checked=true;
+			}
+			else g_eng_table_valid=true;
+		}
+	}
+
+	if(eng_table==0 || g_fn_GetLocalPlayer==0)
+	{
+		if(eng_table==0 || ReadDW(eng_table+ENG_SLOT_GETLOCALPLAYER*4)==0)
+			eng_table=FindEngineTable();
+		g_fn_GetLocalPlayer=0; g_fn_GetEntityByIndex=0;
+		g_fn_GetPlayerInfo=0;  g_fn_GetViewAngles=0;
+		g_fn_WorldToScreen=0;
+		DWORD r0=0, r1=0;
+		if(eng_table==0 || !IsRangeReadableFast(eng_table,84*4,&r0,&r1))
+		{
+			eng_table=0;
+			return false;
+		}
+		g_eng_table_valid=true;
+	}
+
+	if(!g_fn_GetLocalPlayer)   g_fn_GetLocalPlayer  =(eng_GetLocalPlayer_t)  *(DWORD*)(eng_table+ENG_SLOT_GETLOCALPLAYER*4);
+	if(!g_fn_GetEntityByIndex) g_fn_GetEntityByIndex=(eng_GetEntityByIndex_t)*(DWORD*)(eng_table+ENG_SLOT_GETENTITYBYINDEX*4);
+	if(!g_fn_GetPlayerInfo)    g_fn_GetPlayerInfo   =(eng_GetPlayerInfo_t)   *(DWORD*)(eng_table+ENG_SLOT_GETPLAYERINFO*4);
+	if(!g_fn_GetViewAngles)    g_fn_GetViewAngles   =(eng_GetViewAngles_t)   *(DWORD*)(eng_table+ENG_SLOT_GETVIEWANGLES*4);
+	if(!g_fn_WorldToScreen)
+	{
+		DWORD tri=*(DWORD*)(eng_table+ENG_SLOT_PTRIAPI*4);
+		if(tri>=0x10000) g_fn_WorldToScreen=(eng_WorldToScreen_t)ReadDW(tri+12*4);
+	}
+	if(!eng_have_extra && cl_base!=g_extra_tried_cl)	// scan client.dll once per module load
+	{
+		g_extra_tried_cl=cl_base;
+		eng_extrainfo=FindExtraInfo();
+		eng_have_extra=(eng_extrainfo!=0);
+	}
+	return true;
+}
 
 static bool StuPtrInHw(DWORD p,DWORD hw_base,DWORD hw_end)
 {
@@ -1739,7 +2080,35 @@ static DWORD FindStudioAPI()
 
 static bool StudioResolve()
 {
-	if(g_studio && g_stu_GetCurrentEnt && g_stu_ModExtradata && g_stu_GetBoneXform) return true;
+	if(!VerifyModulesOncePerFrame()) return false;
+	DWORD cl_base=g_mod_cl_base, cl_end=g_mod_cl_end;
+	DWORD hw_base=g_mod_hw_base, hw_end=g_mod_hw_end;
+
+	if(g_studio && g_stu_GetCurrentEnt && g_stu_ModExtradata && g_stu_GetBoneXform)
+	{
+		if(g_stu_table_valid) return true;
+		// First studio check this frame (runs in glPopMatrix BEFORE DrawEngineEsp):
+		// verify g_studio is readable inside client.dll and all three studio
+		// callbacks still match and point into hw.dll/sw.dll.
+		DWORD r0=0, r1=0;
+		if(g_studio<cl_base || (g_studio+20*4)>cl_end
+			|| !IsRangeReadableFast(g_studio,20*4,&r0,&r1)
+			|| *(DWORD*)(g_studio+STU_GETCURRENTENT*4)!=(DWORD)g_stu_GetCurrentEnt
+			|| *(DWORD*)(g_studio+STU_MOD_EXTRADATA*4)!=(DWORD)g_stu_ModExtradata
+			|| *(DWORD*)(g_studio+STU_GETBONEXFORM*4)!=(DWORD)g_stu_GetBoneXform
+			|| (DWORD)g_stu_GetCurrentEnt<hw_base || (DWORD)g_stu_GetCurrentEnt>=hw_end)
+		{
+			InvalidateRuntimeCaches(INV_MODULE);
+			g_mod_cl_base=cl_base; g_mod_cl_end=cl_end;
+			g_mod_hw_base=hw_base; g_mod_hw_end=hw_end;
+			g_mods_checked=true;
+		}
+		else
+		{
+			g_stu_table_valid=true;
+			return true;
+		}
+	}
 	if(!g_studio)
 	{
 		if((g_studio_tries++ & 63)!=1 && g_studio_tries>2) return false;
@@ -1747,11 +2116,21 @@ static bool StudioResolve()
 	}
 	if(g_studio)
 	{
-		g_stu_GetCurrentEnt=(stu_GetCurrentEntity_t)ReadDW(g_studio+STU_GETCURRENTENT*4);
-		g_stu_ModExtradata =(stu_ModExtradata_t)    ReadDW(g_studio+STU_MOD_EXTRADATA*4);
-		g_stu_GetBoneXform =(stu_GetBoneTransform_t)ReadDW(g_studio+STU_GETBONEXFORM*4);
-		if((DWORD)g_stu_GetCurrentEnt<0x10000 || (DWORD)g_stu_ModExtradata<0x10000 || (DWORD)g_stu_GetBoneXform<0x10000)
+		DWORD r0=0, r1=0;
+		if(!IsRangeReadableFast(g_studio,20*4,&r0,&r1))
+		{
 			g_studio=0;
+		}
+		else
+		{
+			g_stu_GetCurrentEnt=(stu_GetCurrentEntity_t)*(DWORD*)(g_studio+STU_GETCURRENTENT*4);
+			g_stu_ModExtradata =(stu_ModExtradata_t)    *(DWORD*)(g_studio+STU_MOD_EXTRADATA*4);
+			g_stu_GetBoneXform =(stu_GetBoneTransform_t)*(DWORD*)(g_studio+STU_GETBONEXFORM*4);
+			if((DWORD)g_stu_GetCurrentEnt<0x10000 || (DWORD)g_stu_ModExtradata<0x10000 || (DWORD)g_stu_GetBoneXform<0x10000)
+				g_studio=0;
+			else
+				g_stu_table_valid=true;
+		}
 	}
 	eng_studio_ok=(g_studio!=0);
 	return g_studio!=0;
@@ -1763,12 +2142,12 @@ static bool BoneXformPoint(void *bt,int bone,float lx,float ly,float lz,float *o
 	DWORD base=(DWORD)bt;
 	if(g_bt_deref==2)
 	{
-		if(!IsReadable(base,4)) return false;
+		if(!IsRangeReadableFast(base,4,&g_bt_rbase,&g_bt_rend)) return false;
 		base=*(DWORD*)base;
 	}
 	if(base!=g_bt_valid_base)
 	{
-		if(!IsReadable(base,128*48)) return false;
+		if(!IsRangeReadableFast(base,128*48,&g_bt_rbase,&g_bt_rend)) return false;
 		g_bt_valid_base=base;
 	}
 	float *m=(float*)(base+(DWORD)bone*48);
@@ -1777,8 +2156,6 @@ static bool BoneXformPoint(void *bt,int bone,float lx,float ly,float lz,float *o
 	out[2]=m[8]*lx+m[9]*ly+m[10]*lz+m[11];
 	return true;
 }
-
-typedef struct { int bone; float c[3]; } stu_hbc_t;
 
 static void StuHbRead(DWORD b, stu_hbc_t *o)
 {
@@ -1792,6 +2169,25 @@ static void Vec3Lerp(const float *a, const float *b, float t, float *o)
 {
 	o[0]=a[0]+(b[0]-a[0])*t; o[1]=a[1]+(b[1]-a[1])*t; o[2]=a[2]+(b[2]-a[2])*t;
 }
+
+// Fast 32-bit FNV-1a checksum over studiohdr_t metadata (+8..+164: name,
+// length, eye/hull/bbox bounds, counts) AND the full mstudiobbox_t hitbox
+// table (bone, group, bbmin[3], bbmax[3] for all numhb hitboxes). Any change
+// to hitbox bone index, group, or bounding box coordinates alters this hash.
+static DWORD HashStudioHitboxes(DWORD hdr, int numhb, int hbidx)
+{
+	const DWORD *d=(const DWORD*)(hdr+STUDIO_HDR_NAME);
+	DWORD h=2166136261u;
+	for(int i=0;i<39;i++)
+		h=(h^d[i])*16777619u;
+	const DWORD *hb=(const DWORD*)(hdr+(DWORD)hbidx);
+	int ndw=numhb*(STUDIO_HITBOX_SIZE/4);
+	for(int i=0;i<ndw;i++)
+		h=(h^hb[i])*16777619u;
+	return h;
+}
+
+int EngTeam(int idx);
 
 // Called from sys_glPopMatrix once the model has been posed. Cheap reject
 // if this isn't a player body (weapon / prop / already captured this frame).
@@ -1808,56 +2204,83 @@ static void CaptureStudioHead()
 	if(eng_hb_ok[idx]) return;		// body already captured; skip weapon pass
 	if(idx==eng_local_idx) return;	// never need our own studio hitbox
 
-	// Aimbot + triggerbot only ever target want_team. Skip known teammates
-	// here so crowded spawn / team fights don't pose-read friendly models
-	// (unknown team 0 still falls through so new players are never missed).
+	// Aimbot + triggerbot only ever target want_team. Skip known spectators
+	// and known teammates so crowded spawn / team fights don't pose-read
+	// friendly models. When TeamInfo is MSG_TEAM_UNKNOWN (0), fall back to
+	// EngTeam(idx); if still 0 (unknown), fall through and capture.
 	int want_team=(cvar.target==0)?1:2;
 	int tm=eng_msg_team[idx];
-	if(tm!=0 && tm!=want_team) return;
+	if(tm==MSG_TEAM_SPEC) return;
+	if(tm==MSG_TEAM_UNKNOWN) tm=EngTeam(idx);
+	if(tm>0 && tm!=want_team) return;
 
 	DWORD model=(DWORD)EInt(ent+ENT_MODEL);
 	if(model<0x10000) return;
 
 	DWORD hdr=(DWORD)g_stu_ModExtradata((void*)model);
-	if(!hdr) return;
+	if(!hdr || !IsHdrReadableFast(hdr,164)) return;
 
-	// Per-slot studiohdr_t hitbox cache: players wear different models (urban,
-	// gsg9, leet, arctic, ...), so a single global cache_hdr thrashed on every
-	// player every frame. Caching per slot parses each model's static hitbox
-	// offsets once and reuses them with zero VirtualQuery calls.
-	static DWORD     slot_hdr[33]={0};
-	static stu_hbc_t slot_head[33], slot_chest[33];
-	static int       slot_have[33]={0};
-	if(hdr!=slot_hdr[idx])
+	int numhb=*(int*)(hdr+STUDIO_HDR_NUMHB);
+	int hbidx=*(int*)(hdr+STUDIO_HDR_HBIDX);
+	if(numhb<=0 || numhb>128 || hbidx<=0) return;
+	if(!IsHdrReadableFast(hdr+(DWORD)hbidx,(DWORD)numhb*STUDIO_HITBOX_SIZE)) return;
+
+	int   h_len  =*(int*)(hdr+STUDIO_HDR_LENGTH);
+	int   h_bones=*(int*)(hdr+STUDIO_HDR_NUMBONES);
+	DWORD h_hb   =0;
+	bool  have_hb_hash=false;
+	for(int hi=0;hi<g_frame_hdr_cnt;hi++)
 	{
-		memset(&slot_head[idx],0,sizeof(stu_hbc_t));
-		memset(&slot_chest[idx],0,sizeof(stu_hbc_t));
-		slot_have[idx]=0; slot_hdr[idx]=0;
-		if(!IsReadable(hdr,164)) return;
-		slot_hdr[idx]=hdr;
-		int numhb=*(int*)(hdr+STUDIO_HDR_NUMHB);
-		int hbidx=*(int*)(hdr+STUDIO_HDR_HBIDX);
-		if(numhb>0 && numhb<=128 && hbidx>0 && IsReadable(hdr+(DWORD)hbidx,(DWORD)numhb*STUDIO_HITBOX_SIZE))
+		if(g_frame_hdr_ptr[hi]==hdr)
 		{
-			for(int i=0;i<numhb;i++)
-			{
-				DWORD b=hdr+(DWORD)hbidx+(DWORD)i*STUDIO_HITBOX_SIZE;
-				int g=*(int*)(b+4);
-				if(g==HITGROUP_HEAD && !(slot_have[idx]&HB_HEAD))
-				{ StuHbRead(b,&slot_head[idx]); slot_have[idx]|=HB_HEAD; }
-				else if(g==HITGROUP_CHEST && !(slot_have[idx]&HB_CHEST))
-				{ StuHbRead(b,&slot_chest[idx]); slot_have[idx]|=HB_CHEST; }
-				if((slot_have[idx]&(HB_HEAD|HB_CHEST))==(HB_HEAD|HB_CHEST)) break;
-			}
+			h_hb=g_frame_hdr_hash[hi];
+			have_hb_hash=true;
+			break;
 		}
 	}
-	int have=slot_have[idx];
+	if(!have_hb_hash)
+	{
+		h_hb=HashStudioHitboxes(hdr,numhb,hbidx);
+		if(g_frame_hdr_cnt<FRAME_REGIONS_MAX)
+		{
+			g_frame_hdr_ptr [g_frame_hdr_cnt]=hdr;
+			g_frame_hdr_hash[g_frame_hdr_cnt]=h_hb;
+			g_frame_hdr_cnt++;
+		}
+	}
+
+	stu_slot_cache_t *sc=&g_hb_cache[idx];
+	if(sc->epoch!=g_cache_epoch || sc->model!=model || sc->hdr!=hdr
+		|| sc->length!=h_len || sc->numbones!=h_bones
+		|| sc->numhb!=numhb || sc->hbidx!=hbidx || sc->hb_hash!=h_hb)
+	{
+		memset(sc,0,sizeof(*sc));
+		sc->epoch   =g_cache_epoch;
+		sc->model   =model;
+		sc->hdr     =hdr;
+		sc->length  =h_len;
+		sc->numbones=h_bones;
+		sc->numhb   =numhb;
+		sc->hbidx   =hbidx;
+		sc->hb_hash =h_hb;
+		for(int i=0;i<numhb;i++)
+		{
+			DWORD b=hdr+(DWORD)hbidx+(DWORD)i*STUDIO_HITBOX_SIZE;
+			int g=*(int*)(b+4);
+			if(g==HITGROUP_HEAD && !(sc->have&HB_HEAD))
+			{ StuHbRead(b,&sc->head); sc->have|=HB_HEAD; }
+			else if(g==HITGROUP_CHEST && !(sc->have&HB_CHEST))
+			{ StuHbRead(b,&sc->chest); sc->have|=HB_CHEST; }
+			if((sc->have&(HB_HEAD|HB_CHEST))==(HB_HEAD|HB_CHEST)) break;
+		}
+	}
+	int have=sc->have;
 	if(!(have&(HB_HEAD|HB_CHEST))) return;	// weapon / prop: no body boxes
 
 	void *bt=g_stu_GetBoneXform();
 	if(!bt) return;
 
-	int probe_bone=(have&HB_HEAD)?slot_head[idx].bone:slot_chest[idx].bone;
+	int probe_bone=(have&HB_HEAD)?sc->head.bone:sc->chest.bone;
 	if(g_bt_deref==0)
 	{
 		float probe[3];
@@ -1872,12 +2295,12 @@ static void CaptureStudioHead()
 
 	int mask=0;
 	float w[3];
-	if((have&HB_HEAD) && BoneXformPoint(bt,slot_head[idx].bone,slot_head[idx].c[0],slot_head[idx].c[1],slot_head[idx].c[2],w))
+	if((have&HB_HEAD) && BoneXformPoint(bt,sc->head.bone,sc->head.c[0],sc->head.c[1],sc->head.c[2],w))
 	{
 		Vec3Cpy(eng_hb_head[idx],w);
 		mask|=HB_HEAD;
 	}
-	if((have&HB_CHEST) && BoneXformPoint(bt,slot_chest[idx].bone,slot_chest[idx].c[0],slot_chest[idx].c[1],slot_chest[idx].c[2],w))
+	if((have&HB_CHEST) && BoneXformPoint(bt,sc->chest.bone,sc->chest.c[0],sc->chest.c[1],sc->chest.c[2],w))
 	{
 		Vec3Cpy(eng_hb_chest[idx],w);
 		mask|=HB_CHEST;
@@ -2179,6 +2602,7 @@ int __cdecl Hk_DeathMsg(const char *n,int s,void *b)
 {
 	if(b && s>=2)
 	{
+		CheckSessionTransition();
 		int victim=((unsigned char*)b)[1];
 		if(victim==eng_local_idx && eng_local_idx>0) me_dead=true;
 		// Instant death signal for ESP + aimbot + triggerbot: the moment ANYONE
@@ -2191,6 +2615,9 @@ int __cdecl Hk_DeathMsg(const char *n,int s,void *b)
 			// the corpse stays gone (name/box/dot/aim) until the player respawns,
 			// instead of re-appearing and re-grabbing the aimbot off a live enemy.
 			eng_kill_time[victim]=eng_dead_at[victim]; eng_kill_org_set[victim]=false;
+			eng_need_fresh_ent[victim]=true;
+			eng_attrib_alive_pend[victim]=false;
+			RaiseSpawnWatermark(victim);
 		}
 	}
 	return um_org_death ? um_org_death(n,s,b) : 1;
@@ -2198,7 +2625,16 @@ int __cdecl Hk_DeathMsg(const char *n,int s,void *b)
 // ResetHUD is sent to us on our own (re)spawn -> we are alive again.
 int __cdecl Hk_ResetHUD(const char *n,int s,void *b)
 {
+	CheckSessionTransition();
 	me_dead=false;
+	if(eng_local_idx>=1 && eng_local_idx<=32)
+	{
+		eng_dead_at[eng_local_idx]=0;           eng_dead_org_set[eng_local_idx]=false;
+		eng_kill_time[eng_local_idx]=0;         eng_kill_org_set[eng_local_idx]=false;
+		eng_need_fresh_ent[eng_local_idx]=false;
+		eng_attrib_alive_pend[eng_local_idx]=false;
+		eng_spawn_msgnum[eng_local_idx]=0;
+	}
 	eng_bomb_flag=-1;		// new life / round start -> drop any stale C4 marker
 	eng_pc4_idx=0; eng_pc4_seen=0;	// and re-acquire the planted-C4 entity next scan
 	eng_pc4_scan_at=0;		// allow that re-acquire scan to run immediately (don't wait out the throttle)
@@ -2233,13 +2669,16 @@ int __cdecl Hk_TeamInfo(const char *n,int s,void *b)
 {
 	if(b && s>=2)
 	{
+		CheckSessionTransition();
 		int idx=*(unsigned char*)b;
 		const char *t=(const char*)b+1;			// team name starts after the index byte
 		if(idx>=1 && idx<=32 && IsReadable((DWORD)t,1))
 		{
-			if(!strcmp(t,"TERRORIST"))	eng_msg_team[idx]=1;	// repo convention: 1 = T
-			else if(!strcmp(t,"CT"))	eng_msg_team[idx]=2;	//                 2 = CT
-			else						eng_msg_team[idx]=0;	// SPECTATOR / UNASSIGNED
+			if(!strcmp(t,"TERRORIST"))	eng_msg_team[idx]=1;				// repo convention: 1 = T
+			else if(!strcmp(t,"CT"))	eng_msg_team[idx]=2;				//                 2 = CT
+			else						eng_msg_team[idx]=MSG_TEAM_SPEC;	// SPECTATOR / UNASSIGNED (distinct from MSG_TEAM_UNKNOWN=0)
+			eng_msg_team_fresh[idx]=1;
+			eng_msg_team_sess[idx]=g_cache_epoch;
 		}
 	}
 	return um_org_teaminfo ? um_org_teaminfo(n,s,b) : 1;
@@ -2254,15 +2693,41 @@ int __cdecl Hk_ScoreAttrib(const char *n,int s,void *b)
 {
 	if(b && s>=2)
 	{
+		CheckSessionTransition();
 		unsigned char *p=(unsigned char*)b;
 		int idx=p[0], flags=p[1];
 		if(idx>=1 && idx<=32)
 		{
-			eng_msg_attrib[idx]=(char)flags;
-			if((flags&1) && eng_dead_at[idx]==0)
+			bool was_dead=((eng_msg_attrib[idx]!=MSG_ATTRIB_UNKNOWN) && ((eng_msg_attrib[idx]&1)!=0))
+				|| (eng_dead_at[idx]!=0) || (eng_kill_time[idx]!=0);
+			eng_msg_attrib[idx]=(char)(flags & 0x7F);
+			eng_msg_attrib_fresh[idx]=1;
+			eng_msg_attrib_sess[idx]=g_cache_epoch;
+			if(flags&1)
 			{
-				eng_dead_at[idx]=GetTickCount();				// dead -> latch-hide
-				eng_kill_time[idx]=eng_dead_at[idx]; eng_kill_org_set[idx]=false;	// + arm full-hide kill cooldown
+				eng_need_fresh_ent[idx]=true;
+				eng_attrib_alive_pend[idx]=false;
+				RaiseSpawnWatermark(idx);
+				if(eng_dead_at[idx]==0)
+				{
+					eng_dead_at[idx]=GetTickCount();				// dead -> latch-hide
+					eng_kill_time[idx]=eng_dead_at[idx]; eng_kill_org_set[idx]=false;	// + arm full-hide kill cooldown
+				}
+			}
+			else if(was_dead)
+			{
+				// Scoreboard reports alive after a death/kill latch (including when
+				// attrib was MSG_ATTRIB_UNKNOWN after INV_REHOOK): release the death
+				// and kill timers, monotonically raise the snapshot watermark
+				// (RaiseSpawnWatermark), and keep eng_kill_org_set so a respawn
+				// teleport is recognized immediately while un-teleported old-life
+				// snapshots (emsg <= eng_spawn_msgnum) stay rejected.
+				eng_dead_at[idx]=0;   eng_dead_org_set[idx]=false;
+				eng_kill_time[idx]=0;
+				eng_need_fresh_ent[idx]=true;
+				eng_attrib_alive_pend[idx]=true;
+				RaiseSpawnWatermark(idx);
+				eng_lastchange[idx]=0;
 			}
 		}
 	}
@@ -2374,14 +2839,19 @@ void HookOwnMsgs()
 		msg_hooked=false; eng_msg_tries=0;
 		um_node_health=um_node_battery=um_node_curwpn=um_node_death=um_node_reset=um_node_teaminfo=0;
 		um_node_scoreatt=um_node_bombdrop=um_node_bombpickup=0;
+		// Hooks were replaced (reconnect / HUD_Init): invalidate cached player/model
+		// state and mark non-fresh TeamInfo / ScoreAttrib as UNKNOWN while keeping
+		// same-session death latches until CheckSessionTransition confirms a new session.
+		InvalidateRuntimeCaches(INV_REHOOK);
 	}
 	// The Health/Battery/CurWeapon nodes only get registered AFTER you connect to a
 	// server (HUD_Init), which can be far more than 60 frames after the HUD is first
 	// enabled. Hooking too late means we miss the one-shot spawn messages, so HP shows
 	// 0% and ammo shows nothing until the next update (taking damage / switching guns).
 	// Keep retrying for a long time, but throttle the heap scan so it stays cheap.
+	// Note: eng_msg_tries % 8 == 1 scans immediately on the first frame after reset!
 	eng_msg_tries++;
-	if(eng_msg_tries % 8 != 0) return;	// scan the heap ~every 8th frame
+	if((eng_msg_tries % 8)!=1) return;	// scan immediately on try 1, then every 8th frame
 	if(eng_msg_tries > 8000)   return;	// give up only after a long while
 
 	if(um_node_health==0)
@@ -2780,6 +3250,7 @@ void DrawEngineEsp()
 	{
 
 	float lo[3]={0,0,0};
+	int   lmsg=0;
 	if(local)
 	{
 		int og=-1;
@@ -2789,6 +3260,7 @@ void DrawEngineEsp()
 			lo[1]=EFlt(local+ENT_ORIGIN+4);
 			lo[2]=EFlt(local+ENT_ORIGIN+8);
 			og=EInt(local+ENT_CURSTATE+ES_ONGROUND);
+			lmsg=EInt(local+ENT_CURSTATE+ES_MSGNUM);
 		}
 		else
 		{
@@ -2796,13 +3268,27 @@ void DrawEngineEsp()
 			lo[1]=ReadFlt(local+ENT_ORIGIN+4);
 			lo[2]=ReadFlt(local+ENT_ORIGIN+8);
 			og=ReadInt(local+ENT_CURSTATE+ES_ONGROUND);
+			lmsg=ReadInt(local+ENT_CURSTATE+ES_MSGNUM);
 		}
+		// Detect map change / server reconnect: local entity address changed or
+		// snapshot messagenum rewound -> invalidate per-slot runtime caches.
+		if((g_last_local_ent && local!=g_last_local_ent)
+			|| (g_last_local_msgnum>0 && lmsg<g_last_local_msgnum))
+		{
+			memset(eng_msg_team_fresh,   0, sizeof(eng_msg_team_fresh));
+			memset(eng_msg_attrib_fresh, 0, sizeof(eng_msg_attrib_fresh));
+			InvalidateRuntimeCaches(INV_SESSION);
+		}
+		g_last_local_ent=local;
+		g_last_local_msgnum=lmsg;
+
 		// auto-bhop: onground from curstate (-1 = airborne). sys_glViewport
 		// consumes this on the next frame to time the jump injection.
 		eng_on_ground=(og!=-1)?1:0;
 		// TeamInfo first (no VirtualQuery); ExtraInfo only if the message hasn't landed.
 		eng_local_team=0;
-		if(eng_local_idx>=1 && eng_local_idx<=32) eng_local_team=eng_msg_team[eng_local_idx];
+		if(eng_local_idx>=1 && eng_local_idx<=32 && eng_msg_team[eng_local_idx]>0)
+			eng_local_team=eng_msg_team[eng_local_idx];
 		if(!eng_local_team) eng_local_team=EngTeam(eng_local_idx);
 
 		// Bhop diagnostics (ESP debug toggle). want=1 means UpdateBhop is actively
@@ -2815,6 +3301,12 @@ void DrawEngineEsp()
 			DrawText(16.0f*ui_scale,40.0f*ui_scale,1.0f,0.7f,0.2f,
 				"BHOP: want=%d pulses=%u down=%d  (onground_raw=%d, unreliable)",
 				g_bhop_want?1:0, g_bhop_pulses, g_bhop_down?1:0, og);
+	}
+	else if(g_last_local_ent!=0 || g_last_local_msgnum>0)
+	{
+		memset(eng_msg_team_fresh,   0, sizeof(eng_msg_team_fresh));
+		memset(eng_msg_attrib_fresh, 0, sizeof(eng_msg_attrib_fresh));
+		InvalidateRuntimeCaches(INV_SESSION);
 	}
 
 	// ---- 2D radar frame. Center is freely positioned (radar_x/radar_y, move mode 3). ----
@@ -2882,24 +3374,25 @@ void DrawEngineEsp()
 	{
 		if(idx==eng_local_idx) continue;
 
-		// Known teammate (TeamInfo already landed) and they are not the aim
-		// target side: skip before GetPlayerInfo / entity reads. Radar still
-		// wants teammate dots, so it keeps the full path. Unknown team (0)
-		// always falls through so a new joiner isn't invisible for a frame.
+		// Known spectator/unassigned (-1) or known teammate (1/2) when not
+		// needed by radar or ESP team filter: skip before entity/info reads.
+		// MSG_TEAM_UNKNOWN (0) always falls through so a new joiner or post-
+		// reconnect slot is resolved via EngTeam / model fallback.
 		int cached_team=eng_msg_team[idx];
-		if(cached_team && cached_team!=want_team && !radar_on && !EspWantsTeam(cached_team)) continue;
+		if(cached_team==MSG_TEAM_SPEC) continue;
+		if(cached_team>0 && cached_team!=want_team && !radar_on && !EspWantsTeam(cached_team)) continue;
 
 		// Empty slots: GetEntityByIndex + player flag, not GetPlayerInfo+VQ.
 		DWORD ent=(DWORD)fnEnt(idx);
 		if(!ent || !EntSpanOk(idx,ent) || EInt(ent+ENT_PLAYER)==0) continue;
 
 		// alive/stale check FIRST (pure memory reads on span-checked ent, 0 syscalls):
-		// current_position keeps incrementing while a player receives network updates;
-		// it freezes on death / disconnect / round-end.
+		// current_position and messagenum advance while a player receives network
+		// updates; both freeze on death / disconnect / leaving PVS.
 		int cur=EInt(ent+ENT_CURPOS);
-		if(cur!=eng_lastcurpos[idx]) { eng_lastcurpos[idx]=cur; eng_lastchange[idx]=now; }
-		bool stale=(now-eng_lastchange[idx])>ENG_STALE_MS;	// time-based: same at 60 or 240 fps
-		// origin first -- the death latch's respawn check needs it too.
+		// origin first -- a zero-origin slot has no valid world state yet, so do
+		// not consume uninspected/sample markers or advance snapshot tracking,
+		// and also need origin for the death latch's respawn check below.
 		float o[3];
 		o[0]=EFlt(ent+ENT_ORIGIN); o[1]=EFlt(ent+ENT_ORIGIN+4); o[2]=EFlt(ent+ENT_ORIGIN+8);
 		if(o[0]==0&&o[1]==0&&o[2]==0)	// fallback: entity_state origin
@@ -2908,20 +3401,80 @@ void DrawEngineEsp()
 			o[0]=EFlt(cs+ES_ORIGIN); o[1]=EFlt(cs+ES_ORIGIN+4); o[2]=EFlt(cs+ES_ORIGIN+8);
 			if(o[0]==0&&o[1]==0&&o[2]==0) continue;
 		}
+		bool ent_sampled=(g_ent_span_ent[idx]==ent && g_ent_span_epoch[idx]==g_cache_epoch);
+		bool uninspected_slot=(eng_last_emsg[idx]<0);
+		g_ent_span_ent[idx]=ent;
+		g_ent_span_epoch[idx]=g_cache_epoch;
+		int emsg=EInt(ent+ENT_CURSTATE+ES_MSGNUM);
+		int dmsg=lmsg-emsg; if(dmsg<0) dmsg=-dmsg;
+		bool snap_live=(lmsg==0 || (emsg>0 && dmsg<=1));
+		bool snap_advanced=(cur!=eng_lastcurpos[idx]) || (emsg>0 && emsg!=eng_last_emsg[idx]);
+		if(snap_advanced) { eng_lastcurpos[idx]=cur; eng_last_emsg[idx]=emsg; eng_lastchange[idx]=now; }
+		else if(uninspected_slot) eng_last_emsg[idx]=emsg;
 
-		// Extra death signals on top of DeathMsg (which we now hook even with
-		// HUD off). ScoreAttrib bit0 stays set until respawn. Do NOT treat
-		// entity_state.solid==0 as dead: online servers often leave solid
-		// un-streamed (0) for every living player, which hid all names/dots
-		// on public servers while listen-server bots still looked fine.
-		bool attrib_dead = (eng_msg_attrib[idx]&1)!=0;
-		bool looks_dead = attrib_dead || EngDead(idx);
-		if(looks_dead && !eng_kill_time[idx] && !eng_dead_at[idx])
+		// Expire the 12s kill-hide safety cap BEFORE the freshness gate so a
+		// near-origin respawn that missed ScoreAttrib(alive) cannot deadlock
+		// between eng_kill_time and eng_need_fresh_ent.
+		if(eng_kill_time[idx] && (now-eng_kill_time[idx])>ENG_KILL_HIDE_CAP_MS)
 		{
-			eng_dead_at[idx]=now;
-			eng_kill_time[idx]=now;
+			eng_kill_time[idx]=0;
 			eng_kill_org_set[idx]=false;
 		}
+
+		// Extra death signals on top of DeathMsg (which we now hook even with
+		// HUD off). ScoreAttrib bit0 stays set until respawn. When ScoreAttrib
+		// is MSG_ATTRIB_UNKNOWN (-1), attrib_known is false so we rely on
+		// EngDead(idx) and the stale timer. If ScoreAttrib just transitioned
+		// DEAD -> alive (eng_attrib_alive_pend), ignore a lagging EngDead(idx)
+		// until g_PlayerExtraInfo catches up so it cannot re-arm the kill latch.
+		bool attrib_known = (eng_msg_attrib[idx]!=MSG_ATTRIB_UNKNOWN);
+		bool attrib_dead  = attrib_known && ((eng_msg_attrib[idx]&1)!=0);
+		bool raw_eng_dead = EngDead(idx);
+		if(!raw_eng_dead) eng_attrib_alive_pend[idx]=false;
+		bool eng_dead     = raw_eng_dead && !(attrib_known && !attrib_dead && eng_attrib_alive_pend[idx]);
+		bool looks_dead   = attrib_dead || eng_dead;
+		if(looks_dead)
+		{
+			eng_need_fresh_ent[idx]=true;
+			if(emsg>eng_spawn_msgnum[idx]) eng_spawn_msgnum[idx]=emsg;
+			if(!eng_kill_time[idx] && !eng_dead_at[idx])
+			{
+				eng_dead_at[idx]=now;
+				eng_kill_time[idx]=now;
+				eng_kill_org_set[idx]=false;
+			}
+		}
+		else if(eng_need_fresh_ent[idx])
+		{
+			if(!ent_sampled && emsg>eng_spawn_msgnum[idx]
+				&& (uninspected_slot || lmsg<=eng_spawn_msgnum[idx] || emsg>lmsg))
+				eng_spawn_msgnum[idx]=emsg;
+			if(snap_live)
+			{
+				bool post_spawn_snap = (emsg>0 && emsg>eng_spawn_msgnum[idx]);
+				bool teleported_spawn = false;
+				if(eng_kill_org_set[idx])
+				{
+					float tx=o[0]-eng_kill_org[idx][0], ty=o[1]-eng_kill_org[idx][1], tz=o[2]-eng_kill_org[idx][2];
+					teleported_spawn = (tx*tx+ty*ty+tz*tz)>(ENG_RESPAWN_DIST*ENG_RESPAWN_DIST);
+				}
+				if(teleported_spawn)
+				{
+					eng_dead_at[idx]=0;        eng_dead_org_set[idx]=false;
+					eng_kill_time[idx]=0;      eng_kill_org_set[idx]=false;
+					eng_need_fresh_ent[idx]=false;
+					if(eng_lastchange[idx]==0) eng_lastchange[idx]=now;
+				}
+				else if(post_spawn_snap && !eng_kill_time[idx])
+				{
+					eng_need_fresh_ent[idx]=false;
+					eng_kill_org_set[idx]=false;
+					if(eng_lastchange[idx]==0) eng_lastchange[idx]=now;
+				}
+			}
+		}
+		bool time_stale = (eng_lastchange[idx]==0) || ((now-eng_lastchange[idx])>ENG_STALE_MS);
+		bool stale = time_stale || eng_need_fresh_ent[idx];
 
 		// DeathMsg instant-death latch: the moment a slot dies it is dropped from
 		// EVERYTHING below (ESP box/name/radar/aim/trigger) that same frame, and it
@@ -2934,13 +3487,13 @@ void DrawEngineEsp()
 				eng_kill_org[idx][0]=o[0]; eng_kill_org[idx][1]=o[1]; eng_kill_org[idx][2]=o[2]; eng_kill_org_set[idx]=true;
 			}
 			float jx=o[0]-eng_dead_org[idx][0], jy=o[1]-eng_dead_org[idx][1], jz=o[2]-eng_dead_org[idx][2];
-			bool respawned=!looks_dead && (jx*jx+jy*jy+jz*jz)>(ENG_RESPAWN_DIST*ENG_RESPAWN_DIST);
-			if(respawned) { eng_kill_time[idx]=0; eng_kill_org_set[idx]=false; }
-			if(EngDead(idx) || stale || respawned || (now-eng_dead_at[idx])>ENG_DEATH_HOLD_MAX_MS)
+			bool respawned=!looks_dead && !time_stale && snap_live && (jx*jx+jy*jy+jz*jz)>(ENG_RESPAWN_DIST*ENG_RESPAWN_DIST);
+			if(respawned) { eng_kill_time[idx]=0; eng_kill_org_set[idx]=false; eng_need_fresh_ent[idx]=false; stale=false; }
+			if(eng_dead || time_stale || respawned || (now-eng_dead_at[idx])>ENG_DEATH_HOLD_MAX_MS)
 			{ eng_dead_at[idx]=0; eng_dead_org_set[idx]=false; }
 			else continue;					// still in the post-death gap -> stay hidden
 		}
-		if(EngDead(idx) || stale || looks_dead) continue;
+		if(eng_dead || stale || looks_dead) continue;
 
 		// just-killed FULL HIDE: a killed slot stays completely hidden (name, box,
 		// radar, aim dot, aimbot, triggerbot) until the player RESPAWNS.
@@ -2951,9 +3504,9 @@ void DrawEngineEsp()
 			else
 			{
 				float kx=o[0]-eng_kill_org[idx][0], ky=o[1]-eng_kill_org[idx][1], kz=o[2]-eng_kill_org[idx][2];
-				bool kteleport=!looks_dead && (kx*kx+ky*ky+kz*kz)>(ENG_RESPAWN_DIST*ENG_RESPAWN_DIST);
+				bool kteleport=!looks_dead && !time_stale && snap_live && (kx*kx+ky*ky+kz*kz)>(ENG_RESPAWN_DIST*ENG_RESPAWN_DIST);
 				if(kteleport || (now-eng_kill_time[idx])>ENG_KILL_HIDE_CAP_MS)
-				{ eng_kill_time[idx]=0; eng_kill_org_set[idx]=false; }
+				{ eng_kill_time[idx]=0; eng_kill_org_set[idx]=false; eng_need_fresh_ent[idx]=false; }
 			}
 			if(eng_kill_time[idx]) continue;	// still dead (not respawned) -> stay fully hidden
 		}
@@ -2963,34 +3516,36 @@ void DrawEngineEsp()
 		// Name/model only for ALIVE, in-PVS players when we will draw them, or when
 		// team is still unknown (need the spectator flag + model fallback).
 		bool want_name = need_esp_name || need_radar_name;
-		bool want_model = (cached_team==0);
+		bool want_model = (cached_team<=0);
 		if((DWORD)fnInfo>=0x10000 && (want_name || want_model))
 		{
-			static DWORD chk_name[33]={0}, chk_model[33]={0};
 			hud_player_info_t info; memset(&info,0,sizeof(info));
 			fnInfo(idx,&info);
 			DWORD np=(DWORD)info.name;
 			if(!np) continue;
-			if(np!=chk_name[idx])
+			if(g_pinfo_epoch[idx]!=g_cache_epoch || np!=g_pinfo_name[idx]
+				|| np<g_str_rbase || (np+64)>g_str_rend)
 			{
-				if(!IsReadable(np,1)) continue;
-				chk_name[idx]=np;
+				if(!IsStrReadableFast(np)) continue;
+				g_pinfo_name[idx]=np;
+				g_pinfo_epoch[idx]=g_cache_epoch;
 			}
 			if(info.spectator) continue;	// spectators aren't ESP/aim targets
 			if(want_name){ strncpy(namebuf,info.name,63); namebuf[63]=0; }
 			if(want_model && info.model)
 			{
 				DWORD mp=(DWORD)info.model;
-				if(mp==chk_model[idx] || IsReadable(mp,1))
+				if((g_pinfo_epoch[idx]==g_cache_epoch && mp==g_pinfo_model[idx]
+					&& mp>=g_str_rbase && (mp+64)<=g_str_rend) || IsStrReadableFast(mp))
 				{
-					chk_model[idx]=mp;
+					g_pinfo_model[idx]=mp;
 					strncpy(modelbuf,info.model,63); modelbuf[63]=0;
 				}
 			}
 		}
 
 		// team color (shared by the radar dot and the on-screen ESP below).
-		int team=eng_msg_team[idx];
+		int team=(eng_msg_team[idx]>0)?eng_msg_team[idx]:0;
 		if(team==0) team=EngTeam(idx);
 		if(team==0) team=TeamFromModel(modelbuf);
 		float r,g,b;
@@ -3236,7 +3791,7 @@ void DrawEngineEsp()
 
 		// C4 / VIP tag from ScoreAttrib (bit1 = has C4, bit2 = VIP), drawn at the
 		// box top-right. C4 in orange, VIP in gold; C4 wins if somehow both are set.
-		if(cvar.esp_flags)
+		if(cvar.esp_flags && attrib_known)
 		{
 			unsigned char af=(unsigned char)eng_msg_attrib[idx];
 			if(af & 6)
@@ -3261,7 +3816,8 @@ void DrawEngineEsp()
 	if(eng_bomb_flag>=0)
 	{
 		for(int ci=1;ci<=32;ci++)
-			if(eng_msg_attrib[ci]&2){ eng_bomb_flag=-1; break; }	// someone holds the C4 -> not loose
+			if(eng_msg_attrib[ci]!=MSG_ATTRIB_UNKNOWN && (eng_msg_attrib[ci]&2))
+			{ eng_bomb_flag=-1; break; }	// someone holds the C4 -> not loose
 	}
 
 	// Dropped-C4 marker (from the BombDrop message). The server only sends the
@@ -3406,6 +3962,8 @@ void DrawEngineEsp()
 
 	}	// end if(cvar.esp_engine || cvar.radar || need_aim)
 
+	memset(eng_msg_team_fresh,   0, sizeof(eng_msg_team_fresh));
+	memset(eng_msg_attrib_fresh, 0, sizeof(eng_msg_attrib_fresh));
 	g_in_2d_overlay=false;
 	(*orig_glMatrixMode)(GL_PROJECTION);
 	(*orig_glPopMatrix)();
@@ -3453,7 +4011,7 @@ void sys_glBegin (GLenum mode)
 		{
 			LARGE_INTEGER t0; if(cvar.perf) QueryPerformanceCounter(&t0);
 			(*orig_glDisable)(GL_DEPTH_TEST);
-			g_wall_depth_off=true;
+			if(g_gl_list_mode!=GL_COMPILE) g_wall_depth_off=true;
 			if(cvar.perf) PerfAccAdd(&g_perf_acc_wall,t0);
 		}
 	}
@@ -3463,7 +4021,7 @@ void sys_glBegin (GLenum mode)
 		(*orig_glGetFloatv)(GL_CURRENT_COLOR, curcolor);
 		if(cvar.perf) g_perf_n_getf++;
 		(*orig_glDisable)(GL_DEPTH_TEST);
-		g_wall_depth_off=true;
+		if(g_gl_list_mode!=GL_COMPILE) g_wall_depth_off=true;
 		(*orig_glEnable)(GL_BLEND);
 		(*orig_glBlendFunc)(GL_SRC_ALPHA, GL_ONE);
 		(*orig_glColor4f)(curcolor[0], curcolor[1], curcolor[2], 255.0);
@@ -3475,7 +4033,7 @@ void sys_glBegin (GLenum mode)
 		(*orig_glGetFloatv)(GL_CURRENT_COLOR, curcolor);
 		if(cvar.perf) g_perf_n_getf++;
 		(*orig_glDisable)(GL_DEPTH_TEST);
-		g_wall_depth_off=true;
+		if(g_gl_list_mode!=GL_COMPILE) g_wall_depth_off=true;
 		(*orig_glEnable)(GL_BLEND);
 		(*orig_glBlendFunc)(GL_SRC_ALPHA, GL_SRC_ALPHA_SATURATE);
 		(*orig_glColor4f)(curcolor[0], curcolor[1], curcolor[2], 1.0);
@@ -3629,7 +4187,7 @@ void sys_glDepthRange (GLclampd zNear,  GLclampd zFar)
 
 void sys_glDisable (GLenum cap)
 {
-	if(cap==GL_DEPTH_TEST) g_wall_depth_off=true;
+	if(cap==GL_DEPTH_TEST && g_gl_list_mode!=GL_COMPILE) g_wall_depth_off=true;
 	(*orig_glDisable) (cap);
 }
 
@@ -4389,7 +4947,11 @@ void sys_wglSwapBuffers(HDC hDC)
 	}
 	UpdateBhop();			// once-per-frame jump spam (also releases SPACE when bhop/hack is off)
 	viewportcount=0;		// reset viewport count, cuz this is the last function called every frame
+	g_gl_list_mode=0;
 	g_wall_depth_off=false;
+	ResetFrameRegionCaches();	// force OS region re-verification once per frame (prevents stale region bounds across frames)
+	memset(eng_msg_team_fresh,   0, sizeof(eng_msg_team_fresh));
+	memset(eng_msg_attrib_fresh, 0, sizeof(eng_msg_attrib_fresh));
 
 	// Perf monitor: commit this frame's section timings. "now" is sampled at the
 	// end of every swap, so Frame = now - previous swap = one full frame period

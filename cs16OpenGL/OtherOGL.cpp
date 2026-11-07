@@ -399,11 +399,13 @@ void sys_glBindTexture (GLenum target,  GLuint texture)
 
 void sys_glCallList (GLuint list)
 {
+	g_wall_depth_off = false;
 	(*orig_glCallList) (list);
 }
 
 void sys_glCallLists (GLsizei n,  GLenum type,  const GLvoid *lists)
 {
+	g_wall_depth_off = false;
 	(*orig_glCallLists) (n, type, lists);
 }
 
@@ -667,6 +669,8 @@ void sys_glEnableClientState (GLenum array)
 
 void sys_glEndList (void)
 {
+	g_gl_list_mode = 0;
+	g_wall_depth_off = false;
 	(*orig_glEndList) ();
 }
 
@@ -1172,6 +1176,8 @@ void sys_glMultMatrixf (const GLfloat *m)
 
 void sys_glNewList (GLuint list,  GLenum mode)
 {
+	g_gl_list_mode = mode;
+	g_wall_depth_off = false;
 	(*orig_glNewList) (list, mode);
 }
 
@@ -1297,6 +1303,7 @@ void sys_glPolygonStipple (const GLubyte *mask)
 
 void sys_glPopAttrib (void)
 {
+	g_wall_depth_off = false;
 	(*orig_glPopAttrib) ();
 }
 
@@ -1906,6 +1913,8 @@ __declspec(naked) void sys_wglDeleteContext(void)
 {
 	__asm
 	{
+		mov dword ptr [g_gl_list_mode], 0
+		mov byte ptr [g_wall_depth_off], 0
 		jmp [orig_wglDeleteContext]
 	}
 }
@@ -1970,6 +1979,8 @@ __declspec(naked) void sys_wglMakeCurrent(void)
 {
 	__asm
 	{
+		mov dword ptr [g_gl_list_mode], 0
+		mov byte ptr [g_wall_depth_off], 0
 		jmp [orig_wglMakeCurrent]
 	}
 }

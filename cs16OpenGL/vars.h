@@ -184,6 +184,7 @@ bool	eng_dead_org_set[33]={false};// has eng_dead_org been captured for this lat
 DWORD	eng_kill_time[33]={0};	// GetTickCount() when this slot was last KILLED (DeathMsg/ScoreAttrib). Outlives the eng_dead_at latch: while set, the slot is fully hidden (name/box/radar/dot/aim/trigger) so a corpse that lingers/re-streams for several seconds after the death latch releases can't be seen or grabbed by the aimbot - a live enemy among several bodies stays easy to pick. Cleared only when the player RESPAWNS (origin teleport away from the death spot) or after a generous safety cap. 0 = alive/visible.
 float	eng_kill_org[33][3]={0};	// death spot captured (eagerly, paired with eng_dead_org at the moment of death) for the kill cooldown's respawn-teleport test. Persists past the death latch.
 bool	eng_kill_org_set[33]={false};// has eng_kill_org been captured for the current cooldown yet?
+bool	eng_need_fresh_ent[33]={false};// true after death / ScoreAttrib respawn until cl_entity receives a fresh live snapshot (prevents targeting a stale corpse snapshot before the new life's entity state arrives)
 
 // ---- own HUD: health / armor / ammo (via user-message hooks) ---------------
 // We patch the engine's "Health"/"Battery"/"CurWeapon" user-message handlers so
@@ -200,20 +201,28 @@ int		me_armor		=0;		// local player armor    (Battery msg, 0..100)
 int		me_clip			=-1;	// current weapon clip   (CurWeapon msg, -1 = no clip)
 int		me_weaponid		=-1;	// active weapon id      (CurWeapon msg)
 int		me_maxclip[64]	={0};	// biggest clip ever seen per weapon id (for the %)
+#define MSG_TEAM_SPEC		(-1)	// TeamInfo explicitly reported SPECTATOR / UNASSIGNED
+#define MSG_TEAM_UNKNOWN	0		// no TeamInfo seen since start / last invalidation (use EngTeam / model fallback)
+#define MSG_ATTRIB_UNKNOWN	(-1)	// no ScoreAttrib seen since start / last invalidation (use EngDead / stale timer)
+
 bool	msg_hooked		=false;	// did we install the user-message hooks yet?
 int		eng_msg_tries	=0;		// how many times we tried to find the msg nodes
 char	eng_msg_team[33]={0};	// per-slot team from the "TeamInfo" user-message
-								// (0=unknown/spectator, 1=T, 2=CT). This is the
-								// server's own scoreboard source, so it is correct
-								// regardless of the player's (custom) model and needs
-								// no fragile signature scan - it is the PRIMARY team
+								// (0=MSG_TEAM_UNKNOWN, -1=MSG_TEAM_SPEC, 1=T, 2=CT).
+								// This is the server's own scoreboard source, so it is
+								// correct regardless of the player's (custom) model and
+								// needs no fragile signature scan - it is the PRIMARY team
 								// source for ESP coloring and aim side-filtering, ahead
 								// of g_PlayerExtraInfo and the model-name guess.
-char	eng_msg_attrib[33]={0};	// per-slot scoreboard flags from the "ScoreAttrib"
-								// user-message: bit0 = DEAD, bit1 = has C4, bit2 = VIP.
-								// MSG_ALL (sent for every player), so it is a global,
-								// model/build-independent source. Death also feeds the
-								// existing eng_dead_at latch; bits 1/2 drive the C4/VIP tags.
+char	eng_msg_attrib[33]={
+	-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+	-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+};								// per-slot scoreboard flags from the "ScoreAttrib"
+								// user-message (-1=MSG_ATTRIB_UNKNOWN, else bit0=DEAD,
+								// bit1=has C4, bit2=VIP). MSG_ALL (sent for every player),
+								// so it is a global, model/build-independent source. Death
+								// also feeds the existing eng_dead_at latch; bits 1/2 drive
+								// the C4/VIP tags.
 float	eng_bomb_org[3]	={0};	// world position of the C4 from the last "BombDrop" msg
 int		eng_bomb_flag	=-1;	// -1 = none/cleared, 0 = dropped, 1 = planted(timer)
 DWORD	eng_bomb_at		=0;		// GetTickCount() when eng_bomb_org was last updated

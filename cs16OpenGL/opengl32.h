@@ -21,6 +21,8 @@
 extern BOOL Init (void);
 extern void __cdecl add_log (const char * fmt, ...);
 extern HMODULE hOriginalDll;
+extern bool g_wall_depth_off;
+extern GLenum g_gl_list_mode;
 
 typedef void ( *func_glActiveTextureARB_t) (GLenum target);
 typedef void ( *func_BindTextureEXT_t) (GLenum target, GLuint texture);
